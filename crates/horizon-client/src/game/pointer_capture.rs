@@ -76,12 +76,19 @@ impl Game<'_> {
     /// `Minecraft.pauseIfInactive`: a window without focus for more than 500 ms
     /// pauses the game. An open screen (books, signs, the pack prompt, a server
     /// dialog) stays instead of pausing (`Gui.setPauseScreen`).
+    ///
+    /// While the level loads, vanilla's `Minecraft.screen` is the `LevelLoadingScreen`, so
+    /// `pauseIfInactive` (which needs no screen) never pauses: here `screen` stays `Playing`
+    /// under it, so the load is checked too. Pausing then stopped the integrated server and its
+    /// spawn chunks with it, and the loading screen waited for them forever (Oteria).
     pub(super) fn pause_if_inactive(&mut self) {
+        let level_loading = self.remote.as_ref().is_some_and(|r| r.level_load.is_active());
         if self
             .focus_lost
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
             && self.control.is_none()
             && self.screen == Screen::Playing
+            && !level_loading
             && !studio_suppresses_focus_pause(self.replay.playing(), self.studio.flying())
             && self.player.is_some()
             && !self.options.no_pause
