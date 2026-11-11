@@ -509,6 +509,15 @@ impl Http {
         }
     }
 
+    /// An empty address names no service (`horizon_addresses::COSMETICS_API` in Oteria's build):
+    /// every request fails at once, as offline, and nothing leaves the machine.
+    fn configured(&self) -> Result<(), String> {
+        if self.base.is_empty() {
+            return Err("no cosmetics service".into());
+        }
+        Ok(())
+    }
+
     pub(crate) fn agent(&self) -> &ureq::Agent {
         &self.agent
     }
@@ -538,6 +547,7 @@ impl Http {
 
 impl Transport for Http {
     fn post(&self, path: &str, body: &[u8]) -> Result<Vec<u8>, String> {
+        self.configured()?;
         let url = format!("{}{path}", self.base);
         Self::read(
             self.agent
@@ -548,6 +558,7 @@ impl Transport for Http {
     }
 
     fn get(&self, path: &str) -> Result<Vec<u8>, String> {
+        self.configured()?;
         Self::read(self.agent.get(&format!("{}{path}", self.base)).call())
     }
 }

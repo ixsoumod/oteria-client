@@ -52,6 +52,8 @@ fn resolve(var: Option<&str>) -> Option<String> {
     match var.map(str::trim) {
         Some("off" | "none" | "0") => None,
         Some(url) if !url.is_empty() => Some(url.trim_end_matches('/').to_owned()),
+        // No built-in server (Oteria's build): nothing is sent unless one is named.
+        _ if DEFAULT_ENDPOINT.is_empty() => None,
         _ => Some(DEFAULT_ENDPOINT.to_owned()),
     }
 }
@@ -116,14 +118,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_endpoint_defaults_to_the_server_and_can_be_moved_or_turned_off() {
-        assert_eq!(resolve(None).as_deref(), Some(DEFAULT_ENDPOINT));
-        assert_eq!(resolve(Some(" ")).as_deref(), Some(DEFAULT_ENDPOINT));
+    fn the_endpoint_is_off_by_default_and_can_be_named_or_turned_off() {
+        // Oteria builds in no telemetry server: nothing goes anywhere unless one is named.
+        assert_eq!(DEFAULT_ENDPOINT, "");
+        assert_eq!(resolve(None), None);
+        assert_eq!(resolve(Some(" ")), None);
         assert_eq!(
             resolve(Some("http://127.0.0.1:8080/")).as_deref(),
             Some("http://127.0.0.1:8080")
         );
         assert_eq!(resolve(Some("off")), None);
-        assert!(DEFAULT_ENDPOINT.starts_with("https://") && !DEFAULT_ENDPOINT.ends_with('/'));
     }
 }

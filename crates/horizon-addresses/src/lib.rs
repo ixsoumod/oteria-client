@@ -24,12 +24,14 @@ pub const WITHDRAWN_PARTNER_SERVER: &str = "afri-network.co.za";
 pub const OFFICIAL_SERVER_STATUS: &str = "play.playhorizon.dev:24454";
 
 /// The cosmetics service: cosmetics, emotes, "Show me as a Horizon player"
-/// (`HORIZON_COSMETICS_API` overrides it).
-pub const COSMETICS_API: &str = "https://cosmetics.playhorizon.dev";
+/// (`HORIZON_COSMETICS_API` overrides it). Oteria runs none of its own yet: empty, nothing is
+/// asked and every player wears nothing (`horizon_cosmetics::Http`).
+pub const COSMETICS_API: &str = "";
 
 /// The telemetry ingest server (`crates/horizon-telemetry-server`): opt-in telemetry, the
-/// "I'm playing" ping, benchmark uploads (`HORIZON_TELEMETRY_URL` overrides it).
-pub const TELEMETRY: &str = "https://telemetry.playhorizon.dev";
+/// "I'm playing" ping, benchmark uploads (`HORIZON_TELEMETRY_URL` overrides it). Oteria runs none
+/// of its own yet: empty, nothing is sent, whatever the player's switches say.
+pub const TELEMETRY: &str = "";
 
 /// Public STUN servers for Play with Friends' NAT discovery: two independent operators, so one
 /// outage doesn't break discovery (`HORIZON_STUN_SERVERS` overrides them).
