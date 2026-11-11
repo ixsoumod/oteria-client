@@ -7,7 +7,7 @@
 //! player's own accent comes out as it does on the website.
 
 /// The mockup's defaults: accent, how much white the plates take, and their blur in px.
-pub const ACCENT: u32 = 0x6b4bff;
+pub const ACCENT: u32 = 0x1e9bd7;
 pub const TINT: f32 = 0.06;
 pub const BLUR: f32 = 24.;
 /// Behind the scene before it is drawn.
@@ -247,21 +247,21 @@ mod tests {
         let g = Glass::default_look();
         let soft = oklab(g.accent_soft);
         let mixed = [0, 1, 2].map(|i| oklab(ACCENT)[i] * 0.52 + oklab(0xffffff)[i] * 0.48);
-        for (i, want) in [0.772018, 0.0291158, -0.12693].into_iter().enumerate() {
+        for (i, want) in [0.819868, -0.0384389, -0.0582569].into_iter().enumerate() {
             assert!(
                 (mixed[i] - want).abs() < 1e-3,
                 "accent-soft oklab {mixed:?}"
             );
         }
-        // Chrome clips the out-of-gamut blue the same way.
+        // Chromium's bytes for Oteria's accent (#1e9bd7), measured in Edge.
         assert!(
-            close(g.accent_soft, 0xa9a9ff),
+            close(g.accent_soft, 0x99ccec),
             "accent-soft {:06x} {soft:?}",
             g.accent_soft
         );
-        assert!(close(g.base, 0x1b1830), "base {:06x}", g.base);
-        // color(srgb 0.30732 0.296469 0.370862 / 0.2668)
-        assert!(close(g.plate, 0x4e4c5f), "plate {:06x}", g.plate);
+        assert!(close(g.base, 0x191d2d), "base {:06x}", g.base);
+        // color(srgb 0.300879 0.313038 0.361672 / 0.2668)
+        assert!(close(g.plate, 0x4d505c), "plate {:06x}", g.plate);
         assert!((g.plate_alpha - 0.2668).abs() < 1e-4);
     }
 

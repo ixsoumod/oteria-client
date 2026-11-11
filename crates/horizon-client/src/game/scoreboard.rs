@@ -905,7 +905,15 @@ impl Game<'_> {
             self.serving.is_none(),
             "a server thread calls no client hook"
         );
-        let marked = horizon_hooks::engine::player_mark;
+        // The window's own player plays Oteria: their row carries its mark, hooks or not.
+        let own = self.remote.as_ref().map(|r| r.profile());
+        let marked = |uuid: u128| {
+            if Some(uuid) == own {
+                Some(super::cosmetics::MARK)
+            } else {
+                horizon_hooks::engine::player_mark(uuid)
+            }
+        };
         let inputs = TabInputs {
             players: &players,
             board,
