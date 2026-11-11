@@ -66,6 +66,10 @@ fn group_fill() -> u32 {
 pub fn hover() -> u32 {
     hex(b().ink, 18)
 }
+/// A control pointed at: a soft light over it, as round as it is.
+fn hover_fill() -> u32 {
+    hex(b().ink, 26)
+}
 /// The open page in the page list.
 pub fn open() -> u32 {
     hex(b().ink, 26)
@@ -153,6 +157,39 @@ pub const INSET: f32 = 10.0;
 pub fn fill(batch: &mut HudBatch, atlas: &HudAtlas, [x, y, w, h]: [f32; 4], color: u32) {
     batch.fill(atlas, x, y, w, h, color);
 }
+/// `rect` filled with corners of radius `r` (GUI pixels): Oteria's glass look. The corners are
+/// laid in half-pixel slices that never overlap, so a see-through colour stays even.
+pub fn rounded(batch: &mut HudBatch, atlas: &HudAtlas, [x, y, w, h]: [f32; 4], r: f32, color: u32) {
+    let r = r.min(w / 2.0).min(h / 2.0);
+    if r < 1.0 {
+        fill(batch, atlas, [x, y, w, h], color);
+        return;
+    }
+    fill(batch, atlas, [x, y + r, w, h - 2.0 * r], color);
+    let slices = (r * 2.0).ceil() as usize;
+    for i in 0..slices {
+        let dy = i as f32 * 0.5;
+        let slice = 0.5_f32.min(r - dy);
+        // How far in the circle is at the middle of this slice.
+        let t = r - dy - slice / 2.0;
+        let inset = r - (r * r - t * t).max(0.0).sqrt();
+        let span = [x + inset, 0.0, w - 2.0 * inset, slice];
+        fill(batch, atlas, [span[0], y + dy, span[2], slice], color);
+        fill(batch, atlas, [span[0], y + h - dy - slice, span[2], slice], color);
+    }
+}
+/// The settings screens' one glass frame, everything inside it: the world shows through.
+pub fn frame(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4]) {
+    rounded(batch, atlas, rect, 6.0, hex(b().page, 138));
+}
+/// A setting's card on the frame.
+pub fn card(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4]) {
+    rounded(batch, atlas, rect, 3.0, group_fill());
+}
+/// The open page's pill in the page list, in the accent.
+pub fn open_tab(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4]) {
+    rounded(batch, atlas, rect, 3.0, hex(b().accent, 92));
+}
 /// A 1 px ring inside `rect`: the keyboard or controller focus, in white as vanilla draws it.
 pub fn ring(batch: &mut HudBatch, atlas: &HudAtlas, [x, y, w, h]: [f32; 4], color: u32) {
     batch.fill(atlas, x, y, w, 1.0, color);
@@ -162,16 +199,15 @@ pub fn ring(batch: &mut HudBatch, atlas: &HudAtlas, [x, y, w, h]: [f32; 4], colo
 }
 /// The screen's plate, and the strip under it: dark glass with a thin edge.
 pub fn panel(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4]) {
-    fill(batch, atlas, rect, glass());
-    ring(batch, atlas, rect, edge());
+    rounded(batch, atlas, rect, 4.0, glass());
 }
 /// A group's panel on the plate, its rows on it.
 pub fn group(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4]) {
-    fill(batch, atlas, rect, group_fill());
+    rounded(batch, atlas, rect, 3.0, group_fill());
 }
 /// A sunk well: the search field, the value stepper.
 pub fn well(batch: &mut HudBatch, atlas: &HudAtlas, rect: [f32; 4]) {
-    fill(batch, atlas, rect, well_fill());
+    rounded(batch, atlas, rect, 3.0, well_fill());
 }
 /// The scroller: a faint track and its thumb.
 pub fn scroller(batch: &mut HudBatch, atlas: &HudAtlas, track: [f32; 4], thumb: [f32; 4]) {
@@ -246,10 +282,8 @@ pub fn button_with_room(
         (true, false, false) => button_fill(),
         (true, false, true) => button_hover(),
     };
-    fill(batch, atlas, rect, face);
-    if hover && live {
-        ring(batch, atlas, rect, WHITE);
-    }
+    // Pointed at, the face lightens (face_hover, button_hover): no square ring on a round button.
+    rounded(batch, atlas, rect, 4.0, face);
     let color = if live { WHITE } else { muted() };
     let ty = y + ((h - 8.0) / 2.0).floor();
     let left = x + 2.0 + room;
@@ -334,7 +368,7 @@ pub fn cycler(
     let [x, y, w, h] = rect;
     well(batch, atlas, rect);
     if hover && live {
-        ring(batch, atlas, rect, WHITE);
+        rounded(batch, atlas, rect, 3.0, hover_fill());
     }
     let ty = y + ((h - 8.0) / 2.0).floor();
     let arrows = if hover && live { WHITE } else { muted() };

@@ -486,9 +486,9 @@ fn a_taller_strip_takes_from_the_list_as_far_as_the_list_keeps_its_height() {
     assert_eq!(wide.bottom, base.bottom - 2.0 * NOTE_LINE_H);
     assert_eq!(wide.dock[1] + wide.dock[3], base.dock[1] + base.dock[3]);
     assert_eq!(wide.button(0), base.button(0));
-    // A 720p window at scale 4 has room for one more line, not two.
+    // A 720p window at scale 4: Oteria's frame leaves the list its height with both lines.
     let short = Columns::of(320.0, 180.0).with_note_lines(4);
-    assert_eq!(short.note_lines, 3);
+    assert_eq!(short.note_lines, 4);
     assert!(short.bottom - short.top >= MIN_LIST_H);
 }
 

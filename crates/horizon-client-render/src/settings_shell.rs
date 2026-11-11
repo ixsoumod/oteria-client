@@ -28,6 +28,9 @@ use std::rc::Rc;
 /// the list's view.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Columns {
+    /// Oteria's one glass frame around everything, its header band at its top: the mark and
+    /// the screen's name on the left, the search field on the right.
+    pub(crate) frame: [f32; 4],
     pub(crate) side_x: f32,
     pub(crate) side_y: f32,
     pub(crate) plate: [f32; 4],
@@ -38,6 +41,8 @@ pub(crate) struct Columns {
     pub(crate) bottom: f32,
     /// The lines the strip has for a description (`with_note_lines`).
     note_lines: usize,
+    /// The strip has a row of one-click buttons at its foot (`with_chips`).
+    chips: bool,
 }
 /// The lines of description a strip has unless its screen asks for more.
 const NOTE_LINES: usize = 2;
@@ -56,31 +61,62 @@ const COST_LINE_SLACK: f32 = 32.0;
 const MIN_LIST_H: f32 = 60.0;
 /// From one place in the page list to the next.
 const PAGE_STEP: f32 = 18.0;
+/// The glass frame's header band: the mark, the screen's name and the search field.
+const HEADER_H: f32 = 24.0;
+/// Between the frame's edge and what is in it, and between its columns.
+const INNER: f32 = 8.0;
+/// A one-click button in the strip, and the room its row takes there.
+const CHIP_H: f32 = 14.0;
+const CHIP_BAR: f32 = 18.0;
 /// Between the foot's buttons, over and beside one another, and over them.
 const FOOT_GAP: f32 = 4.0;
 impl Columns {
     pub(crate) fn of(w: f32, h: f32) -> Self {
+        // One glass frame, centred, a margin round it; a roomier one on a big screen.
+        let margin = if w >= 560.0 && h >= style::TITLED {
+            16.0
+        } else {
+            6.0
+        };
+        let fw = (w - 2.0 * margin).min(640.0).floor();
+        let fx = ((w - fw) / 2.0).floor();
+        let frame = [fx, margin, fw, h - 2.0 * margin];
+        // Inside it: the header band, then the page list on the left and the list beside it.
         let side_w = style::CONTROL_W;
-        let gap = if w >= 560.0 { 16.0 } else { 8.0 };
-        let pw = (w - 16.0 - side_w - gap).min(432.0).floor();
-        let side_x = ((w - side_w - gap - pw) / 2.0).floor();
-        let px = side_x + side_w + gap;
-        // A short screen (a 720p window at scale 3) gives the margin to the list.
-        let side_y = if h >= style::TITLED { 24.0 } else { 8.0 };
-        let dock = [px, h - 8.0 - style::DOCK_H, pw, style::DOCK_H];
+        let side_x = fx + INNER;
+        let side_y = frame[1] + HEADER_H;
+        let px = side_x + side_w + INNER;
+        let pw = (fx + fw - INNER - px).floor();
+        let dock = [px, frame[1] + frame[3] - INNER - style::DOCK_H, pw, style::DOCK_H];
         let plate = [px, side_y, pw, dock[1] - 4.0 - side_y];
-        let list_x = px + 8.0;
+        let list_x = px;
         Self {
+            frame,
             side_x,
             side_y,
             plate,
             dock,
             list_x,
-            list_w: pw - 16.0 - style::SCROLLER_W - 2.0,
-            top: side_y + 30.0,
-            bottom: plate[1] + plate[3] - 6.0,
+            list_w: pw - 4.0 - style::SCROLLER_W,
+            top: side_y,
+            bottom: plate[1] + plate[3],
             note_lines: NOTE_LINES,
+            chips: false,
         }
+    }
+    /// The strip grown up over the list for a row of one-click buttons at its foot
+    /// (`Screen::chips`: the graphics presets).
+    pub(crate) fn with_chips(mut self) -> Self {
+        self.dock[1] -= CHIP_BAR;
+        self.dock[3] += CHIP_BAR;
+        self.plate[3] -= CHIP_BAR;
+        self.bottom -= CHIP_BAR;
+        self.chips = true;
+        self
+    }
+    /// The top of the strip's row of one-click buttons.
+    pub(crate) fn chip_row(&self) -> f32 {
+        self.dock[1] + self.dock[3] - 6.0 - CHIP_H
     }
     /// The strip grown up over the plate for `wanted` lines of description, as far as the list
     /// keeps its height.
@@ -95,11 +131,12 @@ impl Columns {
         self.note_lines = NOTE_LINES + grown;
         self
     }
-    /// The search field, under the mark.
+    /// The search field, at the right of the header band.
     pub(crate) fn search(&self) -> [f32; 4] {
+        let [fx, fy, fw, _] = self.frame;
         [
-            self.side_x,
-            self.side_y + 26.0,
+            fx + fw - INNER - style::CONTROL_W,
+            fy + ((HEADER_H - style::SEARCH_H) / 2.0).floor(),
             style::CONTROL_W,
             style::SEARCH_H,
         ]
@@ -121,7 +158,7 @@ impl Columns {
     pub(crate) fn page(&self, i: usize) -> [f32; 4] {
         [
             self.side_x,
-            self.side_y + 56.0 + i as f32 * PAGE_STEP,
+            self.side_y + i as f32 * PAGE_STEP,
             style::CONTROL_W,
             16.0,
         ]
@@ -240,17 +277,89 @@ pub(crate) fn backdrop(batch: &mut HudBatch, atlas: &HudAtlas, in_world: bool) {
     style::fill(batch, atlas, [0.0, 0.0, w, h], style::veil());
 }
 
-/// The mark and the screen's name over the search field.
+/// The glass frame, and the header band's mark and screen name: Oteria's badge
+/// (`crate::name_badge`), "Oteria", then the screen's name after a dot, on one line.
 pub(crate) fn mark(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns, title: &str) {
-    let (x, y) = (cols.side_x, cols.side_y);
-    // Oteria's badge (`crate::name_badge`), a line of text high, then its name.
+    let [fx, fy, fw, _] = cols.frame;
+    let (x, y) = (fx + INNER, fy + ((HEADER_H - 8.0) / 2.0).floor());
     if let Some(r) = atlas.sprites.get(crate::name_badge::SPRITE).copied() {
         batch.rect_uv(x, y, 8.0, 8.0, r, u32::MAX);
     }
     let name = Text::literal("Oteria");
     batch.text_styled(atlas, &name, x + 11.0, y, style::WHITE, true);
-    let title = Text::literal(title);
-    batch.text_styled(atlas, &title, x, y + 10.0, style::muted(), true);
+    let after = x + 11.0 + HudBatch::text_width(atlas, "Oteria") + 4.0;
+    let title = Text::literal(format!("·  {title}"));
+    batch.text_styled(atlas, &title, after, y, style::muted(), true);
+    // The band's foot.
+    style::fill(batch, atlas, [fx + INNER, fy + HEADER_H - 3.0, fw - 2.0 * INNER, 1.0], style::row_rule());
+}
+
+/// The frame rate in the header, on a pill left of the search field, so a setting's cost shows
+/// as it is changed.
+fn frame_rate(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns) {
+    let fps = crate::graphics::SHOWN_FPS.load(std::sync::atomic::Ordering::Relaxed);
+    if fps == 0 {
+        return;
+    }
+    let text = format!("{fps} FPS");
+    let w = HudBatch::text_width(atlas, &text) + 12.0;
+    let [sx, sy, _, sh] = cols.search();
+    let rect = [sx - 6.0 - w, sy, w, sh];
+    style::card(batch, atlas, rect);
+    let ty = sy + ((sh - 8.0) / 2.0).floor();
+    batch.text_styled(atlas, &Text::literal(text), rect[0] + 6.0, ty, style::accent(), true);
+}
+
+/// The strip's row of one-click buttons, after its name: the one in use lit in the accent.
+/// Returns where each was drawn, for clicks.
+fn chips(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    cols: &Columns,
+    name: &str,
+    chips: &[(String, bool)],
+    cursor: (f32, f32),
+) -> Vec<[f32; 4]> {
+    let y = cols.chip_row();
+    let mut x = cols.dock[0] + 12.0;
+    let room = cols.dock[0] + cols.dock[2] - 8.0 - x;
+    let ty = y + ((CHIP_H - 8.0) / 2.0).floor();
+    let name = lang::get(name);
+    let name_w = HudBatch::text_width(atlas, &name) + 8.0;
+    let labels: f32 = chips.iter().map(|(l, _)| HudBatch::text_width(atlas, l)).sum();
+    let gaps = 4.0 * chips.len().saturating_sub(1) as f32;
+    // As much as fits: the row's name, then roomy buttons; on a narrow strip the name goes,
+    // then the buttons tighten.
+    let fits = |pad: f32, named: bool| labels + pad * chips.len() as f32 + gaps + if named { name_w } else { 0.0 } <= room;
+    let (pad, named) = [(12.0, true), (12.0, false), (8.0, false), (4.0, false)]
+        .into_iter()
+        .find(|&(pad, named)| fits(pad, named))
+        .unwrap_or((4.0, false));
+    if named {
+        batch.text_styled(atlas, &Text::literal(name.clone()), x, ty, style::muted(), true);
+        x += name_w;
+    }
+    let mut rects = Vec::with_capacity(chips.len());
+    for (label, on) in chips {
+        let w = HudBatch::text_width(atlas, label) + pad;
+        let rect = [x, y, w, CHIP_H];
+        let hover = ui::hovered(cursor, x, y, w, CHIP_H);
+        crate::widgets::record(label, rect, true);
+        crate::widgets::widget_cursor(hover, true);
+        if *on {
+            style::open_tab(batch, atlas, rect);
+        } else {
+            style::card(batch, atlas, rect);
+        }
+        if hover {
+            style::rounded(batch, atlas, rect, 3.0, style::hover());
+        }
+        let color = if *on || hover { style::WHITE } else { style::soft() };
+        batch.text_styled(atlas, &Text::literal(label.clone()), x + pad / 2.0, ty, color, true);
+        rects.push(rect);
+        x += w + 4.0;
+    }
+    rects
 }
 
 /// A page in the page list: the open page on a plate with the accent's bar beside it, the
@@ -276,8 +385,9 @@ pub(crate) fn page_tab(
         crate::widgets::target_as(rect, crate::widgets::Kind::Tab(open));
     }
     if open {
-        style::fill(batch, atlas, rect, style::open());
-        style::fill(batch, atlas, [px, py, 2.0, ph], style::accent());
+        style::open_tab(batch, atlas, rect);
+    } else if hover {
+        style::card(batch, atlas, rect);
     }
     let color = match (open || hover, has) {
         (true, _) => style::WHITE,
@@ -337,19 +447,10 @@ pub(crate) fn search_field(
     }
 }
 
-/// The plate, with the open page's name (or the search's) over its list.
-pub(crate) fn plate(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns, heading: &str) {
-    let [px, py, pw, _] = cols.plate;
-    style::panel(batch, atlas, cols.plate);
-    let heading = Text::literal(style::fit(atlas, heading, pw - 24.0));
-    batch.text_styled(atlas, &heading, px + 12.0, py + 10.0, style::WHITE, true);
-    style::fill(
-        batch,
-        atlas,
-        [px + 8.0, py + 24.0, pw - 16.0, 1.0],
-        style::head_rule(),
-    );
-}
+/// The plate under the list. In Oteria's glass frame the list sits on the frame itself and the
+/// open page is the lit tab, so it draws nothing; a search's results are named by their pages'
+/// names in the list.
+pub(crate) fn plate(_batch: &mut HudBatch, _atlas: &HudAtlas, _cols: &Columns, _heading: &str) {}
 
 /// The list, clipped to its view: each group's panel, then its names and rows on it. `row`
 /// draws a setting at its `y`; `page_name` names a page, and a group without a name of its own
@@ -369,18 +470,6 @@ pub(crate) fn list<P: Copy, S: Copy>(
     let shows = |y: f32, h: f32| y + h > cols.top && y < cols.bottom;
     for line in lines {
         let y = row_y(line);
-        if let Some((_, panel)) = line.group
-            && shows(y + style::GROUP_ROW, panel)
-        {
-            let rect = [cols.list_x, y + style::GROUP_ROW, cols.list_w, panel];
-            style::group(batch, atlas, rect);
-        }
-    }
-    // A group's first row, which has no rule over it.
-    let mut first = false;
-    for line in lines {
-        let y = row_y(line);
-        let after_name = std::mem::replace(&mut first, line.group.is_some());
         if !shows(y, line.h()) {
             continue;
         }
@@ -394,10 +483,8 @@ pub(crate) fn list<P: Copy, S: Copy>(
             batch.text_styled(atlas, &name, cols.list_x + 2.0, y + dy, color, true);
             continue;
         };
-        if !after_name {
-            let rule = [cols.list_x + 8.0, y, cols.list_w - 16.0, 1.0];
-            style::fill(batch, atlas, rule, style::row_rule());
-        }
+        // Each setting on a card of its own, a pixel clear of the next.
+        style::card(batch, atlas, [cols.list_x, y + 1.0, cols.list_w, style::ROW - 2.0]);
         row(batch, setting, y);
     }
     if lines.is_empty() {
@@ -501,8 +588,9 @@ pub(crate) fn row(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns, y: f32
     ];
     let active = live && (hover || focused || held);
     if active {
-        let lit = [rect[0] + 2.0, y + 1.0, rect[2] - 4.0, style::ROW - 2.0];
-        style::fill(batch, atlas, lit, style::hover());
+        // Over the setting's card, as round as it is.
+        let lit = [rect[0], y + 1.0, rect[2], style::ROW - 2.0];
+        style::rounded(batch, atlas, lit, 3.0, style::hover());
     }
     crate::widgets::widget_cursor(hover, live);
     // The control socket's widget tree, the narrator and a controller's focus.
@@ -610,12 +698,8 @@ fn short_of_reset(cols: &Columns, y: f32, resets: bool) -> [f32; 4] {
 
 /// A row's lit background while it is pointed at or focused.
 fn lit(batch: &mut HudBatch, atlas: &HudAtlas, [x, y, w, _]: [f32; 4]) {
-    style::fill(
-        batch,
-        atlas,
-        [x + 2.0, y + 1.0, w - 4.0, style::ROW - 2.0],
-        style::hover(),
-    );
+    // Over the setting's card, as round as it is.
+    style::rounded(batch, atlas, [x, y + 1.0, w, style::ROW - 2.0], 3.0, style::hover());
 }
 
 /// A value to read ([`Value::Read`]) at `y`: its name, and the value at the right, cut short to
@@ -1360,6 +1444,19 @@ pub(crate) trait Screen {
         NOTE_LINES
     }
     fn sheets(&self, s: &Settings) -> Vec<Sheet<Self::Page, Self::Row>>;
+    /// A row of buttons at the foot of the strip, each pressed in one click (the graphics
+    /// presets): its name, and each button's name and whether it is the one in use.
+    fn chips(&self, _s: &Settings) -> Option<(&'static str, Vec<(String, bool)>)> {
+        None
+    }
+    /// The `i`th of `chips` pressed.
+    fn pick_chip(&mut self, _s: &mut Settings, _i: usize) -> Vec<Output> {
+        Vec::new()
+    }
+    /// The header shows the frame rate beside the search field (`crate::graphics::SHOWN_FPS`).
+    fn shows_fps(&self) -> bool {
+        false
+    }
     /// A fingerprint ([`stamp_of`]) of what `sheets` reads that can change while the screen is
     /// open, besides through `press`, `slide` and `wheel_step` (the shell builds again after
     /// those): the rows are built again only when it changes, or the search, the page, the size or
@@ -1620,6 +1717,8 @@ pub(crate) struct Shell<S: Screen> {
     /// The page list as last drawn: what a press or a key picks is what is on the screen (the
     /// collapsed row's arrows sit either side of a name as wide as the font draws it).
     drawn: Option<PageList<S::Page>>,
+    /// The strip's one-click buttons as last drawn (`Screen::chips`).
+    chips: Vec<[f32; 4]>,
 }
 impl<S: Screen + Default> Default for Shell<S> {
     fn default() -> Self {
@@ -1647,6 +1746,7 @@ impl<S: Screen + Default> Default for Shell<S> {
             path: Vec::new(),
             pending: false,
             drawn: None,
+            chips: Vec::new(),
         }
     }
 }
@@ -1772,7 +1872,10 @@ impl<S: Screen> Shell<S> {
     /// description has the search in it, under their pages' names. The row being changed stays
     /// whatever it reads now.
     fn build(&self, s: &Settings, (w, h): (f32, f32)) -> View<S::Page, S::Row> {
-        let cols = Columns::of(w, h).with_note_lines(self.screen.note_lines());
+        let mut cols = Columns::of(w, h).with_note_lines(self.screen.note_lines());
+        if self.screen.chips(s).is_some() {
+            cols = cols.with_chips();
+        }
         let query = self.query();
         let sheets = self.screen.sheets(s);
         let open = self
@@ -2339,8 +2442,12 @@ impl<S: Screen + Default> Hosted for Shell<S> {
         }
         let cols = view.cols;
         backdrop(batch, atlas, in_world);
+        style::frame(batch, atlas, cols.frame);
         let current = self.current(&view);
         self::mark(batch, atlas, &cols, &lang::get(self.screen.title()));
+        if self.screen.shows_fps() {
+            frame_rate(batch, atlas, &cols);
+        }
         let pages = self.page_list(&view, Some(atlas));
         self.draw_pages(batch, atlas, &view, &pages, cursor);
         side_lines(batch, atlas, &cols, pages.used, &self.screen.side());
@@ -2391,6 +2498,10 @@ impl<S: Screen + Default> Hosted for Shell<S> {
             crate::widgets::focus_link(cols.search(), true, row);
         }
         self.draw_dock(batch, atlas, &view, waiting.or(described), current);
+        self.chips = match self.screen.chips(s) {
+            Some((name, chips)) => self::chips(batch, atlas, &cols, name, &chips, cursor),
+            None => Vec::new(),
+        };
         // Undo and Apply, over Done, only once there is something for them to do. A controller's
         // X presses Apply where there is one, else Undo.
         for (target, rect) in self.foot(&cols) {
@@ -2451,6 +2562,12 @@ impl<S: Screen + Default> Hosted for Shell<S> {
         // The right button presses nothing, as on vanilla's `CycleButton`.
         if right {
             return Vec::new();
+        }
+        if let Some(i) = self.chips.iter().position(|rect| at(*rect)) {
+            let mut outputs = vec![CLICK];
+            outputs.extend(self.screen.pick_chip(s, i));
+            self.did(&outputs);
+            return outputs;
         }
         if cols.scrolls()
             && self

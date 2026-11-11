@@ -21,6 +21,13 @@ use crate::{
 
 /// The language key of the screen's name.
 const TITLE: &str = "Graphics";
+/// The presets the strip offers in one click (`Screen::chips`).
+const CHIP_PRESETS: [Preset; 4] = [
+    Preset::Performance,
+    Preset::Balanced,
+    Preset::Quality,
+    Preset::Ultra,
+];
 
 /// The screen's pages, in its order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1460,6 +1467,26 @@ impl Screen for GraphicsScreen {
         };
         rows().into_iter().map(sheet).collect()
     }
+    /// Oteria's presets, one click each, at the foot of the strip: the Preset row's choices
+    /// without Custom, which changing any option gives.
+    fn chips(&self, s: &Settings) -> Option<(&'static str, Vec<(String, bool)>)> {
+        let chips = CHIP_PRESETS
+            .iter()
+            .map(|p| (lang::get(p.label()), s.horizon.preset == *p))
+            .collect();
+        Some(("Preset", chips))
+    }
+    fn pick_chip(&mut self, s: &mut Settings, i: usize) -> Vec<Output> {
+        let Some(&preset) = CHIP_PRESETS.get(i) else {
+            return Vec::new();
+        };
+        crate::graphics::apply_preset(preset, s);
+        s.horizon.preset = preset;
+        vec![Output::Event(Event::Changed)]
+    }
+    fn shows_fps(&self) -> bool {
+        true
+    }
     fn press(&mut self, s: &mut Settings, item: Item, back: bool) -> Vec<Output> {
         match item {
             Item::Horizon(H::HdrCalibrate) if setup(s, &self.output) == Setup::Changed => {
@@ -1810,7 +1837,8 @@ mod tests {
         // column, mouseDragged moves the list with the pointer, onRelease lets go.
         let mut s = Settings::default();
         let mut ui = ui();
-        let cols = Columns::of(SIZE.0, SIZE.1);
+        // The screen's own columns: its presets take a row of the strip (`Screen::chips`).
+        let cols = Columns::of(SIZE.0, SIZE.1).with_chips();
         let (_, content) = ui.lines_at(&s, SIZE);
         let x = cols.bar_x() + 2.0;
         let drag =
@@ -1831,7 +1859,8 @@ mod tests {
     fn a_held_scroller_lets_go_when_the_window_gets_too_short_for_it() {
         let mut s = Settings::default();
         let mut ui = ui();
-        let cols = Columns::of(SIZE.0, SIZE.1);
+        // The screen's own columns: its presets take a row of the strip (`Screen::chips`).
+        let cols = Columns::of(SIZE.0, SIZE.1).with_chips();
         let x = cols.bar_x() + 2.0;
         ui.click(&mut s, (x, cols.top + 5.0), SIZE, false, false, false);
         assert!(ui.scroller_held());
@@ -1897,7 +1926,8 @@ mod tests {
         ui.scroll(&s, SIZE, -1.0);
         assert_eq!(ui.scroll_amount(), before + 18.0);
         assert_eq!(s.gamma, 0.25);
-        let cols = Columns::of(SIZE.0, SIZE.1);
+        // The screen's own columns: its presets take a row of the strip (`Screen::chips`).
+        let cols = Columns::of(SIZE.0, SIZE.1).with_chips();
         let (_, content) = ui.lines_at(&s, SIZE);
         ui.scroll(&s, SIZE, -1000.0);
         assert_eq!(ui.scroll_amount(), content - (cols.bottom - cols.top));

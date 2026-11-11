@@ -87,6 +87,10 @@ fn nits_setting(nits: u32) -> u32 {
     }
 }
 
+/// The frame rate the game last measured, for the settings header (`settings_shell`): the game
+/// stores it each second, 0 until it has.
+pub static SHOWN_FPS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// Simple-level presets. `Custom` leaves every option as the player set it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Preset {

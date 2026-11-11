@@ -11457,6 +11457,11 @@ impl Game<'_> {
                         horizon_client::crash::debug_crash_tick();
                         if self.fps_at.elapsed() >= Duration::from_secs(1) {
                             self.fps = self.fps_frames as f32 / self.fps_at.elapsed().as_secs_f32();
+                            // The settings header's frame rate (Video Settings' FPS pill).
+                            horizon_client::graphics::SHOWN_FPS.store(
+                                self.fps.round() as u32,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
                             self.fps_frames = 0;
                             self.fps_at = Instant::now();
                         }
