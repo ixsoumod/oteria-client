@@ -1409,15 +1409,8 @@ impl HudAtlas {
                 images.push(image);
             }
         }
-        // The title screen's "JAVA EDITION" banner reads "RUST EDITION".
-        if let Some(edition) = images
-            .iter_mut()
-            .find(|i| i.0 == crate::title_edition::SPRITE)
-            && let Some(pixels) =
-                crate::title_edition::rust_edition(edition.1, edition.2, &edition.3)
-        {
-            edition.3 = pixels;
-        }
+        // Oteria keeps the title screen's "JAVA EDITION" banner as the player's Minecraft
+        // (or their resource pack) draws it: no "RUST EDITION" (title_edition).
         images.push(("horizon/white".into(), 4, 4, vec![255; 64]));
         // The controller's art, unless a pack brought its own (walked above, as a mod's GUI
         // textures are).

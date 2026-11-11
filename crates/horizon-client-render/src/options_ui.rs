@@ -2944,33 +2944,22 @@ impl OptionsUi {
                         (!self.split_guest).then_some(Page::Packs),
                     ),
                     ("options.accessibility", Some(Page::Accessibility)),
-                    // Vanilla's Telemetry Data and Credits slots: Horizon's
-                    // settings and its mods, as a mod adds its button here.
-                    // Credits & Attribution (WinScreen's credits) follows them.
-                    ("horizon.pages.open.horizon_settings", Some(Page::Horizon)),
-                    ("horizon.pages.open.mods", Some(Page::Mods)),
+                    // Oteria shows neither Horizon's settings nor its mods here (its own menu,
+                    // on a key, will hold its features), nor vanilla's greyed Telemetry Data:
+                    // Credits & Attribution (WinScreen's credits) ends the list.
                     ("options.credits_and_attribution", Some(Page::Credits)),
                 ];
-                // horizon-extras: without it, vanilla's last row instead of Horizon Settings and
-                // Mods: Telemetry Data (greyed: nothing is sent) and Credits & Attribution.
-                let plain;
-                let entries: &[_] = if horizon_extras() {
-                    &entries
-                } else {
-                    plain = [
-                        &entries[..entries.len() - 3],
-                        &[
-                            ("options.telemetry", None),
-                            ("options.credits_and_attribution", Some(Page::Credits)),
-                        ],
-                    ]
-                    .concat();
-                    &plain
-                };
+                let entries: &[(&str, Option<Page>)] = &entries;
                 let rows = entries.len().div_ceil(2) as f32;
                 let gy = (61.0 + 30.0f32).min(h - 33.0 - rows * 24.0);
                 for (i, (key, page)) in entries.iter().enumerate() {
-                    let x = cx - 158.0 + 4.0 + (i % 2) as f32 * 158.0;
+                    // A last button alone on its row sits in the middle.
+                    let alone = i + 1 == entries.len() && entries.len() % 2 == 1;
+                    let x = if alone {
+                        cx - 75.0
+                    } else {
+                        cx - 158.0 + 4.0 + (i % 2) as f32 * 158.0
+                    };
                     let y = gy + (i / 2) as f32 * 24.0;
                     let b = button(x, y, 150.0, tr(key), page.map_or(Act::None, Act::Push));
                     out.push(if page.is_some() { b } else { inactive(b) });
@@ -5591,11 +5580,12 @@ mod tests {
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
         let size = (480.0, 240.0);
-        assert!(ui.layout(&s, size.0, size.1).0.iter().any(|w| {
+        // Oteria's Options has no Mods button (its own menu will hold its features); the page
+        // stays, for that menu to open.
+        assert!(!ui.layout(&s, size.0, size.1).0.iter().any(|w| {
             matches!(
                 w.kind,
                 WKind::Button {
-                    active: true,
                     act: Act::Push(Page::Mods),
                     ..
                 }
@@ -6472,13 +6462,13 @@ mod tests {
                 false,
             )
         };
-        for page in [Page::Horizon, Page::Extras] {
-            assert_eq!(
-                click(&mut ui, &mut s, Act::Push(page)),
-                vec![Event::ButtonClick]
-            );
-            assert_eq!(ui.page(), page);
-        }
+        // Oteria's Options has no button to its settings page: open it, then Extras from it.
+        ui.push(Page::Horizon);
+        assert_eq!(
+            click(&mut ui, &mut s, Act::Push(Page::Extras)),
+            vec![Event::ButtonClick]
+        );
+        assert_eq!(ui.page(), Page::Extras);
         assert_eq!(
             ui.extras.row_labels(&s).len(),
             // And the note about the Zoom mod over them.
@@ -7593,13 +7583,14 @@ mod tests {
                 })
                 .collect()
         };
-        // Vanilla's Options buttons, Horizon's two in the Telemetry and Credits slots, then
-        // Credits & Attribution (WinScreen's credits).
+        // Vanilla's Options buttons, then Credits & Attribution (WinScreen's credits): Oteria
+        // shows neither Horizon's settings nor its mods there, nor vanilla's greyed Telemetry.
         let main = pushes(&mut ui);
         assert_eq!(
             &main[main.len() - 3..],
-            [Page::Horizon, Page::Mods, Page::Credits]
+            [Page::Packs, Page::Accessibility, Page::Credits]
         );
+        assert!(!main.contains(&Page::Horizon) && !main.contains(&Page::Mods));
         // Video Settings... is the graphics screen, as Sodium's.
         assert!(main.contains(&Page::Graphics) && !main.contains(&Page::Video));
         ui.push(Page::Horizon);
