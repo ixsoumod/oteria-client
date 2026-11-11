@@ -118,7 +118,16 @@ Mods PvP à ajouter ensuite : **Armor HUD**, **Potion HUD**, **CPS seul**, **pin
 personnalisé**, **Toggle Sprint/Sneak**, **Freelook**, **couleur des coups**, **compteur de combo**,
 **horloge**, **direction (boussole)**, **Item Physics**, **feu bas / bouclier bas**.
 
-### 10. 🟢 Profils
+### 10. 🟢 Discord Rich Presence
+
+Afficher sur ton profil Discord que tu joues à Oteria : le logo, le serveur ou le monde (« Joue sur Craftok »),
+le mode (PvP, survie), le temps de jeu, et un bouton « Rejoindre » quand le serveur l'autorise.
+**Déjà là** : l'intégration Discord d'Horizon (`crates/horizon-discord`, « Playing Horizon »), retirée de notre
+build avec ses autres services. Il faut créer **l'application Discord Oteria** (son identifiant et le logo sur
+le portail développeur de Discord), puis rebrancher le module avec ces informations, et une option pour la
+couper ou masquer le serveur.
+
+### 11. 🟢 Profils
 
 Des jeux de réglages qu'on change en un clic : « PvP » (FPS max, HUD PvP), « Survie », « Build »,
 « Enregistrement ». Possibilité de lier un profil à un serveur (ex. Craftok → profil PvP automatiquement).
@@ -127,7 +136,7 @@ Des jeux de réglages qu'on change en un clic : « PvP » (FPS max, HUD PvP), «
 
 | Phase | Contenu | Pourquoi d'abord |
 | --- | --- | --- |
-| 1 | Menu Shift droit + mods PvP (9), profils (10) | Rapide, très visible, c'est le cœur d'un client PvP |
+| 1 | Menu Shift droit + mods PvP (9), Discord Rich Presence (10), profils (11) | Rapide, très visible, c'est le cœur d'un client PvP |
 | 2 | Publication + launcher restylé (8), FPS Boost (6) | Permet à tes potes d'installer et de sentir la différence |
 | 3 | Rejoindre / héberger en 1 clic (7), service en ligne Oteria | Le serveur sert aussi aux cosmétiques et aux badges |
 | 4 | Cosmétiques (5), shaders Oteria niveau léger puis moyen (4) | Plus de travail d'art et de rendu |
@@ -142,7 +151,6 @@ Des jeux de réglages qu'on change en un clic : « PvP » (FPS max, HUD PvP), «
 - **Hit-delay / CPS graph** et **analyse de combat** après un match (dégâts, combos, précision).
 - **Chat amélioré** : horodatage, recherche, copier un message, empilement des messages répétés.
 - **Waypoints** et **minimap de mort** (point de mort affiché).
-- **Discord Rich Presence Oteria** (« Joue sur Craftok en PvP »).
 - **Overlay de performance** avancé (temps CPU/GPU, graphe de frame time) pour vérifier le FPS Boost.
 - **Capture d'écran en un clic** avec upload et lien copié.
 - **Packs par serveur** : charger automatiquement un resource pack quand tu rejoins un serveur donné.
