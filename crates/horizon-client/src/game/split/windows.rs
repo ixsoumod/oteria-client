@@ -465,9 +465,9 @@ impl<'a> Split<'a> {
             n => format!(" - Window {n}"),
         };
         if self.players() > 1 && !who.is_empty() {
-            format!("Horizon{name} · {}", who.join(", "))
+            format!("Oteria{name} · {}", who.join(", "))
         } else {
-            format!("Horizon{name}")
+            format!("Oteria{name}")
         }
     }
 
@@ -582,7 +582,7 @@ impl<'a> Split<'a> {
                 let _ = window.request_inner_size(size);
                 window.set_outer_position(at);
                 #[cfg(target_os = "macos")]
-                above_menu_bar(&format!("Horizon {key}"));
+                above_menu_bar(&format!("Oteria {key}"));
             }
             match made {
                 Ok((window, compositor)) => {

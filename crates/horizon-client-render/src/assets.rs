@@ -208,7 +208,7 @@ impl Assets {
     pub fn load(root: &Path) -> Result<Self> {
         let manifest: Value = horizon_world::json_file::read(&root.join("horizon-resources.json"))?;
         if manifest["data_version"].as_i64() != Some(i64::from(DATA_VERSION)) {
-            return Err(invalid("resources do not match Horizon's pinned data version").into());
+            return Err(invalid("resources do not match Oteria's pinned data version").into());
         }
         let (registry, flags) = horizon_world::level::data::load_registry_with_flags(root)?;
         let bundle: Value = horizon_world::json_file::read(&root.join("block-tags.json"))?;

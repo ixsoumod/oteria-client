@@ -167,7 +167,7 @@ impl Report {
     pub fn text(&self) -> String {
         let comment = COMMENTS[self.time.timestamp().rem_euclid(COMMENTS.len() as i64) as usize];
         let mut out = String::new();
-        let _ = writeln!(out, "---- Horizon Crash Report ----");
+        let _ = writeln!(out, "---- Oteria Crash Report ----");
         let _ = writeln!(out, "// {comment}\n");
         let _ = writeln!(out, "Time: {}", self.time.format("%Y-%m-%d %H:%M:%S"));
         let _ = writeln!(out, "Description: {}\n", self.description);
@@ -350,7 +350,7 @@ fn memory() -> String {
 /// server renders nothing: it leaves out the render settings it read from options.txt.
 pub fn system_details(side: &str) -> Vec<(String, String)> {
     let mut out = vec![
-        ("Horizon Version".to_owned(), version()),
+        ("Oteria Version".to_owned(), version()),
         (
             "Minecraft Version".to_owned(),
             horizon_core::VANILLA_VERSION.to_owned(),
@@ -407,7 +407,7 @@ fn deliver(home: &Path, report: Report) -> Option<PathBuf> {
     crate::logging::write_only(
         log::Level::Error,
         &format!(
-            "Horizon crashed: {}\n{}",
+            "Oteria crashed: {}\n{}",
             report.error,
             report
                 .stack
@@ -766,7 +766,7 @@ mod tests {
             thread: "Render thread".into(),
             side: "client",
             details: vec![
-                ("Horizon Version".into(), "0.1.0".into()),
+                ("Oteria Version".into(), "0.1.0".into()),
                 ("Minecraft Version".into(), "26.3".into()),
                 ("Graphics".into(), "Test GPU (Vulkan), driver 1.0".into()),
             ],
@@ -786,7 +786,7 @@ mod tests {
     fn the_report_reads_like_vanillas() {
         let text = report().text();
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "---- Horizon Crash Report ----");
+        assert_eq!(lines[0], "---- Oteria Crash Report ----");
         assert!(lines[1].starts_with("// "));
         assert_eq!(lines[3], "Time: 2026-10-14 09:05:07");
         assert_eq!(lines[4], "Description: Unexpected error");
@@ -798,7 +798,7 @@ mod tests {
         );
         assert!(text.contains("-- Head --\nThread: Render thread\n"));
         assert!(text.contains(
-            "-- System Details --\nDetails:\n\tHorizon Version: 0.1.0\n\tMinecraft Version: 26.3\n\tGraphics: Test GPU (Vulkan), driver 1.0\n"
+            "-- System Details --\nDetails:\n\tOteria Version: 0.1.0\n\tMinecraft Version: 26.3\n\tGraphics: Test GPU (Vulkan), driver 1.0\n"
         ));
         assert!(text.ends_with(
             "-- Last 1 log lines --\n[09:05:06] [Render thread/INFO]: load assets: 1.20s\n"

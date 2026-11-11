@@ -336,7 +336,7 @@ fn description(item: Item, s: &Settings, screens: &[PackScreen]) -> String {
                 return String::new();
             };
             let kind = lang::get(match pack.kind {
-                Kind::Horizon => "A Horizon shader pack.",
+                Kind::Horizon => "An Oteria shader pack.",
                 Kind::Classic => "An OptiFine or Iris shader pack.",
             });
             let what = lang::get(if pack.key == s.horizon.shader_pack {

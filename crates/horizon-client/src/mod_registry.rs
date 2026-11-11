@@ -171,7 +171,7 @@ pub fn install(
 ) -> Result<Done, String> {
     let p = index
         .project(id)
-        .ok_or_else(|| format!("{id} isn't in Horizon's registry"))?;
+        .ok_or_else(|| format!("{id} isn't in Oteria's registry"))?;
     let v = installable(index, p)
         .ok_or_else(|| format!("{} has no version this game can install", p.name))?;
     let relative = format!("{}/{id}.hmod", crate::mod_list::DIR);

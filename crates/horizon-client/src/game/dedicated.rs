@@ -2301,7 +2301,7 @@ impl Game<'_> {
         };
         lists.lock().unwrap().bans.add(BanEntry::new(
             user,
-            Some("Horizon anticheat".into()),
+            Some("Oteria anticheat".into()),
             None,
             Some(reason.to_owned()),
         ));

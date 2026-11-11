@@ -1341,7 +1341,7 @@ fn login_and_configure(
         let _ = send(c, cfg::Clientbound::Disconnect(cfg::Disconnect { reason }));
         if let Some(log) = &shared.config.log {
             let line =
-                format!("Disconnecting {name}: its client is \"{brand}\", not Horizon ({text})");
+                format!("Disconnecting {name}: its client is \"{brand}\", not Oteria ({text})");
             (log.write)("Server thread", "INFO", &line);
         }
         lost(shared, &format!("{name} ({})", uuid_string(uuid)), text);

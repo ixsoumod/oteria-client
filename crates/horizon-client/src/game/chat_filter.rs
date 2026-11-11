@@ -101,7 +101,7 @@ fn mute_time(words: &[&str]) -> (Option<i64>, usize) {
 }
 
 /// The reason a temporary ban gives at login.
-const BAN_REASON: &str = "Hate speech in chat (Horizon chat filter)";
+const BAN_REASON: &str = "Hate speech in chat (Oteria chat filter)";
 
 impl Game<'_> {
     /// The hub's events from a filtered text: `ChatFiltered` carried out here, the others logged.

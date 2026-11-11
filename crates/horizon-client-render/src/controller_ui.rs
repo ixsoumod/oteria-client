@@ -94,9 +94,9 @@ fn choice_description(opt: Opt, pad: &PadSettings) -> Option<&'static str> {
         }
         Opt::PadKeyboard => match pad.keyboard {
             gamepad::TextKeyboard::Auto => {
-                "Opens Steam's keyboard on a Steam Deck under Steam, and Horizon's otherwise."
+                "Opens Steam's keyboard on a Steam Deck under Steam, and Oteria's otherwise."
             }
-            gamepad::TextKeyboard::Horizon => "Always opens Horizon's keyboard.",
+            gamepad::TextKeyboard::Horizon => "Always opens Oteria's keyboard.",
             gamepad::TextKeyboard::Steam => "Always opens Steam's keyboard.",
         },
         Opt::PadLightbar => match pad.lightbar {

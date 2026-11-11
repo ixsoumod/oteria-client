@@ -769,8 +769,8 @@ impl Item {
             Item::CosmeticsOthers => "Other players' cosmetics",
             Item::CosmeticsHideFx => "Hide other players' trails and auras",
             Item::CosmeticsSolo => "In single player",
-            Item::HorizonMarks => "Horizon logos",
-            Item::HorizonMe => "Show me as Horizon",
+            Item::HorizonMarks => "Oteria logos",
+            Item::HorizonMe => "Show me as Oteria",
             Item::Pvp(o) => o.caption(),
         }
     }
@@ -845,10 +845,10 @@ impl Item {
                 "F3+R starts or stops a repro recording and F3+E writes its bundle. Off by default: a recording copies the world."
             }
             Item::CosmeticsMine => {
-                "Hidden: every Horizon player sees you without your cosmetics, you included. The same switch as the launcher's Wardrobe."
+                "Hidden: every Oteria player sees you without your cosmetics, you included. The same switch as the launcher's Wardrobe."
             }
             Item::CosmeticsOthers => {
-                "What other Horizon players wear: everything, only their name tag styles, or nothing. Hidden unless you own cosmetics, until you choose. Hidden, the game never asks what they wear."
+                "What other Oteria players wear: everything, only their name tag styles, or nothing. Hidden unless you own cosmetics, until you choose. Hidden, the game never asks what they wear."
             }
             Item::CosmeticsHideFx => {
                 "Other players' trails and auras stay hidden; their other cosmetics still show. Off by default."
@@ -857,10 +857,10 @@ impl Item {
                 "Show your cosmetics and your name tag's badge in your single-player worlds too (your name tag with Own name tag). Off: only on servers."
             }
             Item::HorizonMarks => {
-                "Show the Horizon logo next to Horizon players: a small logo before the names of other players who use Horizon, above their heads and in the player list. Only Horizon players see it: servers receive nothing."
+                "Show the Oteria logo next to Oteria players: a small logo before the names of other players who use Oteria, above their heads and in the player list. Only Oteria players see it: servers receive nothing."
             }
             Item::HorizonMe => {
-                "Show me as a Horizon player: other Horizon players see the logo by your name. On, the service answers anyone who asks about you that you played Horizon in the last 3 hours; off, it never reports you."
+                "Show me as a Oteria player: other Oteria players see the logo by your name. On, the service answers anyone who asks about you that you played Oteria in the last 3 hours; off, it never reports you."
             }
             Item::Pvp(o) => o.description(),
             Item::WheelCyclesSettings => {

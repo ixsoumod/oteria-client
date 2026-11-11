@@ -59,7 +59,7 @@ impl Page {
             Page::General => "How far you see, the window and the HUD.",
             Page::Quality => "The sky and weather, lighting, textures and the image.",
             Page::Performance => "Chunk loading, culling and power use.",
-            Page::Shaders => "Shader packs, Horizon's and shaders/ folder ones, and their options.",
+            Page::Shaders => "Shader packs, Oteria's and shaders/ folder ones, and their options.",
             Page::Advanced => "How frames reach the screen, and the performance overlay.",
             Page::Hdr => "Brighter-than-white output on an HDR display.",
         }
@@ -521,7 +521,7 @@ pub fn rows() -> Vec<(Page, Vec<(&'static str, Vec<Setting>)>)> {
                     h(
                         H::ShaderPacks,
                         High,
-                        "Picks a shader pack, Horizon's or a shaders/ folder one, and sets its options.",
+                        "Picks a shader pack, Oteria's or a shaders/ folder one, and sets its options.",
                     ),
                     h(
                         H::ShadowCache,
@@ -1114,7 +1114,7 @@ impl Item {
     /// Lighting has nothing to switch where the running shader pack lights the world itself.
     fn blocked(self, s: &Settings, out: &EffectiveOutput) -> Option<&'static str> {
         if !self.available() {
-            return Some("This feature is not yet available in Horizon.");
+            return Some("This feature is not yet available in Oteria.");
         }
         match self {
             Item::Horizon(
