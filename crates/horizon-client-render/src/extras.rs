@@ -219,7 +219,9 @@ impl Default for Extras {
             minimap_rotate: false,
             auto_reconnect: false,
             ui_sound_reserve: false,
-            own_name_tag: false,
+            // Oteria shows the player's own name tag (and its badge) in third person, as
+            // Lunar and Badlion can; Options > Oteria Extras turns it off.
+            own_name_tag: true,
             hide_block_particles: false,
             mouse_tweaks: false,
             mouse_tweaks_wheel: true,
@@ -1085,7 +1087,9 @@ mod tests {
         let d = Extras::default();
         assert!(!d.fullbright && !d.dynamic_lights);
         assert!(!d.zoom && !d.fps && !d.keystrokes && !d.minimap && !d.auto_reconnect);
-        assert!(!d.mouse_tweaks && !d.sort && !d.own_name_tag && !d.ui_sound_reserve);
+        assert!(!d.mouse_tweaks && !d.sort && !d.ui_sound_reserve);
+        // Oteria's one exception: the player sees their own name tag (and its badge).
+        assert!(d.own_name_tag);
         assert!(!d.hide_block_particles && !d.pregen);
         assert!(!d.music_page && d.music_off.is_empty());
         assert!(!d.wheel_cycles_settings);
@@ -1113,6 +1117,9 @@ mod tests {
         e.auto_reconnect = true;
         Item::Pregen.cycle(&mut e, false);
         assert_eq!(Item::Pregen.switch(&e), Some(true));
+        // On by default in Oteria: a cycle turns it off, another back on.
+        Item::OwnNameTag.cycle(&mut e, false);
+        assert_eq!(Item::OwnNameTag.switch(&e), Some(false));
         Item::OwnNameTag.cycle(&mut e, false);
         assert_eq!(Item::OwnNameTag.switch(&e), Some(true));
         assert_eq!(Item::HideBlockParticles.switch(&e), Some(false));
@@ -1120,7 +1127,7 @@ mod tests {
         assert!(e.hide_block_particles);
         assert_eq!(Item::HideBlockParticles.switch(&e), Some(true));
         let only = Extras::parse("hideBlockParticles:true\n");
-        assert!(only.hide_block_particles && !only.own_name_tag);
+        assert!(only.hide_block_particles && only.own_name_tag);
         e.mouse_tweaks = true;
         e.mouse_tweaks_wheel = false;
         e.sort = true;
