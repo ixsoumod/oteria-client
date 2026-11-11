@@ -1,14 +1,17 @@
 @echo off
-rem Oteria Client: starts the release build with one fixed game folder, so video settings,
-rem controls (options.txt, horizon-graphics.txt), worlds and caches survive every rebuild,
-rem `git clean` and a fresh clone. Logs and crash reports go there too, apart from Horizon's.
+rem Oteria Client: starts the game with one fixed game folder, so video settings, controls
+rem (options.txt, horizon-graphics.txt), worlds and caches survive every rebuild, `git clean` and
+rem a fresh clone. Logs and crash reports go there too, apart from Horizon's.
+rem It starts the quick-to-rebuild `fast` build (oteria-build.cmd) when there is one, else the
+rem release build.
 setlocal
 set "ROOT=%~dp0"
 set "OTERIA_DIR=%APPDATA%\.oteria"
-set "EXE=%ROOT%target\release\horizon-client.exe"
+set "EXE=%ROOT%target\fast\horizon-client.exe"
+if not exist "%EXE%" set "EXE=%ROOT%target\release\horizon-client.exe"
 
 if not exist "%EXE%" (
-    echo Oteria Client n'est pas compile. Lance d'abord : cargo build --release -p horizon-client
+    echo Oteria Client n'est pas compile. Lance d'abord : oteria-build.cmd
     exit /b 1
 )
 
