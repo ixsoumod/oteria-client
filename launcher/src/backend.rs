@@ -1224,7 +1224,7 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
                 .filter(|v| *v == release.tag)
                 .ok_or_else(|| {
                     crate::i18n::trf(
-                        "This Nightly's title ({title}) doesn't name its date and commit as Horizon \
+                        "This Nightly's title ({title}) doesn't name its date and commit as Oteria \
                          signs them, so it can't be checked: it was not installed.",
                         &[("title", &format!("{:?}", release.name))],
                     )
@@ -1518,7 +1518,7 @@ pub fn resources_summary(prepared: bool, sounds: bool, version: &str) -> String 
     use crate::i18n::trf;
     match (prepared, sounds) {
         (false, _) => trf(
-            "Not prepared. Horizon needs the files of your own Minecraft {version}.",
+            "Not prepared. Oteria needs the files of your own Minecraft {version}.",
             &[("version", version)],
         ),
         (true, true) => trf("Prepared for Minecraft {version}", &[("version", version)]),

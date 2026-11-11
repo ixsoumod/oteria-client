@@ -2469,7 +2469,7 @@ impl Launcher {
             return div().child(centered(
                 if self.older_horizon() {
                     tr(
-                        "This server's Horizon is too old to show its settings here. Update it on \
+                        "This server's Oteria is too old to show its settings here. Update it on \
                      the Backups tab, then they appear.",
                     )
                 } else {
@@ -2748,7 +2748,7 @@ impl Launcher {
         }
         self.setting_row(
             "Delete server",
-            tr("Remove this server from Horizon and move its worlds, settings and backups to the trash.").into(),
+            tr("Remove this server from Oteria and move its worlds, settings and backups to the trash.").into(),
             controls.into_any_element(),
         )
         .items_start()
@@ -2820,11 +2820,11 @@ impl Launcher {
         });
         let about = match (&available, &check, &status.update_last) {
             (Some(tag), _, _) => trf(
-                "Update available: Horizon {tag} (this server runs {release}). Updating backs up \
+                "Update available: Oteria {tag} (this server runs {release}). Updating backs up \
                  the world first, and goes back by itself if the new version doesn't start.",
                 &[("tag", tag), ("release", &release)],
             ),
-            (None, Some(_), _) => trf("Up to date: Horizon {release}.", &[("release", &release)]),
+            (None, Some(_), _) => trf("Up to date: Oteria {release}.", &[("release", &release)]),
             (None, None, Some((last, _))) => format!("Horizon {release}. {last}"),
             (None, None, None) => format!("Horizon {release}."),
         };
@@ -2880,7 +2880,7 @@ impl Launcher {
             .flex_col()
             .border_t_1()
             .border_color(rule)
-            .child(self.setting_row("This server's Horizon", about, control.into_any_element()));
+            .child(self.setting_row("This server's Oteria", about, control.into_any_element()));
         if self.servers.setting("updates", "keep").is_some() {
             rows = rows.child(self.setting_row(
                 "Older versions kept",
@@ -3013,7 +3013,7 @@ impl Launcher {
         if self.older_horizon() {
             return tab
                 .child(text(theme::UI).text_color(t.muted).child(tr(
-                    "This server's Horizon is too old to list its backups here: they're in its \
+                    "This server's Oteria is too old to list its backups here: they're in its \
                      backups folder. Update it below.",
                 )))
                 .child(self.updates_section(status, cx));

@@ -1516,12 +1516,12 @@ impl Step {
             ),
             Self::Tool => tr("Building horizon-mixins (once)").into(),
             Self::Source(revision) => trf(
-                "Downloading Horizon's source at {revision}",
+                "Downloading Oteria's source at {revision}",
                 &[("revision", &revision[..7])],
             ),
             Self::Mixins => tr("Applying the mixins").into(),
             Self::CachedMixins => tr("Reusing patched game source").into(),
-            Self::Crates => tr("Checking the mods' crates against Horizon's Cargo.lock").into(),
+            Self::Crates => tr("Checking the mods' crates against Oteria's Cargo.lock").into(),
             Self::Plan(plan, profile) => format!("{} ({})", plan.label(), profile.name()),
             Self::Compile {
                 done,
@@ -1552,7 +1552,7 @@ impl Step {
             Self::Install => tr("Installing the build").into(),
             Self::LeftOut(left) => left.label(),
             Self::OnTheirHorizon(mods) => trf(
-                "{mods} didn't build on the Horizon you play: building on the one they were made for",
+                "{mods} didn't build on the Oteria you play: building on the one they were made for",
                 &[("mods", &mods.join(", "))],
             ),
             Self::Done {

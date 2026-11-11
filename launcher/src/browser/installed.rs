@@ -431,7 +431,7 @@ pub fn install_datapack(
         let coverage = crate::datapacks::coverage(&zip)?;
         if coverage.read.is_empty() {
             return Err(crate::i18n::trf(
-                "{title} would change nothing in Horizon yet: Horizon doesn't read its {files}.",
+                "{title} would change nothing in Oteria yet: Oteria doesn't read its {files}.",
                 &[("title", &project.title), ("files", &coverage.not_read())],
             ));
         }

@@ -352,7 +352,7 @@ pub fn support(kind: Kind, game_versions: &[String], loaders: &[String]) -> Supp
 /// pack's own files (`crate::datapacks::coverage`).
 pub fn datapack_support() -> &'static str {
     crate::i18n::tr(
-        "Horizon runs a data pack's functions, function tags, predicates, item modifiers, recipes, loot tables, advancements, villager trades, damage types, most tags and most worldgen (biomes, features, structures, dimensions). Other files, such as world presets, are not read yet.",
+        "Oteria runs a data pack's functions, function tags, predicates, item modifiers, recipes, loot tables, advancements, villager trades, damage types, most tags and most worldgen (biomes, features, structures, dimensions). Other files, such as world presets, are not read yet.",
     )
 }
 

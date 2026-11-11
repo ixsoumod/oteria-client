@@ -15,7 +15,14 @@
   <a href="#project-status"><img src="https://img.shields.io/badge/player--visible%20gaps-0%20open-F0795A" alt="Player-visible gaps open"></a>
 </p>
 
-# Horizon
+# Oteria Client
+
+> **Oteria Client** est un fork d'[Horizon](https://github.com/horizon-rust/horizon), en hommage à OteriaPvP Practice.
+> Tout le moteur vient d'Horizon, créé par Ludovic Marie et ses contributeurs, et distribué sous licence [MIT](LICENSE) ;
+> cette licence et ses mentions de copyright sont conservées. Oteria Client n'est ni affilié à Horizon, ni approuvé par ses auteurs.
+> Le reste de ce README est celui d'Horizon : les liens de téléchargement, le Discord et les serveurs mentionnés sont ceux d'Horizon.
+
+## Horizon (projet d'origine)
 
 **Minecraft: Java Edition 26.3, rewritten in Rust.** Your worlds, the same rules and the same terrain as the Java game, checked against it by hundreds of differential tests, in one native program with no Java. Free, open source (MIT) and unofficial: you play it with your own copy of Java Edition.
 

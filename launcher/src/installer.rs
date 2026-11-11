@@ -7,7 +7,7 @@
 //! launcher's data folder only when asked, the game's folder never.
 //!
 //! Nothing here deletes a folder it didn't make: the install folder is always called
-//! "Horizon Launcher" ([`folder_for`]) and is removed with `remove_dir`, which only takes an empty one.
+//! "Oteria Client" ([`folder_for`]) and is removed with `remove_dir`, which only takes an empty one.
 //!
 //! Command lines (handled in `main` before the CLI parser, so MCP never sees them):
 //! `horizon-launcher-setup.exe` (window), `... setup --quiet [--dir <folder>] [--desktop-shortcut]`,
@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
-pub const APP_NAME: &str = "Horizon Launcher";
+pub const APP_NAME: &str = "Oteria Client";
 const BINARY: &str = "horizon-launcher.exe";
 const PUBLISHER: &str = "Horizon";
 const ABOUT_URL: &str = "https://playhorizon.dev";
@@ -45,7 +45,7 @@ pub enum Step {
 
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// Where the launcher goes (always a folder called "Horizon Launcher").
+    /// Where the launcher goes (always a folder called "Oteria Client").
     pub dir: PathBuf,
     pub desktop: bool,
     /// Uninstall only: also delete the launcher's data folder.
@@ -115,7 +115,7 @@ pub fn default_dir() -> PathBuf {
         .join(APP_NAME)
 }
 
-/// The install folder for a folder the player picked: always one called "Horizon Launcher", so
+/// The install folder for a folder the player picked: always one called "Oteria Client", so
 /// uninstalling never has to guess what is ours.
 pub fn folder_for(chosen: &Path) -> PathBuf {
     if chosen
@@ -588,11 +588,11 @@ mod tests {
     fn the_install_folder_is_always_ours() {
         assert_eq!(
             folder_for(Path::new(r"C:\Games")),
-            PathBuf::from(r"C:\Games\Horizon Launcher")
+            PathBuf::from(r"C:\Games\Oteria Client")
         );
         assert_eq!(
-            folder_for(Path::new(r"C:\Games\horizon launcher")),
-            PathBuf::from(r"C:\Games\horizon launcher")
+            folder_for(Path::new(r"C:\Games\oteria client")),
+            PathBuf::from(r"C:\Games\oteria client")
         );
     }
 
@@ -630,7 +630,7 @@ mod tests {
             .map_or(temp.clone(), PathBuf::from);
         let dir = temp.join(format!("horizon-link-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        let exe = dir.join("Horizon Launcher").join("horizon-launcher.exe");
+        let exe = dir.join("Oteria Client").join("horizon-launcher.exe");
         fs::create_dir_all(exe.parent().unwrap()).unwrap();
         fs::write(&exe, b"x").unwrap();
         let link = dir.join("Horizon Launcher.lnk");

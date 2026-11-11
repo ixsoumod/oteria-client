@@ -308,10 +308,10 @@ impl Launcher {
                     .flex_col()
                     .gap(px(8.))
                     .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(
-                        "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers.",
+                        "Oteria needs a Microsoft account that owns Minecraft: Java Edition, like other launchers.",
                     )))
                     .child(ui::text(14., FontWeight::NORMAL, ink::BODY).child(tr(
-                        "No Minecraft install needed: Horizon downloads it from Mojang for your account.",
+                        "No Minecraft install needed: Oteria downloads it from Mojang for your account.",
 ))),
             );
         card = match state {

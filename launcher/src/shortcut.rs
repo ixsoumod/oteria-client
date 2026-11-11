@@ -74,7 +74,7 @@ pub fn file_name(name: &str, system: System) -> String {
         .collect();
     let clean = clean.trim().trim_matches('.');
     let clean = if clean.is_empty() { "Instance" } else { clean };
-    format!("{clean} (Horizon).{}", system.extension())
+    format!("{clean} (Oteria).{}", system.extension())
 }
 
 /// The id as a file name or bundle id part: letters, digits and `-`.

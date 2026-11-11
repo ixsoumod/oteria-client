@@ -348,7 +348,7 @@ pub fn trust_and_capabilities(
             );
             if let Some(older) = instance.and_then(|i| older_fit(p, v, i)) {
                 lines.push(crate::i18n::trf(
-                    "An older version, {version}, builds on the Horizon you play: installing picks it",
+                    "An older version, {version}, builds on the Oteria you play: installing picks it",
                     &[("version", &older)],
                 ));
             }
@@ -880,7 +880,7 @@ pub fn standings(
                 let standing = match about.left_out.iter().find(|l| &l.id == id) {
                     Some(left) => Standing::LeftOut(left.label()),
                     None if moved => Standing::Moved(crate::i18n::trf(
-                        "In the last build, on Horizon {commit} for {mods}, not on {horizon}",
+                        "In the last build, on Oteria {commit} for {mods}, not on {horizon}",
                         &[
                             ("commit", &about.horizon[..about.horizon.len().min(7)]),
                             ("mods", &about.pinned_by.join(", ")),
@@ -1189,7 +1189,7 @@ pub fn fit_versions(instance: &crate::instances::Instance) -> Vec<String> {
         };
         if install_version_guarded(&index, local(), p, v, home, &|_| Ok(()), &|_, _| {}).is_ok() {
             lines.push(crate::i18n::trf(
-                "{mod}: using version {version}, made for the Horizon you play",
+                "{mod}: using version {version}, made for the Oteria you play",
                 &[("mod", &p.name), ("version", &v.version)],
             ));
         }

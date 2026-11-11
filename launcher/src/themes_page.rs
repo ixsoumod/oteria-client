@@ -134,7 +134,7 @@ impl Launcher {
             Some(
                 div()
                     .child(tr(
-                        "Horizon's violet by default. Every colour keeps text as easy to read.",
+                        "Oteria's violet by default. Every colour keeps text as easy to read.",
                     ))
                     .into_any_element(),
             ),
@@ -401,7 +401,7 @@ impl Launcher {
             Some(
                 div()
                     .child(tr(
-                        "Accent colour, glass, blur, language and the options above go back to how Horizon ships.",
+                        "Accent colour, glass, blur, language and the options above go back to how Oteria ships.",
                     ))
                     .into_any_element(),
             ),
@@ -630,7 +630,7 @@ impl Launcher {
         let said = if custom {
             tr("Your picture, behind Home, cropped to fill it.")
         } else {
-            tr("Horizon's landscape. Pick a PNG, JPEG or WebP picture of your own.")
+            tr("Oteria's landscape. Pick a PNG, JPEG or WebP picture of your own.")
         };
         let detail = div().flex().flex_col().child(said.to_string()).children(
             self.background_error
