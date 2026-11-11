@@ -347,8 +347,8 @@ pub struct TabInputs<'a> {
     /// A mark after the player's head, or none: an extension point for what lives above the
     /// engine (Horizon's mark, `horizon_cosmetics::mark`). Vanilla draws none.
     pub mark: &'a dyn Fn(u128) -> Option<NameMark>,
-    /// A sprite drawn 8x8 in the same column instead, or none: Oteria's badge
-    /// (`crate::name_badge`) for its players. Vanilla draws none.
+    /// A GUI sprite (its `blitSprite` id) drawn 8x8 in the same column instead, or none:
+    /// Oteria's badge (`crate::name_badge::GUI_SPRITE`) for its players. Vanilla draws none.
     pub badge: &'a dyn Fn(u128) -> Option<&'static str>,
 }
 

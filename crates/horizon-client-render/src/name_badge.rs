@@ -3,8 +3,11 @@
 //! `branding/make_icons.py` renders the texture; it is packed into the GUI atlas with the
 //! controller art (`pad_glyph::images`) and drawn 8 text pixels square.
 
-/// The atlas sprite.
-pub const SPRITE: &str = "horizon:gui/oteria_badge";
+/// The atlas sprite, where the GUI's sprites are: name tags draw it by this name.
+pub const SPRITE: &str = "gui/sprites/oteria_badge";
+/// Its `blitSprite` id: what a [`crate::hud_layout::GuiDraw::Sprite`] names (the player list),
+/// which looks it up under `gui/sprites/`.
+pub const GUI_SPRITE: &str = "oteria_badge";
 /// The size it is drawn at, in text pixels: a line of text's height.
 pub const DRAWN: i32 = 8;
 
@@ -14,6 +17,13 @@ pub(crate) const PNG: &[u8] =
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The player list draws a `GuiDraw::Sprite`, which `hud_layout::paint` looks up under
+    /// `gui/sprites/`: its id must lead to the packed name, or the badge is silently dropped.
+    #[test]
+    fn the_player_lists_id_finds_the_packed_sprite() {
+        assert_eq!(format!("gui/sprites/{GUI_SPRITE}"), SPRITE);
+    }
 
     #[test]
     fn the_badge_is_packed_square_white_and_clear_around() {

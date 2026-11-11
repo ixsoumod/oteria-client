@@ -908,25 +908,35 @@ impl Game<'_> {
         let marked = horizon_hooks::engine::player_mark;
         // The window's own player plays Oteria: their row carries its badge, hooks or not. Many
         // servers fill the list with their own entries (a tab plugin, a proxy), whose UUID and
-        // name are not the player's: the row is theirs by UUID, by profile name, or when the name
-        // it shows holds the player's name as a word ("[VIP] Name").
+        // name are not the player's: the row is theirs by UUID, or when its name or the name it
+        // shows holds the player's name as a word ("[VIP] Name"), legacy colour codes ("§7")
+        // taken out first.
         let own_rows: std::collections::HashSet<u128> = match self.remote.as_ref() {
             Some(r) => {
                 let name = r.profile_name.as_str();
-                let shows = |p: &horizon_client::tab_list::TabPlayer| {
-                    p.display_name.as_ref().is_some_and(|d| {
-                        horizon_client::scoreboard::comp_text(d)
-                            .plain()
-                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                            .any(|word| word.eq_ignore_ascii_case(name))
-                    })
+                let holds = |text: &str| {
+                    let mut plain = String::with_capacity(text.len());
+                    let mut chars = text.chars();
+                    while let Some(c) = chars.next() {
+                        if c == '§' {
+                            chars.next();
+                        } else {
+                            plain.push(c);
+                        }
+                    }
+                    plain
+                        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                        .any(|word| word.eq_ignore_ascii_case(name))
                 };
                 players
                     .iter()
                     .filter(|p| {
                         p.uuid == r.profile()
                             || (!name.is_empty()
-                                && (p.name.eq_ignore_ascii_case(name) || shows(p)))
+                                && (holds(&p.name)
+                                    || p.display_name.as_ref().is_some_and(|d| {
+                                        holds(&horizon_client::scoreboard::comp_text(d).plain())
+                                    })))
                     })
                     .map(|p| p.uuid)
                     .collect()
@@ -934,7 +944,7 @@ impl Game<'_> {
             None => Default::default(),
         };
         let badge =
-            |uuid: u128| own_rows.contains(&uuid).then_some(horizon_client::name_badge::SPRITE);
+            |uuid: u128| own_rows.contains(&uuid).then_some(horizon_client::name_badge::GUI_SPRITE);
         let inputs = TabInputs {
             players: &players,
             board,
