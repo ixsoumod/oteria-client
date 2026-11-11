@@ -123,4 +123,23 @@ lines = [
     ]),
     encoding="utf-8",
 )
+
+# The badge before an Oteria player's name, as Lunar's or Badlion's: the logo in white on
+# nothing, cropped tight, for 16-32 screen pixels. The waves are filled, the gaps between them
+# stay clear; the cyan and pale waves are one white band round the hole.
+badge = [shape(BIG_OUT, BIG_IN), shape(CYAN_OUT, HOLE),
+         shape(FOAM_LONG_OUT, FOAM_LONG_IN), shape(FOAM_SHORT_OUT, FOAM_SHORT_IN)]
+(HERE / "oteria-badge.svg").write_text(
+    NL.join([
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="80 40 380 410">',
+        "  <title>Oteria Client badge</title>",
+        NOTE,
+        '  <g fill="#ffffff">',
+        NL.join(f'    <path d="{d}"/>' for d in badge),
+        "  </g>",
+        "</svg>",
+        "",
+    ]),
+    encoding="utf-8",
+)
 print("written")

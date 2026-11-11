@@ -556,9 +556,9 @@ impl Game<'_> {
             "a server thread calls no client hook"
         );
         let mut marks = super::names::Marks::default();
-        // The window's own player plays Oteria: their name carries its mark, hooks or not.
+        // The window's own player plays Oteria: their name carries its badge, hooks or not.
         if own {
-            marks.mark = Some(super::cosmetics::MARK);
+            marks.badge = Some(horizon_client::name_badge::SPRITE);
         }
         if !engine::any() {
             return marks;
@@ -569,7 +569,7 @@ impl Game<'_> {
             (false, None) => return marks,
         };
         if let Some(d) = engine::name_decoration(&model, &HookSprites(self)) {
-            marks.mark = d.mark.or(marks.mark);
+            marks.mark = d.mark;
             marks.top = d.top;
             marks.style = d.badge.map(|b| {
                 let [u0, v0, u1, v1] = b.uv;

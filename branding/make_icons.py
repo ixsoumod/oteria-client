@@ -103,5 +103,9 @@ for svg, size, out in [
 ]:
     write(REPO / out, render(svg, size))
 write(BRAND / "web/favicon.svg", square.read_bytes())
+# The badge before an Oteria player's name (horizon_client::name_badge): 32 px, drawn 8 text
+# pixels square, so 1:1 at GUI scale 4.
+badge = REPO / "branding" / "oteria-badge.svg"
+write(REPO / "crates/horizon-client/assets/horizon/textures/gui/oteria_badge.png", render(badge, 32))
 shutil.rmtree(TMP, ignore_errors=True)
 print("wrote packaging/icons, the window icon, the avatars and the website's icons")

@@ -96,6 +96,7 @@ pub mod pack_palette;
 pub mod pack_screen;
 pub mod pack_tags;
 pub mod packs;
+pub mod name_badge;
 pub mod pad_cursor;
 pub mod pad_glyph;
 pub mod paged_maps;

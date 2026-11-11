@@ -347,6 +347,9 @@ pub struct TabInputs<'a> {
     /// A mark after the player's head, or none: an extension point for what lives above the
     /// engine (Horizon's mark, `horizon_cosmetics::mark`). Vanilla draws none.
     pub mark: &'a dyn Fn(u128) -> Option<NameMark>,
+    /// A sprite drawn 8x8 in the same column instead, or none: Oteria's badge
+    /// (`crate::name_badge`) for its players. Vanilla draws none.
+    pub badge: &'a dyn Fn(u128) -> Option<&'static str>,
 }
 
 /// A mark drawn after a player's head in the tab list: filled rectangles `(x, y, width, height,
@@ -373,7 +376,7 @@ struct LayoutCache {
     footer: Option<Text>,
     language: Option<std::sync::Arc<crate::lang::Language>>,
     dimensions: (i32, bool, u32, u64),
-    flags: Vec<(bool, Option<NameMark>)>,
+    flags: Vec<(bool, Option<NameMark>, Option<&'static str>)>,
     draws: Vec<GuiDraw>,
     hearts: Vec<(usize, i32, i32, i32, u128, i32)>,
 }
@@ -432,7 +435,7 @@ impl TabList {
         let flags: Vec<_> = i
             .players
             .iter()
-            .map(|p| ((i.upside_down)(p.uuid), (i.mark)(p.uuid)))
+            .map(|p| ((i.upside_down)(p.uuid), (i.mark)(p.uuid), (i.badge)(p.uuid)))
             .collect();
         let valid = self.cache.as_ref().is_some_and(|c| {
             c.players == i.players
@@ -548,7 +551,8 @@ impl TabList {
         let head = if show_head { 9 } else { 0 };
         // A column for the marks once anyone listed has one, so the names stay aligned.
         let marked: Vec<Option<NameMark>> = players.iter().map(|p| (i.mark)(p.uuid)).collect();
-        let mark = if marked.iter().any(Option::is_some) {
+        let badged: Vec<Option<&'static str>> = players.iter().map(|p| (i.badge)(p.uuid)).collect();
+        let mark = if marked.iter().any(Option::is_some) || badged.iter().any(Option::is_some) {
             9
         } else {
             0
@@ -620,7 +624,18 @@ impl TabList {
                 );
                 xo += 9;
             }
-            if let Some(rects) = marked[n as usize] {
+            if let Some(sprite) = badged[n as usize] {
+                out.push(GuiDraw::Sprite {
+                    sprite: Cow::Borrowed(sprite),
+                    x: xo,
+                    y: yo,
+                    w: 8,
+                    h: 8,
+                    region: None,
+                    color: WHITE,
+                    blend: Blend::Textured,
+                });
+            } else if let Some(rects) = marked[n as usize] {
                 for &(mx, my, w, h, color) in rects {
                     let (x, y) = (xo + i32::from(mx), yo + i32::from(my));
                     let (x1, y1) = (x + i32::from(w), y + i32::from(h));
@@ -841,6 +856,7 @@ mod tests {
                 background: 0x20ffffff,
                 upside_down: &|_| false,
                 mark: &|_| None,
+                badge: &|_| None,
             };
             fresh.cache = None;
             assert_eq!(

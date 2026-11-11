@@ -766,7 +766,12 @@ impl Game<'_> {
                     if background { BACKGROUND } else { 0 },
                 ),
             };
-            if let Some(mark) = marks.mark.filter(|_| n == last) {
+            let badge = marks.badge.filter(|_| n == last);
+            if let Some(r) = badge.and_then(|name| self.gui.atlas.sprites.get(name).copied()) {
+                let x = -self.gui.atlas.font.width_text(text) / 2.0 - 10.0;
+                // Where the mark goes: 8 text pixels square, a pixel left of the background.
+                batch.rect_uv(x, y0, 8.0, 8.0, r, text_alpha << 24 | 0xFF_FFFF);
+            } else if let Some(mark) = marks.mark.filter(|_| n == last) {
                 let x = -self.gui.atlas.font.width_text(text) / 2.0 - 10.0;
                 // 8 text pixels square, a pixel left of the background.
                 for &(mx, my, w, h, argb) in mark {
@@ -938,6 +943,9 @@ struct NameTag {
 #[derive(Clone, Copy, Default)]
 pub(super) struct Marks {
     pub mark: Option<horizon_hooks::players::Mark>,
+    /// A sprite of the GUI atlas drawn where the mark goes, instead of it: Oteria's badge
+    /// (`horizon_client::name_badge`) for the window's own player.
+    pub badge: Option<&'static str>,
     pub style: Option<TagStyle>,
     /// How high the cosmetics drawn on their body get above the neck, in model pixels: the tag
     /// goes up over a tall one (`cosmetic_lift`).

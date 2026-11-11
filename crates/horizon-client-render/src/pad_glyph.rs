@@ -304,7 +304,10 @@ pub fn draw(batch: &mut HudBatch, atlas: &HudAtlas, glyph: Glyph, x: f32, y: f32
 pub fn images() -> impl Iterator<Item = (String, u32, u32, Vec<u8>)> {
     ART.iter()
         .map(|art| (art.sprite, art.png))
-        .chain([(pad_cursor::SPRITE, pad_cursor::PNG)])
+        .chain([
+            (pad_cursor::SPRITE, pad_cursor::PNG),
+            (crate::name_badge::SPRITE, crate::name_badge::PNG),
+        ])
         .map(|(name, png)| {
             let (w, h, pixels) = decode(png).expect("Horizon's controller art is PNG");
             (name.to_owned(), w, h, pixels)
@@ -466,7 +469,7 @@ mod tests {
     #[test]
     fn every_sprite_has_its_texture_at_twice_gui_size() {
         let images: Vec<_> = images().collect();
-        assert_eq!(images.len(), ART.len() + 1, "the art and the cursor");
+        assert_eq!(images.len(), ART.len() + 2, "the art, the cursor and the badge");
         for (name, w, h, pixels) in &images {
             assert_eq!(pixels.len(), (w * h * 4) as usize, "{name}");
             assert_eq!(*h as f32, DRAWN_HEIGHT * 2.0, "{name}");

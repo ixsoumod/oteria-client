@@ -905,15 +905,10 @@ impl Game<'_> {
             self.serving.is_none(),
             "a server thread calls no client hook"
         );
-        // The window's own player plays Oteria: their row carries its mark, hooks or not.
+        let marked = horizon_hooks::engine::player_mark;
+        // The window's own player plays Oteria: their row carries its badge, hooks or not.
         let own = self.remote.as_ref().map(|r| r.profile());
-        let marked = |uuid: u128| {
-            if Some(uuid) == own {
-                Some(super::cosmetics::MARK)
-            } else {
-                horizon_hooks::engine::player_mark(uuid)
-            }
-        };
+        let badge = |uuid: u128| (Some(uuid) == own).then_some(horizon_client::name_badge::SPRITE);
         let inputs = TabInputs {
             players: &players,
             board,
@@ -928,6 +923,7 @@ impl Game<'_> {
             ),
             upside_down: &up,
             mark: &marked,
+            badge: &badge,
         };
         let draws = self.tab_list.layout(&inputs, &self.gui.atlas.font);
         horizon_client::hud_layout::paint(batch, &self.gui.atlas, &draws);

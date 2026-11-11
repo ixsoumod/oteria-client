@@ -173,6 +173,7 @@ pub fn main() -> Result<()> {
                     upside_down: &up,
                     // Vanilla draws no mark.
                     mark: &|_| None,
+                    badge: &|_| None,
                 };
                 for d in list.layout(&inputs, font) {
                     draws.push(match d {

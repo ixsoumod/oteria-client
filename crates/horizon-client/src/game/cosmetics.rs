@@ -23,10 +23,10 @@ use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-/// Oteria's mark before an Oteria player's name, over their name tag and in the player list.
-/// The window's own player always plays Oteria, so their name carries it with no service
-/// (`Game::hooks_name_marks`, the player list).
-pub(super) const MARK: Mark = &horizon_cosmetics::mark::MARK;
+/// The mark before the name of a player the cosmetics service says plays Oteria, over their
+/// name tag and in the player list. The window's own player gets Oteria's badge instead
+/// (`horizon_client::name_badge`), with no service.
+const MARK: Mark = &horizon_cosmetics::mark::MARK;
 
 #[derive(Default)]
 pub(super) struct Cosmetics {
