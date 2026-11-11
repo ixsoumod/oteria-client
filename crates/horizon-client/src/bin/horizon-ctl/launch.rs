@@ -21,7 +21,7 @@ const CLIENT: &str = "horizon-client";
 pub fn launcher_home() -> PathBuf {
     match std::env::var_os("HORIZON_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
         Some(h) => PathBuf::from(h),
-        None => data_dir().join("horizon-launcher"),
+        None => data_dir().join("oteria-launcher"),
     }
 }
 /// `v2026.10.13.1` gives [2026, 10, 13, 1]; a pre-release suffix is ignored.
