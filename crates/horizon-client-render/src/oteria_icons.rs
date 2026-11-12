@@ -8,6 +8,7 @@ pub const CLOCK: &str = "gui/sprites/oteria_icons/clock";
 pub const COPY: &str = "gui/sprites/oteria_icons/copy";
 pub const CROSSHAIR: &str = "gui/sprites/oteria_icons/crosshair";
 pub const DROPLET: &str = "gui/sprites/oteria_icons/droplet";
+pub const FEATHER: &str = "gui/sprites/oteria_icons/feather";
 pub const FLAME: &str = "gui/sprites/oteria_icons/flame";
 pub const FLAME_OFF: &str = "gui/sprites/oteria_icons/flame-off";
 pub const FLASK: &str = "gui/sprites/oteria_icons/flask";
@@ -16,6 +17,7 @@ pub const KEYBOARD: &str = "gui/sprites/oteria_icons/keyboard";
 pub const LAYOUT: &str = "gui/sprites/oteria_icons/layout";
 pub const MAP: &str = "gui/sprites/oteria_icons/map";
 pub const MAP_PIN: &str = "gui/sprites/oteria_icons/map-pin";
+pub const MICROPHONE: &str = "gui/sprites/oteria_icons/microphone";
 pub const MOUSE: &str = "gui/sprites/oteria_icons/mouse";
 pub const NUMBERS: &str = "gui/sprites/oteria_icons/numbers";
 pub const PENCIL: &str = "gui/sprites/oteria_icons/pencil";
@@ -39,13 +41,14 @@ pub const WIFI: &str = "gui/sprites/oteria_icons/wifi";
 pub const X: &str = "gui/sprites/oteria_icons/x";
 
 /// Each icon's sprite and PNG: the 32 px ones, then the 20 px ones (`small`).
-pub(crate) const ALL: [(&str, &[u8]); 70] = [
+pub(crate) const ALL: [(&str, &[u8]); 74] = [
     (BOX, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/box.png")),
     (BULB, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/bulb.png")),
     (CLOCK, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/clock.png")),
     (COPY, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/copy.png")),
     (CROSSHAIR, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/crosshair.png")),
     (DROPLET, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/droplet.png")),
+    (FEATHER, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/feather.png")),
     (FLAME, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/flame.png")),
     (FLAME_OFF, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/flame-off.png")),
     (FLASK, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/flask.png")),
@@ -54,6 +57,7 @@ pub(crate) const ALL: [(&str, &[u8]); 70] = [
     (LAYOUT, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/layout.png")),
     (MAP, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/map.png")),
     (MAP_PIN, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/map-pin.png")),
+    (MICROPHONE, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/microphone.png")),
     (MOUSE, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/mouse.png")),
     (NUMBERS, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/numbers.png")),
     (PENCIL, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/pencil.png")),
@@ -81,6 +85,7 @@ pub(crate) const ALL: [(&str, &[u8]); 70] = [
     ("gui/sprites/oteria_icons_small/copy", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/copy.png")),
     ("gui/sprites/oteria_icons_small/crosshair", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/crosshair.png")),
     ("gui/sprites/oteria_icons_small/droplet", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/droplet.png")),
+    ("gui/sprites/oteria_icons_small/feather", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/feather.png")),
     ("gui/sprites/oteria_icons_small/flame", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/flame.png")),
     ("gui/sprites/oteria_icons_small/flame-off", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/flame-off.png")),
     ("gui/sprites/oteria_icons_small/flask", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/flask.png")),
@@ -89,6 +94,7 @@ pub(crate) const ALL: [(&str, &[u8]); 70] = [
     ("gui/sprites/oteria_icons_small/layout", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/layout.png")),
     ("gui/sprites/oteria_icons_small/map", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/map.png")),
     ("gui/sprites/oteria_icons_small/map-pin", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/map-pin.png")),
+    ("gui/sprites/oteria_icons_small/microphone", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/microphone.png")),
     ("gui/sprites/oteria_icons_small/mouse", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/mouse.png")),
     ("gui/sprites/oteria_icons_small/numbers", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/numbers.png")),
     ("gui/sprites/oteria_icons_small/pencil", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/pencil.png")),

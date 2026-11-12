@@ -115,7 +115,7 @@ macro_rules! hud {
 }
 
 /// Every tile, in the grid's order.
-pub(super) static TILES: [Tile; 26] = [
+pub(super) static TILES: [Tile; 28] = [
     tile!("oteria.mod.fps", "FPS", icon::GAUGE, Hud, hud!(HudFpsCorner), e => e.pvp.hud.fps),
     tile!("oteria.mod.cps", "CPS", icon::MOUSE, Hud, hud!(HudCpsCorner), e => e.pvp.hud.cps),
     tile!("oteria.mod.keystrokes", "Keystrokes", icon::KEYBOARD, Hud, hud!(HudKeysCorner), e => e.pvp.hud.keys),
@@ -165,6 +165,15 @@ pub(super) static TILES: [Tile; 26] = [
         &[Item::Pvp(Opt::ClearLava)], e => e.pvp.tweaks.clear_water),
     tile!("oteria.mod.particles", "No Block Particles", icon::SPARKLES, Visual, &[], e => e.hide_block_particles),
     tile!("oteria.mod.minimap", "Minimap", icon::MAP, Utility, &[], e => e.minimap),
+    tile!("oteria.mod.elytra", "Elytra Indicator", icon::FEATHER, Pvp, &[], e => e.pvp.tweaks.elytra_indicator),
+    tile!("oteria.mod.voice", "Voice Chat", icon::MICROPHONE, Utility,
+        &[
+            Item::Pvp(Opt::VoiceActivation),
+            Item::Pvp(Opt::VoiceKey),
+            Item::Pvp(Opt::VoiceVolume),
+            Item::Pvp(Opt::VoiceMic),
+            Item::Pvp(Opt::VoiceThreshold),
+        ], e => e.pvp.voice.enabled),
     tile!("oteria.mod.mouse", "Mouse Tweaks", icon::POINTER, Utility,
         &[Item::MouseTweaksWheel, Item::Sort], e => e.mouse_tweaks),
     tile!("oteria.mod.reconnect", "Auto Reconnect", icon::REFRESH, Utility, &[], e => e.auto_reconnect),

@@ -65,6 +65,12 @@ naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"] }
 miniz_oxide = "0.8"
 ab_glyph = "0.2.32"
 log = "0.4"
+# Oteria's voice chat (game/oteria_voice), on Simple Voice Chat's protocol: Opus in pure Rust,
+# its AES-GCM packets, and the microphone and voices through cpal (with `audio`).
+opus-pure = "0.2"
+aes-gcm = "0.10"
+getrandom = "0.2"
+cpal = { version = "0.16", optional = true }
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs", "runtime_detection"] }
 horizon-theme = { path = "../horizon-theme" }
@@ -114,7 +120,7 @@ wgpu = { version = "30.0.1", default-features = false, features = ["gles"] }
 default = ["audio", "controllers", "horizon-extras"]
 # Sound output. Without it (and `controllers`) the program links neither libasound nor libudev on
 # Linux: the server build (`--no-default-features`, released as horizon-engine; docs/server.md).
-audio = ["horizon-client-render/audio", "horizon-client-lib/audio"]
+audio = ["horizon-client-render/audio", "horizon-client-lib/audio", "dep:cpal"]
 # Controllers: gilrs, and the DualSense's own output. Without it only `horizon-ctl pad`'s virtual pad.
 controllers = ["horizon-client-lib/controllers", "dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
 # Horizon's own extras over the vanilla game, for a fork that wants them out (docs/forking.md):

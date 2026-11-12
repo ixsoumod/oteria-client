@@ -1150,5 +1150,22 @@
   "horizon.recipes.fuel.options": "Hold SHIFT to pin this tooltip, then click an ingredient to view recipes.",
   "horizon.recipes.fuel.any": "Any Fuel",
   "horizon.recipes.fuel.minecraft": "Minecraft",
-  "horizon.pvp.shape.drawn": "Drawn"
+  "horizon.pvp.shape.drawn": "Drawn",
+  "horizon.pvp.elytra_indicator": "Elytra indicator",
+  "horizon.pvp.elytra_indicator.tooltip": "A small elytra under the crosshair while you wear one, with how worn it is.",
+  "horizon.pvp.voice": "Voice chat",
+  "horizon.pvp.voice.tooltip": "Talk with the players near you on servers running Simple Voice Chat, Fabric players included.",
+  "horizon.pvp.voice_activation": "Talk",
+  "horizon.pvp.voice_activation.tooltip": "Push to talk sends your voice while the key is held; Voice sends it whenever the microphone hears you.",
+  "horizon.pvp.voice_key": "Push-to-talk key",
+  "horizon.pvp.voice_key.tooltip": "The key to hold to talk.",
+  "horizon.pvp.voice_volume": "Voices",
+  "horizon.pvp.voice_volume.tooltip": "How loud the other players are.",
+  "horizon.pvp.voice_mic": "Microphone",
+  "horizon.pvp.voice_mic.tooltip": "How loud you are to the others.",
+  "horizon.pvp.voice_threshold": "Voice activation level",
+  "horizon.pvp.voice_threshold.tooltip": "With Voice: how quiet your speech can be and still be sent. A higher number sends quieter sounds.",
+  "horizon.pvp.voice.ptt": "Push to talk",
+  "horizon.pvp.voice.voice": "Voice",
+  "horizon.pvp.header.voice": "Voice chat"
 }

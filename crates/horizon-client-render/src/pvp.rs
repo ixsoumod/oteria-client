@@ -740,6 +740,8 @@ pub struct Tweaks {
     pub clear_water: bool,
     /// Lava fog as with Fire Resistance (vanilla's clearest), without the effect.
     pub clear_lava: bool,
+    /// A small elytra under the crosshair while one is worn (Oteria's Elytra Indicator).
+    pub elytra_indicator: bool,
     /// The time of day this player sees, `None` for the world's. Never sent to the server.
     pub time: Option<ViewTime>,
     /// The weather this player sees, `None` for the world's. Never sent to the server.
@@ -755,6 +757,7 @@ impl Default for Tweaks {
             glint: None,
             clear_water: false,
             clear_lava: false,
+            elytra_indicator: false,
             time: None,
             weather: None,
         }
@@ -840,7 +843,48 @@ pub struct Pvp {
     /// The key that opens the HUD editor from the game (unbound at first).
     pub editor_key: String,
     pub combat: Combat,
+    pub voice: Voice,
 }
+
+/// Oteria's voice chat (`game/oteria_voice`), on Simple Voice Chat's protocol: players on Fabric
+/// with that mod hear us, and we hear them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Voice {
+    pub enabled: bool,
+    /// Talk whenever the microphone hears speech (true), or while `key` is held (false).
+    pub activation: bool,
+    /// The push-to-talk key (`VOICE_KEYS`).
+    pub key: String,
+    /// The others' voices, in percent.
+    pub volume: u8,
+    /// The microphone's gain, in percent.
+    pub mic: u8,
+    /// Voice activation's level, in dB below full scale: a larger number sends quieter speech.
+    pub threshold: u8,
+}
+impl Default for Voice {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            activation: false,
+            // Simple Voice Chat's own default.
+            key: VOICE_KEYS[0].into(),
+            volume: 100,
+            mic: 100,
+            threshold: 40,
+        }
+    }
+}
+/// The push-to-talk keys to choose from.
+pub const VOICE_KEYS: [&str; 5] = [
+    "key.keyboard.caps.lock",
+    "key.keyboard.v",
+    "key.keyboard.b",
+    "key.keyboard.g",
+    "key.keyboard.left.alt",
+];
+const VOICE_PERCENT: (u8, u8) = (0, 200);
+const VOICE_THRESHOLD: (u8, u8) = (20, 70);
 /// The HUD editor key's name for the controls (`Extras::set_key`).
 pub const HUD_EDITOR_KEY: &str = "horizon.hud_editor";
 impl Default for Pvp {
@@ -855,6 +899,7 @@ impl Default for Pvp {
             layout: crate::pvp_hud::Layout::default(),
             editor_key: "key.keyboard.unknown".into(),
             combat: Combat::default(),
+            voice: Voice::default(),
         }
     }
 }
@@ -960,6 +1005,19 @@ impl Pvp {
             }
             "clearWater" => t.clear_water = flag(value, t.clear_water),
             "clearLava" => t.clear_lava = flag(value, t.clear_lava),
+            "elytraIndicator" => t.elytra_indicator = flag(value, t.elytra_indicator),
+            "voiceChat" => self.voice.enabled = flag(value, self.voice.enabled),
+            "voiceActivation" => match value {
+                "voice" => self.voice.activation = true,
+                "ptt" => self.voice.activation = false,
+                _ => {}
+            },
+            "voiceKey" if value.starts_with("key.") => self.voice.key = value.to_owned(),
+            "voiceVolume" => self.voice.volume = num(value, VOICE_PERCENT, self.voice.volume),
+            "voiceMic" => self.voice.mic = num(value, VOICE_PERCENT, self.voice.mic),
+            "voiceThreshold" => {
+                self.voice.threshold = num(value, VOICE_THRESHOLD, self.voice.threshold)
+            }
             "chatTimestamps" => self.chat.timestamps = flag(value, self.chat.timestamps),
             "chatCompact" => self.chat.compact = flag(value, self.chat.compact),
             "chatCopy" => self.chat.copy = flag(value, self.chat.copy),
@@ -1105,6 +1163,18 @@ impl Pvp {
             "combatFeel:{feel}\ncombatIndicator:{}\ncombatSounds:{}\ncombatRules:{}\n",
             c.indicator, c.sounds, c.rules
         );
+        let _ = writeln!(out, "elytraIndicator:{}", self.tweaks.elytra_indicator);
+        let v = &self.voice;
+        let _ = write!(
+            out,
+            "voiceChat:{}\nvoiceActivation:{}\nvoiceKey:{}\nvoiceVolume:{}\nvoiceMic:{}\nvoiceThreshold:{}\n",
+            v.enabled,
+            if v.activation { "voice" } else { "ptt" },
+            v.key,
+            v.volume,
+            v.mic,
+            v.threshold,
+        );
     }
 }
 
@@ -1248,6 +1318,17 @@ opts! {
         "Under Legacy, leaves out the attack sounds 1.9 added (strong, weak, sweep, critical...). Hurt sounds stay.";
     CombatRules, "combat_rules", "1.8 combat in worlds you host",
         "Single player and the worlds you open to LAN fight by 1.8.9's rules: no attack cooldown or sweep, 1.8 weapon damage, Strength, Sharpness and critical hits. Servers you join keep their own rules.";
+    ElytraIndicator, "elytra_indicator", "Elytra indicator",
+        "A small elytra under the crosshair while you wear one, with how worn it is.";
+    Voice, "voice", "Voice chat",
+        "Talk with the players near you on servers running Simple Voice Chat, Fabric players included.";
+    VoiceActivation, "voice_activation", "Talk",
+        "Push to talk sends your voice while the key is held; Voice sends it whenever the microphone hears you.";
+    VoiceKey, "voice_key", "Push-to-talk key", "The key to hold to talk.";
+    VoiceVolume, "voice_volume", "Voices", "How loud the other players are.";
+    VoiceMic, "voice_mic", "Microphone", "How loud you are to the others.";
+    VoiceThreshold, "voice_threshold", "Voice activation level",
+        "With Voice: how quiet your speech can be and still be sent. A higher number sends quieter sounds.";
 }
 /// The PvP & HUD page: headers (language keys) and options.
 pub fn rows() -> Vec<Result<Opt, &'static str>> {
@@ -1322,13 +1403,15 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
     rows.push(Ok(NumericEnchants));
     rows.push(Ok(GlintColour));
     rows.push(Err("horizon.pvp.header.visual"));
-    rows.extend([FireLower, ShieldSize, TotemSize, ClearWater, ClearLava].map(Ok));
+    rows.extend([FireLower, ShieldSize, TotemSize, ClearWater, ClearLava, ElytraIndicator].map(Ok));
     rows.push(Err("horizon.pvp.header.view"));
     rows.extend([ViewTime, ViewWeather].map(Ok));
     rows.push(Err("horizon.pvp.header.chat"));
     rows.extend([ChatTimestamps, ChatCompact, ChatCopy, ChatSearch].map(Ok));
     rows.push(Err("horizon.pvp.header.combat"));
     rows.extend([CombatFeel, CombatIndicator, CombatSounds, CombatRules].map(Ok));
+    rows.push(Err("horizon.pvp.header.voice"));
+    rows.extend([Voice, VoiceActivation, VoiceKey, VoiceVolume, VoiceMic, VoiceThreshold].map(Ok));
     rows
 }
 impl Opt {
@@ -1353,6 +1436,8 @@ impl Opt {
             ViewTime | ViewWeather => None,
             ChatTimestamps | ChatCompact | ChatCopy | ChatSearch => None,
             CombatFeel | CombatIndicator | CombatSounds | CombatRules => None,
+            ElytraIndicator | Voice => None,
+            VoiceActivation | VoiceKey | VoiceVolume | VoiceMic | VoiceThreshold => Some(Voice),
             HudPingCorner => Some(HudPing),
             HudCoordsCorner => Some(HudCoords),
             HudServerCorner => Some(HudServer),
@@ -1397,6 +1482,8 @@ impl Opt {
             Opt::CombatIndicator => p.combat.indicator,
             Opt::CombatSounds => p.combat.sounds,
             Opt::CombatRules => p.combat.rules,
+            Opt::ElytraIndicator => p.tweaks.elytra_indicator,
+            Opt::Voice => p.voice.enabled,
             _ => return None,
         })
     }
@@ -1457,6 +1544,14 @@ impl Opt {
                 .tweaks
                 .weather
                 .map_or_else(world_label, ViewWeather::label),
+            Opt::VoiceActivation => match p.voice.activation {
+                true => crate::lang::get_or("horizon.pvp.voice.voice", "Voice"),
+                false => crate::lang::get_or("horizon.pvp.voice.ptt", "Push to talk"),
+            },
+            Opt::VoiceKey => crate::keybinds::display_name(&p.voice.key).plain(),
+            Opt::VoiceVolume => format!("{}%", p.voice.volume),
+            Opt::VoiceMic => format!("{}%", p.voice.mic),
+            Opt::VoiceThreshold => format!("-{} dB", p.voice.threshold),
             _ => return None,
         })
     }
@@ -1541,6 +1636,25 @@ impl Opt {
             Opt::GlintColour => t.glint = solid_or_off(t.glint),
             Opt::ClearWater => t.clear_water = !t.clear_water,
             Opt::ClearLava => t.clear_lava = !t.clear_lava,
+            Opt::ElytraIndicator => t.elytra_indicator = !t.elytra_indicator,
+            Opt::Voice => p.voice.enabled = !p.voice.enabled,
+            Opt::VoiceActivation => p.voice.activation = !p.voice.activation,
+            Opt::VoiceKey => {
+                let v = &mut p.voice;
+                let i = VOICE_KEYS.iter().position(|k| *k == v.key);
+                let n = VOICE_KEYS.len();
+                let next = match (i, back) {
+                    (None, _) => 0,
+                    (Some(i), false) => (i + 1) % n,
+                    (Some(i), true) => (i + n - 1) % n,
+                };
+                v.key = VOICE_KEYS[next].into();
+            }
+            Opt::VoiceVolume => p.voice.volume = step_by(p.voice.volume, VOICE_PERCENT, 10, back),
+            Opt::VoiceMic => p.voice.mic = step_by(p.voice.mic, VOICE_PERCENT, 10, back),
+            Opt::VoiceThreshold => {
+                p.voice.threshold = step_by(p.voice.threshold, VOICE_THRESHOLD, 5, back)
+            }
             Opt::ViewTime => {
                 let all: Vec<_> = std::iter::once(None)
                     .chain(ViewTime::ALL.map(Some))

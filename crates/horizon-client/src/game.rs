@@ -118,6 +118,8 @@ mod oteria_menu;
 mod oteria_boost;
 mod oteria_mods;
 mod oteria_profiles;
+/// Oteria's voice chat, on Simple Voice Chat's protocol.
+mod oteria_voice;
 mod creaking;
 mod creative_hotbar;
 mod creative_screen;
@@ -5988,6 +5990,7 @@ impl Game<'_> {
                     } else {
                         hud_layout::paint(batch, &g.gui.atlas, &draws);
                     }
+                    g.draw_elytra_indicator(batch, wi, hi);
                 });
             }
             self.gui_layer("minecraft:hotbar", &mut batch, |g, batch| {

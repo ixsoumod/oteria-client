@@ -3323,6 +3323,10 @@ impl Game<'_> {
             // ClientCommonPacketListenerImpl.handlePing runs on the game
             // thread, after all preceding packets (especially teleports).
             C::Ping(p) => self.send(S::Pong(p)),
+            // Simple Voice Chat's messages (Oteria's voice chat).
+            C::CustomPayload(p) if p.channel.starts_with("voicechat:") => {
+                self.voice_payload(&p.channel, &p.data);
+            }
             // A native mod's server half to its client half.
             C::CustomPayload(p) if p.channel == horizon_protocol::mod_net::CHANNEL => {
                 self.remote_native_net(&p.data);

@@ -58,6 +58,7 @@ impl Game<'_> {
             self.extras.mouse = [false; 2];
         }
         self.update_minimap();
+        self.voice_frame();
         // For mods (`render.frame-stats`, `native_frame_rate`).
         let now = self.extras_now();
         self.extras.fps.record(now, elapsed.as_secs_f32() * 1000.0);
@@ -164,9 +165,19 @@ impl Game<'_> {
         };
         Some((m.corner, m.size, view))
     }
-    /// The minimap shown: a native mod's (`native_minimap`).
+    /// The minimap shown: a native mod's (`native_minimap`), else Oteria's own when its tile is
+    /// on (the extras' minimap settings).
     fn minimap_wanted(&self) -> Option<NativeMinimap> {
-        self.native_minimap_now()
+        self.native_minimap_now().or_else(|| {
+            let e = &self.settings.extras;
+            e.minimap.then(|| NativeMinimap {
+                corner: e.minimap_corner,
+                size: f32::from(e.minimap_size).clamp(16.0, 256.0),
+                blocks_per_pixel: e.minimap_zoom.clamp(0.5, 4.0),
+                rotate: e.minimap_rotate,
+                round: e.minimap_round,
+            })
+        })
     }
     /// Refresh the minimap's tiles within the frame budget, recompose its
     /// image when the view or a tile changed, and queue the upload.
@@ -272,6 +283,7 @@ impl Game<'_> {
             extras_hud::draw_minimap(batch, atlas, &mut corners, &look);
         }
         self.draw_pvp_hud(batch, &mut corners);
+        self.draw_voice_hud(batch);
         self.native_hud(batch, &mut corners);
         // The layers crates registered (`horizon_hooks::hud`): none, no canvas.
         let layers = horizon_hooks::hud::engine::all();
