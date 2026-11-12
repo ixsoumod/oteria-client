@@ -38,6 +38,21 @@ impl Game<'_> {
         if key == KeyCode::Escape && self.mod_browser_back() {
             return Ok(());
         }
+        // Right Shift: Oteria's menu, from play; again (or Escape) closes it. Before a server's own
+        // keys, which never hear it.
+        if raw == KeyCode::ShiftRight {
+            match self.screen {
+                Screen::Playing => {
+                    self.open_oteria_menu();
+                    return Ok(());
+                }
+                Screen::OteriaMenu => {
+                    self.close_oteria_menu();
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         if self.remote.is_some() && self.remote_key(key)? {
             return Ok(());
         }
@@ -75,6 +90,7 @@ impl Game<'_> {
                 }
                 Screen::GameModeSwitcher => self.close_gamemode_switcher(false),
                 Screen::EmoteWheel => self.close_emote_wheel(None),
+                Screen::OteriaMenu => self.close_oteria_menu(),
                 Screen::Dead => {
                     if self.ui.death_confirm.is_some() {
                         self.death_confirm_answer(false)?;

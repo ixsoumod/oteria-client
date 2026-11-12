@@ -521,6 +521,7 @@ fn debug_options_interrupts(screen: Screen, playing_overlay: bool) -> bool {
         | Screen::Creative
         | Screen::GameModeSwitcher
         | Screen::EmoteWheel
+        | Screen::OteriaMenu
         | Screen::Stats
         | Screen::Advancements
         | Screen::Friends

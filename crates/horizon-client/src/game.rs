@@ -113,6 +113,8 @@ mod copper_golems;
 #[cfg(test)]
 mod core_tests;
 mod cosmetics;
+/// Oteria's menu on Right Shift (`Screen::OteriaMenu`).
+mod oteria_menu;
 mod creaking;
 mod creative_hotbar;
 mod creative_screen;
@@ -677,6 +679,8 @@ enum Screen {
     /// Horizon Studio script screen (`studio_screen_open`): canvas draws
     /// itself, takes input through the screen hooks, does not draw chat.
     Studio,
+    /// Oteria's menu on Right Shift (game/oteria_menu.rs): over the blurred world, not pausing.
+    OteriaMenu,
 }
 impl Screen {
     /// The id native mods see for this screen (`NativeScreenView.id`, the
@@ -708,6 +712,7 @@ impl Screen {
             Screen::Mod => "mod",
             Screen::HudEditor => "hud_editor",
             Screen::Studio => "studio",
+            Screen::OteriaMenu => "oteria-menu",
         }
     }
 }
@@ -6231,6 +6236,7 @@ impl Game<'_> {
             }
             Screen::GameModeSwitcher => self.draw_gamemode_switcher(&mut batch),
             Screen::EmoteWheel => self.draw_emote_wheel(&mut batch),
+            Screen::OteriaMenu => self.draw_oteria_menu(&mut batch),
             Screen::Dead => self.draw_death_screen(&mut batch),
             Screen::Stats => self.draw_stats(&mut batch),
             Screen::Advancements => self.draw_advancements(&mut batch),
@@ -10283,6 +10289,10 @@ impl Game<'_> {
             }
             // The emote key let go over the wheel, a click on it.
             if self.screen == Screen::EmoteWheel && self.emote_wheel_event(&event) {
+                return Ok(());
+            }
+            // A click on Oteria's menu.
+            if self.screen == Screen::OteriaMenu && self.oteria_menu_event(&event) {
                 return Ok(());
             }
             if let WindowEvent::KeyboardInput { event, .. } = &event

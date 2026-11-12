@@ -111,7 +111,7 @@ pub(crate) fn radius_plate() -> f32 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Face {
+pub enum Face {
     Regular,
     Medium,
     /// The wordmark and page titles (the design system's 500).
@@ -448,7 +448,7 @@ impl<'a> Ui<'a> {
         }
     }
     /// A filled rectangle with rounded corners.
-    pub(crate) fn rounded(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32) {
+    pub fn rounded(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32) {
         if color >> 24 == 0 {
             return;
         }
@@ -473,7 +473,7 @@ impl<'a> Ui<'a> {
         self.corners(x0, y0, x1, y1, r, false, color);
     }
     /// A 1px rounded border.
-    pub(crate) fn border(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32) {
+    pub fn border(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32) {
         if color >> 24 == 0 {
             return;
         }
@@ -576,14 +576,14 @@ impl<'a> Ui<'a> {
         })
     }
     /// The advance of `text` in dp.
-    pub(crate) fn measure(&self, face: Face, size: f32, text: &str) -> f32 {
+    pub fn measure(&self, face: Face, size: f32, text: &str) -> f32 {
         let px = (size * self.density * 4.0).round() / 4.0;
         self.layout(face, px, text, false).0 / self.density
     }
     /// Draw a line of text in a `line`-tall box whose top is `y` (the
     /// launcher's line heights: about 1.45 × size for the interface);
     /// returns its width in dp.
-    pub(crate) fn text_line(
+    pub fn text_line(
         &mut self,
         face: Face,
         size: f32,
@@ -611,7 +611,7 @@ impl<'a> Ui<'a> {
         width / self.density
     }
     /// Text in a `1.45 × size` line box whose top is `y`.
-    pub(crate) fn text(
+    pub fn text(
         &mut self,
         face: Face,
         size: f32,
@@ -622,7 +622,7 @@ impl<'a> Ui<'a> {
     ) -> f32 {
         self.text_line(face, size, (size * 1.45).round(), x, y, color, text)
     }
-    pub(crate) fn text_centered(
+    pub fn text_centered(
         &mut self,
         face: Face,
         size: f32,

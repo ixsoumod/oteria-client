@@ -314,7 +314,7 @@ pub fn images() -> impl Iterator<Item = (String, u32, u32, Vec<u8>)> {
         })
 }
 
-fn decode(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+pub(crate) fn decode(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().ok()?;

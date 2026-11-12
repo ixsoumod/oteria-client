@@ -1419,6 +1419,12 @@ impl HudAtlas {
                 images.push(image);
             }
         }
+        // Oteria's right-shift menu art (oteria_art), the same way.
+        for image in crate::oteria_art::images() {
+            if !images.iter().any(|i| i.0 == image.0) {
+                images.push(image);
+            }
+        }
         if full {
             // Official Recipes artwork from Just Enough Items, under MIT.
             for (name, png) in crate::jei_sprites::SPRITES {

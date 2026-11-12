@@ -1398,6 +1398,7 @@ impl Game<'_> {
             Screen::Playing => "playing",
             Screen::GameModeSwitcher => "gamemode-switcher",
             Screen::EmoteWheel => "emote-wheel",
+            Screen::OteriaMenu => "oteria-menu",
             Screen::Paused => "paused",
             Screen::Options => "options",
             Screen::Inventory => "inventory",

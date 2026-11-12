@@ -107,5 +107,11 @@ write(BRAND / "web/favicon.svg", square.read_bytes())
 # pixels square, so 1:1 at GUI scale 4.
 badge = REPO / "branding" / "oteria-badge.svg"
 write(REPO / "crates/horizon-client/assets/horizon/textures/gui/oteria_badge.png", render(badge, 32))
+# The right-shift menu's art (horizon_client::oteria_art), drawn one texel to a screen pixel: the
+# logo over the buttons, and the Boost and Cosmetics buttons' icons.
+GUI = REPO / "crates/horizon-client/assets/horizon/textures/gui"
+write(GUI / "oteria_logo.png", render(badge, 160))
+write(GUI / "oteria_rocket.png", render(REPO / "branding" / "oteria-rocket.svg", 32))
+write(GUI / "oteria_shirt.png", render(REPO / "branding" / "oteria-shirt.svg", 32))
 shutil.rmtree(TMP, ignore_errors=True)
 print("wrote packaging/icons, the window icon, the avatars and the website's icons")

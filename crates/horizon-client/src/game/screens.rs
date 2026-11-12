@@ -62,7 +62,7 @@ impl Screen {
             // No screen over the world, and Horizon's own screens that
             // draw over it (the emote wheel, a native mod's screen and
             // Studio) leave it running as they always have.
-            | Self::Playing | Self::EmoteWheel | Self::Mod | Self::Studio
+            | Self::Playing | Self::EmoteWheel | Self::Mod | Self::Studio | Self::OteriaMenu
             // WinScreen.isPauseScreen is `!poem`: Game::win_screen_pauses.
             | Self::Win => false,
             // Every other screen, and the game-master block editors
@@ -88,6 +88,8 @@ impl Screen {
     pub(super) fn blurs_background(self, pause_menu: bool) -> bool {
         match self {
             Self::Paused => pause_menu,
+            // Oteria's menu: the world goes on behind it, blurred.
+            Self::OteriaMenu => true,
             Self::Options
             | Self::Stats
             | Self::Advancements
