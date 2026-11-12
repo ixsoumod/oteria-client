@@ -90,7 +90,7 @@ impl Game<'_> {
                 }
                 Screen::GameModeSwitcher => self.close_gamemode_switcher(false),
                 Screen::EmoteWheel => self.close_emote_wheel(None),
-                Screen::OteriaMenu => self.close_oteria_menu(),
+                Screen::OteriaMenu => self.oteria_menu_back(),
                 Screen::Dead => {
                     if self.ui.death_confirm.is_some() {
                         self.death_confirm_answer(false)?;

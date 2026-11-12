@@ -113,5 +113,39 @@ GUI = REPO / "crates/horizon-client/assets/horizon/textures/gui"
 write(GUI / "oteria_logo.png", render(badge, 160))
 write(GUI / "oteria_rocket.png", render(REPO / "branding" / "oteria-rocket.svg", 32))
 write(GUI / "oteria_shirt.png", render(REPO / "branding" / "oteria-shirt.svg", 32))
+# The mod menu's icons: Tabler's outline icons (MIT, branding/icons/tabler/LICENSE) in white,
+# 32 px each, and the Rust module that names them for the atlas (oteria_icons.rs).
+TABLER = REPO / "branding" / "icons" / "tabler"
+ICONS = GUI / "icons"
+names = sorted(p.stem for p in TABLER.glob("*.svg"))
+for name in names:
+    white = TMP / f"tabler-{name}.svg"
+    white.write_text((TABLER / f"{name}.svg").read_text(encoding="utf-8").replace("currentColor", "#ffffff"),
+                     encoding="utf-8")
+    write(ICONS / f"{name}.png", render(white, 32))
+    # A smaller one for the menu's chrome (categories, search, gears), sharp at 20 px.
+    write(ICONS / "small" / f"{name}.png", render(white, 20))
+ident = lambda n: n.upper().replace("-", "_")
+rust = [
+    "//! The mod menu's icons (`game/oteria_menu.rs`): Tabler's outline icons (MIT,",
+    "//! `branding/icons/tabler/LICENSE`) in white, 32 texels square, packed into the GUI atlas.",
+    "//! Written by `branding/make_icons.py`: edit that, not this.",
+    "",
+]
+for name in names:
+    rust.append(f'pub const {ident(name)}: &str = "gui/sprites/oteria_icons/{name}";')
+rust += ["", "/// Each icon's sprite and PNG: the 32 px ones, then the 20 px ones (`small`).",
+         f"pub(crate) const ALL: [(&str, &[u8]); {2 * len(names)}] = ["]
+for name in names:
+    rust.append(f'    ({ident(name)}, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/{name}.png")),')
+for name in names:
+    rust.append(f'    ("gui/sprites/oteria_icons_small/{name}", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/{name}.png")),')
+rust += ["];", "",
+         "/// The 20 px version of `icon`, for the menu's chrome.",
+         "pub fn small(icon: &str) -> String {",
+         '    icon.replacen("/oteria_icons/", "/oteria_icons_small/", 1)',
+         "}", ""]
+(REPO / "crates/horizon-client-render/src/oteria_icons.rs").write_text("\n".join(rust), encoding="utf-8")
+print(f"wrote {len(names)} mod menu icons")
 shutil.rmtree(TMP, ignore_errors=True)
 print("wrote packaging/icons, the window icon, the avatars and the website's icons")

@@ -5,12 +5,14 @@
 //! Every motion runs on the clock, not on the frame count, so the menu looks the same at 60 or
 //! 600 FPS: it eases in and out, the buttons light up and give under the pointer, Boost glows
 //! violet in a loop, and pressing Boost sends a shock wave across the screen. For now Boost and
-//! Cosmetics only animate; Mods opens Oteria's settings.
+//! Cosmetics only animate; Mods fades the buttons out for the mods page (`oteria_mods`), and
+//! Escape fades back.
 //!
 //! The GUI is drawn pixel for pixel (crisp text and icons), so a slow drift would move one pixel
 //! at a time and stutter: what loops slowly changes its light (a glow's opacity), and only fast
 //! motions (the ripple, the sparks, the shock wave) change places.
 
+use super::oteria_mods::{Action, Mods, TILES};
 use crate::game::{Game, Screen};
 use crate::ui_theme::{Face, Ui};
 use horizon_client::hud::HudBatch;
@@ -18,12 +20,15 @@ use horizon_client::oteria_art;
 use std::cell::RefCell;
 use std::f32::consts::TAU;
 use std::time::Instant;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// How long the menu takes to come in and to go, and the shock wave to cross the screen (s).
 const OPEN_S: f32 = 0.22;
 const CLOSE_S: f32 = 0.14;
 const SHOCK_S: f32 = 0.9;
+/// The way between the buttons and the mods page, either direction (s).
+const PAGE_S: f32 = 0.2;
 /// Boost's glow breathes, and its ripple leaves it, once a period (s).
 const PULSE_S: f32 = 1.8;
 /// How fast the hover light follows the pointer (per second, exponential).
@@ -58,6 +63,10 @@ struct Menu {
     shock: Option<(Instant, [f32; 2])>,
     /// Where each button was drawn (GUI pixels), for clicks.
     rects: [[f32; 4]; 3],
+    /// The mods page, from when it was asked for; `back` when it is fading back to the buttons.
+    mods: Option<Mods>,
+    mods_at: Option<Instant>,
+    back: Option<Instant>,
 }
 
 impl Menu {
@@ -71,6 +80,9 @@ impl Menu {
             pressed: [None; 3],
             shock: None,
             rects: [[0.0; 4]; 3],
+            mods: None,
+            mods_at: None,
+            back: None,
         }
     }
 }
@@ -92,7 +104,7 @@ fn ease_out_back(t: f32) -> f32 {
 }
 /// `rgb` (`0xRRGGBB`) at `alpha` (0 to 1), as the batch takes colours: `0xAABBGGRR`, red in
 /// the low byte (`hud_layout::abgr`).
-fn argb(rgb: u32, alpha: f32) -> u32 {
+pub(in crate::game) fn argb(rgb: u32, alpha: f32) -> u32 {
     let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
     let (r, g, b) = ((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
     a << 24 | b << 16 | g << 8 | r
@@ -137,37 +149,128 @@ impl Game<'_> {
         }
     }
 
-    /// A window event while the menu is open: a left click on a button. True when taken.
+    /// Escape: out of the search, then back to the buttons, then the menu closes.
+    pub(in crate::game) fn oteria_menu_back(&mut self) {
+        let closes = MENU.with(|m| {
+            let mut m = m.borrow_mut();
+            let Some(menu) = m.as_mut() else {
+                return true;
+            };
+            match menu.mods.as_mut() {
+                Some(mods) if menu.back.is_none() => {
+                    if mods.typing {
+                        mods.typing = false;
+                    } else {
+                        menu.back = Some(Instant::now());
+                    }
+                    false
+                }
+                _ => true,
+            }
+        });
+        if closes {
+            self.close_oteria_menu();
+        }
+    }
+
+    /// A window event while the menu is open: a click, the wheel over the mods, or typing in
+    /// their search. True when taken.
     pub(in crate::game) fn oteria_menu_event(&mut self, event: &WindowEvent) -> bool {
-        let WindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            button: MouseButton::Left,
-            ..
-        } = event
-        else {
-            return false;
-        };
         let cursor = self.cursor;
-        let hit = MENU.with(|m| {
+        let mut taken = matches!(event, WindowEvent::MouseInput { .. });
+        let action = MENU.with(|m| {
             let mut m = m.borrow_mut();
             let menu = m.as_mut()?;
             if menu.closing.is_some() {
                 return None;
             }
-            let i = menu.rects.iter().position(|r| inside(*r, cursor))?;
-            menu.pressed[i] = Some(Instant::now());
-            if BUTTONS[i] == Button::Boost {
-                let [x, y, w, h] = menu.rects[i];
-                menu.shock = Some((Instant::now(), [x + w / 2.0, y + h / 2.0]));
+            let on_mods = menu.back.is_none() && menu.mods.is_some();
+            match event {
+                WindowEvent::MouseWheel { delta, .. } if on_mods => {
+                    let lines = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => *y,
+                        MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                    };
+                    menu.mods.as_mut()?.wheel(lines);
+                    taken = true;
+                    None
+                }
+                WindowEvent::KeyboardInput { event: key, .. } if on_mods => {
+                    let mods = menu.mods.as_mut()?;
+                    let code = match key.physical_key {
+                        PhysicalKey::Code(code) => Some(code),
+                        _ => None,
+                    };
+                    // Right Shift still closes the menu; the rest goes to the search.
+                    if !mods.typing || code == Some(KeyCode::ShiftRight) {
+                        return None;
+                    }
+                    taken = true;
+                    if key.state == ElementState::Pressed {
+                        if code == Some(KeyCode::Escape) || code == Some(KeyCode::Enter) {
+                            mods.typing = false;
+                        } else {
+                            mods.type_key(key.text.as_deref(), code == Some(KeyCode::Backspace));
+                        }
+                    }
+                    None
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    if on_mods {
+                        return menu.mods.as_mut()?.click(cursor);
+                    }
+                    let i = menu.rects.iter().position(|r| inside(*r, cursor))?;
+                    menu.pressed[i] = Some(Instant::now());
+                    match BUTTONS[i] {
+                        Button::Boost => {
+                            let [x, y, w, h] = menu.rects[i];
+                            menu.shock = Some((Instant::now(), [x + w / 2.0, y + h / 2.0]));
+                        }
+                        Button::Mods => {
+                            menu.mods.get_or_insert_with(Mods::default);
+                            menu.mods_at = Some(Instant::now());
+                            menu.back = None;
+                        }
+                        Button::Cosmetics => {}
+                    }
+                    None
+                }
+                _ => None,
             }
-            Some(BUTTONS[i])
         });
-        if hit == Some(Button::Mods) {
-            // Oteria's settings: what the menu will hold, for now on the options' own page. The
-            // pointer stays free on the way (dropping the menu would grab it back for play).
-            MENU.with(|m| *m.borrow_mut() = None);
-            self.open_options_at(false, horizon_client::options_ui::Page::Horizon);
-            self.capture(false);
+        let Some(action) = action else {
+            return taken;
+        };
+        // Another screen from the menu: the menu goes, and the pointer stays free on the way
+        // (dropping the menu would grab it back for play).
+        let leave = || MENU.with(|m| *m.borrow_mut() = None);
+        match action {
+            Action::Toggle(i) => {
+                let tile = &TILES[i];
+                let on = !(tile.get)(&self.settings.extras);
+                (tile.set)(&mut self.settings.extras, on);
+                self.settings.save(&Self::options_path());
+                self.apply_settings();
+            }
+            Action::Options(i) => {
+                leave();
+                self.open_options_at(false, TILES[i].page);
+                self.capture(false);
+            }
+            Action::Settings => {
+                leave();
+                self.open_options_at(false, horizon_client::options_ui::Page::Horizon);
+                self.capture(false);
+            }
+            Action::EditHud => {
+                leave();
+                self.open_hud_editor(false);
+            }
+            Action::Close => self.close_oteria_menu(),
         }
         true
     }
@@ -191,6 +294,7 @@ impl Game<'_> {
         let scale = batch.scale;
         let cursor = self.cursor;
         let atlas = &self.gui.atlas;
+        let extras = &self.settings.extras;
         MENU.with(|m| {
             let mut m = m.borrow_mut();
             let Some(menu) = m.as_mut() else {
@@ -198,13 +302,29 @@ impl Game<'_> {
             };
             let dt = now.duration_since(menu.last).as_secs_f32().min(0.1);
             menu.last = now;
+            // How far the mods page has come in (0: the buttons, 1: the page).
+            let page = match (menu.mods_at, menu.back) {
+                (_, Some(back)) => {
+                    let s = now.duration_since(back).as_secs_f32() / PAGE_S;
+                    if s >= 1.0 {
+                        (menu.mods, menu.mods_at, menu.back) = (None, None, None);
+                        0.0
+                    } else {
+                        1.0 - ease_out(s)
+                    }
+                }
+                (Some(at), None) => ease_out(now.duration_since(at).as_secs_f32() / PAGE_S),
+                _ => 0.0,
+            };
             let t = now.duration_since(menu.opened).as_secs_f32();
             let open = ease_out(t / OPEN_S);
             let close = menu
                 .closing
                 .map_or(0.0, |c| ease_out(c.elapsed().as_secs_f32() / CLOSE_S));
             // How much of the menu shows (fades together), and its pop.
-            let a = open * (1.0 - close);
+            let shown = open * (1.0 - close);
+            // The buttons fade as the page comes.
+            let a = shown * (1.0 - page);
             let pop = 0.94 + 0.06 * ease_out_back(t / OPEN_S) - 0.03 * close;
             let mut ui = Ui::new(atlas, batch, cursor);
             let d = ui.density;
@@ -214,7 +334,7 @@ impl Game<'_> {
             let cx = w / 2.0;
 
             // A light veil over the blurred world.
-            ui.rounded(0.0, 0.0, w, h, 0.0, argb(0x000000, 0.32 * a));
+            ui.rounded(0.0, 0.0, w, h, 0.0, argb(0x000000, (0.32 + 0.16 * page) * shown));
 
             // The logo drawn one texel to a pixel (sharp), floating a little; the name under it.
             let logo = 160.0 / d * pop;
@@ -254,7 +374,7 @@ impl Game<'_> {
             let pointer = ui.cursor;
             let follow = 1.0 - (-dt * FOLLOW).exp();
             for (i, place) in places.iter().enumerate() {
-                let over = menu.closing.is_none() && inside(*place, pointer);
+                let over = menu.closing.is_none() && page == 0.0 && inside(*place, pointer);
                 menu.hover[i] += ((if over { 1.0 } else { 0.0 }) - menu.hover[i]) * follow;
                 menu.rects[i] = place.map(gui);
                 let name = match BUTTONS[i] {
@@ -350,6 +470,12 @@ impl Game<'_> {
                     let inner = argb(WHITE, (1.0 - s).powi(2) * 0.35 * a);
                     ring(&mut *ui.batch, atlas, centre, gui((radius - 2.0).max(0.0)), gui(radius), inner);
                 }
+            }
+            // The mods page, rising into place as it comes.
+            if page > 0.0
+                && let Some(mods) = menu.mods.as_mut()
+            {
+                mods.draw(&mut ui, extras, shown * page, (1.0 - page) * 18.0, dt, &gui);
             }
             ui.finish();
         });
