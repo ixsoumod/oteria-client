@@ -4,15 +4,19 @@
 //! features (`Extras` and its PvP part): its icon, its name, a gear that opens its settings, and a
 //! bar that turns it on or off, eased from red to green.
 //!
-//! As the menu, it moves on the clock: the hover lights, the switches' colours and the scroll all
-//! ease towards where they are going, whatever the frame rate.
+//! A tile's gear opens its settings in the same panel, in the same style: its switch, then each
+//! of its options (`extras::Item`) as a switch or a value stepped with arrows. The crosshair's
+//! adds five ready-made crosshairs and a grid to draw one pixel by pixel.
+//!
+//! As the menu, it moves on the clock: the hover lights, the switches' colours, the scroll and
+//! the way between the grid and a tile's settings all ease towards where they are going.
 
 use crate::ui_theme::{Face, Ui};
-use horizon_client::extras::Extras;
+use horizon_client::extras::{Extras, Item};
 use horizon_client::lang;
 use horizon_client::name_badge;
-use horizon_client::options_ui::Page;
 use horizon_client::oteria_icons as icon;
+use horizon_client::pvp::{self, DRAWN, Opt};
 
 /// The menu's colours, as `0xRRGGBB` (`argb` makes them the batch's).
 const PANEL: u32 = 0x0B_1119;
@@ -20,6 +24,7 @@ const WHITE: u32 = 0xFF_FFFF;
 const ACCENT: u32 = 0x2B_BFE9;
 const ON: u32 = 0x23_A35C;
 const OFF: u32 = 0xB3_3346;
+const GREY: u32 = 0x4A_5260;
 
 /// What a tile belongs to, for the filters down the left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,14 +63,14 @@ impl Category {
     }
 }
 
-/// One feature on the grid: its name (language key and English), icon, category, the settings
-/// page its gear opens, and how to read and set it.
+/// One feature on the grid: its name (language key and English), icon, category, its settings
+/// (shown by its gear), and how to read and set it.
 pub(super) struct Tile {
-    key: &'static str,
+    pub(super) key: &'static str,
     english: &'static str,
     icon: &'static str,
     category: Category,
-    pub(super) page: Page,
+    settings: &'static [Item],
     pub(super) get: fn(&Extras) -> bool,
     pub(super) set: fn(&mut Extras, bool),
 }
@@ -73,72 +78,112 @@ impl Tile {
     fn name(&self) -> String {
         lang::get_or(self.key, self.english)
     }
+    /// The crosshair's tile: its settings add the presets and the drawing grid.
+    fn is_crosshair(&self) -> bool {
+        self.key == "oteria.mod.crosshair"
+    }
 }
 
 macro_rules! tile {
-    ($key:literal, $english:literal, $icon:expr, $cat:ident, $page:ident, $e:ident => $field:expr) => {
+    ($key:literal, $english:literal, $icon:expr, $cat:ident, $settings:expr, $e:ident => $field:expr) => {
         Tile {
             key: $key,
             english: $english,
             icon: $icon,
             category: Category::$cat,
-            page: Page::$page,
+            settings: $settings,
             get: |$e: &Extras| $field,
             set: |$e: &mut Extras, on: bool| $field = on,
         }
     };
 }
+/// A HUD widget's settings: its corner, then the style every widget shares.
+macro_rules! hud {
+    ($($corner:ident),*) => {
+        &[
+            $(Item::Pvp(Opt::$corner),)*
+            Item::Pvp(Opt::HudBackground),
+            Item::Pvp(Opt::HudOpacity),
+            Item::Pvp(Opt::HudTextColour),
+            Item::Pvp(Opt::HudShadow),
+        ]
+    };
+}
 
 /// Every tile, in the grid's order.
 pub(super) static TILES: [Tile; 26] = [
-    tile!("oteria.mod.fps", "FPS", icon::GAUGE, Hud, Pvp, e => e.pvp.hud.fps),
-    tile!("oteria.mod.cps", "CPS", icon::MOUSE, Hud, Pvp, e => e.pvp.hud.cps),
-    tile!("oteria.mod.keystrokes", "Keystrokes", icon::KEYBOARD, Hud, Pvp, e => e.pvp.hud.keys),
-    tile!("oteria.mod.armour", "Armor Status", icon::SHIELD, Hud, Pvp, e => e.pvp.hud.armour),
-    tile!("oteria.mod.effects", "Potion Effects", icon::FLASK, Hud, Pvp, e => e.pvp.hud.effects),
-    tile!("oteria.mod.held", "Held Item", icon::SWORD, Hud, Pvp, e => e.pvp.hud.held),
-    tile!("oteria.mod.ping", "Ping", icon::WIFI, Hud, Pvp, e => e.pvp.hud.ping),
-    tile!("oteria.mod.coords", "Coordinates", icon::MAP_PIN, Hud, Pvp, e => e.pvp.hud.coords),
-    tile!("oteria.mod.server", "Server Address", icon::SERVER, Hud, Pvp, e => e.pvp.hud.server),
-    tile!("oteria.mod.combo", "Combo Counter", icon::FLAME, Hud, Pvp, e => e.pvp.hud.combo),
-    tile!("oteria.mod.clock", "Clock", icon::CLOCK, Hud, Pvp, e => e.pvp.hud.clock),
-    tile!("oteria.mod.reach", "Reach Display", icon::RULER_2, Hud, Pvp, e => e.pvp.hud.reach),
-    tile!("oteria.mod.speed", "Speed", icon::RUN, Hud, Pvp, e => e.pvp.hud.speed),
-    tile!("oteria.mod.crosshair", "Crosshair", icon::CROSSHAIR, Pvp, Pvp, e => e.pvp.crosshair.custom),
-    tile!("oteria.mod.hit", "Hit Color", icon::DROPLET, Pvp, Pvp, e => e.pvp.hit.custom),
-    tile!("oteria.mod.outline", "Block Outline", icon::BOX, Pvp, Pvp, e => e.pvp.outline.custom),
+    tile!("oteria.mod.fps", "FPS", icon::GAUGE, Hud, hud!(HudFpsCorner), e => e.pvp.hud.fps),
+    tile!("oteria.mod.cps", "CPS", icon::MOUSE, Hud, hud!(HudCpsCorner), e => e.pvp.hud.cps),
+    tile!("oteria.mod.keystrokes", "Keystrokes", icon::KEYBOARD, Hud, hud!(HudKeysCorner), e => e.pvp.hud.keys),
+    tile!("oteria.mod.armour", "Armor Status", icon::SHIELD, Hud, hud!(HudArmourCorner, HudArmourPercent), e => e.pvp.hud.armour),
+    tile!("oteria.mod.effects", "Potion Effects", icon::FLASK, Hud, hud!(HudEffectsCorner), e => e.pvp.hud.effects),
+    tile!("oteria.mod.held", "Held Item", icon::SWORD, Hud, hud!(HudHeldCorner), e => e.pvp.hud.held),
+    tile!("oteria.mod.ping", "Ping", icon::WIFI, Hud, hud!(HudPingCorner), e => e.pvp.hud.ping),
+    tile!("oteria.mod.coords", "Coordinates", icon::MAP_PIN, Hud, hud!(HudCoordsCorner), e => e.pvp.hud.coords),
+    tile!("oteria.mod.server", "Server Address", icon::SERVER, Hud, hud!(HudServerCorner), e => e.pvp.hud.server),
+    tile!("oteria.mod.combo", "Combo Counter", icon::FLAME, Hud, hud!(HudComboCorner), e => e.pvp.hud.combo),
+    tile!("oteria.mod.clock", "Clock", icon::CLOCK, Hud, hud!(HudClockCorner), e => e.pvp.hud.clock),
+    tile!("oteria.mod.reach", "Reach Display", icon::RULER_2, Hud, hud!(HudReachCorner), e => e.pvp.hud.reach),
+    tile!("oteria.mod.speed", "Speed", icon::RUN, Hud, hud!(HudSpeedCorner), e => e.pvp.hud.speed),
+    tile!("oteria.mod.crosshair", "Crosshair", icon::CROSSHAIR, Pvp, &[
+        Item::Pvp(Opt::CrosshairShape),
+        Item::Pvp(Opt::CrosshairSize),
+        Item::Pvp(Opt::CrosshairGap),
+        Item::Pvp(Opt::CrosshairThickness),
+        Item::Pvp(Opt::CrosshairColour),
+        Item::Pvp(Opt::CrosshairOutline),
+        Item::Pvp(Opt::CrosshairDot),
+        Item::Pvp(Opt::CrosshairHover),
+    ], e => e.pvp.crosshair.custom),
+    tile!("oteria.mod.hit", "Hit Color", icon::DROPLET, Pvp,
+        &[Item::Pvp(Opt::HitColour), Item::Pvp(Opt::HitOpacity)], e => e.pvp.hit.custom),
+    tile!("oteria.mod.outline", "Block Outline", icon::BOX, Pvp, &[
+        Item::Pvp(Opt::OutlineColour),
+        Item::Pvp(Opt::OutlineOpacity),
+        Item::Pvp(Opt::OutlineThickness),
+        Item::Pvp(Opt::OutlineFill),
+    ], e => e.pvp.outline.custom),
     Tile {
         key: "oteria.mod.low_fire",
         english: "Low Fire",
         icon: icon::FLAME_OFF,
         category: Category::Pvp,
-        page: Page::Pvp,
+        settings: &[Item::Pvp(Opt::FireLower)],
         get: |e: &Extras| e.pvp.tweaks.fire_lower > 0,
         // On: the fire overlay lowered by 40 % of its height, a common PvP setting.
         set: |e: &mut Extras, on: bool| e.pvp.tweaks.fire_lower = if on { 40 } else { 0 },
     },
-    tile!("oteria.mod.numbers", "Enchant Numbers", icon::NUMBERS, Pvp, Pvp, e => e.pvp.tweaks.numeric_enchants),
-    tile!("oteria.mod.fullbright", "Fullbright", icon::SUN, Visual, Extras, e => e.fullbright),
-    tile!("oteria.mod.lights", "Dynamic Lights", icon::BULB, Visual, Extras, e => e.dynamic_lights),
-    tile!("oteria.mod.water", "Clear Water", icon::RIPPLE, Visual, Pvp, e => e.pvp.tweaks.clear_water),
-    tile!("oteria.mod.particles", "No Block Particles", icon::SPARKLES, Visual, Extras, e => e.hide_block_particles),
-    tile!("oteria.mod.minimap", "Minimap", icon::MAP, Utility, Extras, e => e.minimap),
-    tile!("oteria.mod.mouse", "Mouse Tweaks", icon::POINTER, Utility, Extras, e => e.mouse_tweaks),
-    tile!("oteria.mod.reconnect", "Auto Reconnect", icon::REFRESH, Utility, Extras, e => e.auto_reconnect),
-    tile!("oteria.mod.nametag", "Own Name Tag", icon::USER, Utility, Extras, e => e.own_name_tag),
+    tile!("oteria.mod.numbers", "Enchant Numbers", icon::NUMBERS, Pvp,
+        &[Item::Pvp(Opt::GlintColour)], e => e.pvp.tweaks.numeric_enchants),
+    tile!("oteria.mod.fullbright", "Fullbright", icon::SUN, Visual, &[], e => e.fullbright),
+    tile!("oteria.mod.lights", "Dynamic Lights", icon::BULB, Visual, &[], e => e.dynamic_lights),
+    tile!("oteria.mod.water", "Clear Water", icon::RIPPLE, Visual,
+        &[Item::Pvp(Opt::ClearLava)], e => e.pvp.tweaks.clear_water),
+    tile!("oteria.mod.particles", "No Block Particles", icon::SPARKLES, Visual, &[], e => e.hide_block_particles),
+    tile!("oteria.mod.minimap", "Minimap", icon::MAP, Utility, &[], e => e.minimap),
+    tile!("oteria.mod.mouse", "Mouse Tweaks", icon::POINTER, Utility,
+        &[Item::MouseTweaksWheel, Item::Sort], e => e.mouse_tweaks),
+    tile!("oteria.mod.reconnect", "Auto Reconnect", icon::REFRESH, Utility, &[], e => e.auto_reconnect),
+    tile!("oteria.mod.nametag", "Own Name Tag", icon::USER, Utility, &[], e => e.own_name_tag),
 ];
 
 /// What a click on the page asks of the game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Action {
     Toggle(usize),
-    Options(usize),
+    /// An option stepped forwards, or back.
+    Cycle(Item, bool),
+    /// One of `pvp::crosshair_presets`.
+    Preset(usize),
+    /// The drawn crosshair's pixels, once the stroke is done.
+    Pixels([u16; DRAWN]),
     Settings,
     Close,
     EditHud,
 }
 
-/// The page's state: its filter, search, scroll and the lights that ease.
+/// The page's state: its filter, search, scroll, the tile whose settings are open, and the
+/// lights that ease.
 pub(super) struct Mods {
     category: Category,
     search: String,
@@ -147,11 +192,25 @@ pub(super) struct Mods {
     target: f32,
     /// The search field's caret blinks once a second.
     blink: f32,
-    /// The scroll's room: how far down the grid goes past its view (dp).
+    /// The scroll's room: how far down the view's content goes past it (dp).
     room: f32,
     hover: Vec<f32>,
     /// Each tile's switch, eased from 0 (off) to 1 (on).
     switch: Vec<Option<f32>>,
+    /// The tile whose settings are open; `shown` the one drawn (it stays while they fade out),
+    /// and `detail` how far they have come in (0: the grid, 1: the settings).
+    open: Option<usize>,
+    shown: usize,
+    detail: f32,
+    /// The settings' rows' switches, eased as the tiles'.
+    rows: Vec<f32>,
+    /// The drawn crosshair while a stroke is on: its pixels, and what the stroke paints.
+    pixels: Option<[u16; DRAWN]>,
+    paint: Option<bool>,
+    /// The stroke's last cell: the next one is joined to it by a line, however fast it moves.
+    last: Option<(usize, usize)>,
+    /// The drawing grid (GUI pixels) and one cell's side, for clicks.
+    grid: ([f32; 4], f32),
     /// Where things were drawn (GUI pixels), for clicks.
     hits: Vec<([f32; 4], Hit)>,
 }
@@ -164,6 +223,11 @@ enum Hit {
     EditHud,
     Toggle(usize),
     Gear(usize),
+    Back,
+    Row(Item, bool),
+    Preset(usize),
+    Grid,
+    ClearGrid,
 }
 impl Default for Mods {
     fn default() -> Self {
@@ -177,6 +241,14 @@ impl Default for Mods {
             room: 0.0,
             hover: vec![0.0; TILES.len()],
             switch: vec![None; TILES.len()],
+            open: None,
+            shown: 0,
+            detail: 0.0,
+            rows: Vec::new(),
+            pixels: None,
+            paint: None,
+            last: None,
+            grid: ([0.0; 4], 1.0),
             hits: Vec::new(),
         }
     }
@@ -194,6 +266,27 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
     let one = |s: u32| (ch(a, s) + (ch(b, s) - ch(a, s)) * t.clamp(0.0, 1.0)).round() as u32;
     one(16) << 16 | one(8) << 8 | one(0)
 }
+/// `t` from 0 to 1, slowing to a stop.
+fn ease(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+fn caption(item: Item) -> String {
+    lang::get_or(item.caption_key(), item.caption())
+}
+fn description(item: Item) -> String {
+    lang::get_or(item.description_key(), item.description())
+}
+/// `text` cut with an ellipsis to fit `width` dp.
+fn fit(ui: &Ui, face: Face, size: f32, text: &str, width: f32) -> String {
+    if ui.measure(face, size, text) <= width {
+        return text.to_owned();
+    }
+    let mut cut: String = text.to_owned();
+    while !cut.is_empty() && ui.measure(face, size, &format!("{cut}…")) > width {
+        cut.pop();
+    }
+    format!("{}…", cut.trim_end())
+}
 
 impl Mods {
     /// The tiles the filter and the search leave, by index.
@@ -205,23 +298,104 @@ impl Mods {
             .collect()
     }
 
-    /// A click at `cursor` (GUI pixels): what the game should do, if anything.
-    pub(super) fn click(&mut self, cursor: (f32, f32)) -> Option<Action> {
+    /// Escape: out of the search, then out of a tile's settings. False when there was neither
+    /// (the menu goes back to its buttons).
+    pub(super) fn back(&mut self) -> bool {
+        if self.typing {
+            self.typing = false;
+        } else if self.open.is_some() {
+            self.open = None;
+            self.target = 0.0;
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// A press at `cursor` (GUI pixels): what the game should do, if anything.
+    pub(super) fn click(&mut self, cursor: (f32, f32), crosshair: [u16; DRAWN]) -> Option<Action> {
         let hit = self.hits.iter().rev().find(|(r, _)| inside(*r, cursor)).map(|h| h.1);
         self.typing = hit == Some(Hit::Search);
         match hit? {
             Hit::Category(c) => {
                 self.category = c;
+                self.open = None;
                 self.target = 0.0;
                 None
             }
-            Hit::Search => None,
+            Hit::Search => {
+                self.open = None;
+                None
+            }
             Hit::Settings => Some(Action::Settings),
             Hit::Close => Some(Action::Close),
             Hit::EditHud => Some(Action::EditHud),
             Hit::Toggle(i) => Some(Action::Toggle(i)),
-            Hit::Gear(i) => Some(Action::Options(i)),
+            Hit::Gear(i) => {
+                self.open = Some(i);
+                self.shown = i;
+                self.rows.clear();
+                (self.scroll, self.target) = (0.0, 0.0);
+                None
+            }
+            Hit::Back => {
+                self.open = None;
+                self.target = 0.0;
+                None
+            }
+            Hit::Row(item, back) => Some(Action::Cycle(item, back)),
+            Hit::Preset(k) => Some(Action::Preset(k)),
+            Hit::ClearGrid => Some(Action::Pixels([0; DRAWN])),
+            Hit::Grid => {
+                // A stroke: it paints what the first cell was not, as long as the button is down.
+                let mut pixels = crosshair;
+                let cell = self.cell(cursor)?;
+                let on = pixels[cell.1] >> cell.0 & 1 == 0;
+                set_pixel(&mut pixels, cell, on);
+                self.pixels = Some(pixels);
+                self.paint = Some(on);
+                self.last = Some(cell);
+                None
+            }
         }
+    }
+
+    /// The left button let go at `cursor` (GUI pixels): the end of a stroke on the grid, if one
+    /// was on.
+    pub(super) fn release(&mut self, cursor: (f32, f32)) -> Option<Action> {
+        self.stroke(cursor);
+        self.paint = None;
+        self.last = None;
+        self.pixels.take().map(Action::Pixels)
+    }
+
+    /// The stroke goes on to the cell under `cursor`, painting every cell on the way.
+    fn stroke(&mut self, cursor: (f32, f32)) {
+        let (Some(on), Some(cell)) = (self.paint, self.cell(cursor)) else {
+            return;
+        };
+        let Some(pixels) = self.pixels.as_mut() else {
+            return;
+        };
+        let from = self.last.unwrap_or(cell);
+        let steps = from.0.abs_diff(cell.0).max(from.1.abs_diff(cell.1)).max(1);
+        for k in 0..=steps {
+            let t = k as f32 / steps as f32;
+            let at = |a: usize, b: usize| (a as f32 + (b as f32 - a as f32) * t).round() as usize;
+            set_pixel(pixels, (at(from.0, cell.0), at(from.1, cell.1)), on);
+        }
+        self.last = Some(cell);
+    }
+
+    /// The grid's cell under `cursor` (GUI pixels).
+    fn cell(&self, (x, y): (f32, f32)) -> Option<(usize, usize)> {
+        let ([gx, gy, gw, gh], side) = self.grid;
+        if !inside([gx, gy, gw, gh], (x, y)) {
+            return None;
+        }
+        let cx = ((x - gx) / side) as usize;
+        let cy = ((y - gy) / side) as usize;
+        (cx < DRAWN && cy < DRAWN).then_some((cx, cy))
     }
 
     /// The wheel turned by `lines` (positive: up).
@@ -237,15 +411,18 @@ impl Mods {
         if backspace {
             self.search.pop();
         } else if let Some(text) = text {
+            let room = 32usize.saturating_sub(self.search.chars().count());
             self.search
-                .extend(text.chars().filter(|c| !c.is_control()).take(32 - self.search.len().min(32)));
+                .extend(text.chars().filter(|c| !c.is_control()).take(room));
         }
         self.target = 0.0;
         true
     }
 
     /// Draws the page over `ui` at `alpha`, `rise` dp below its place (its way in); `dt` is the
-    /// frame's time step for the easings, `gui` turns dp into GUI pixels.
+    /// frame's time step for the easings, `gui` turns dp into GUI pixels and `cursor` is the
+    /// pointer in GUI pixels (for the grid's strokes).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn draw(
         &mut self,
         ui: &mut Ui,
@@ -254,34 +431,25 @@ impl Mods {
         rise: f32,
         dt: f32,
         gui: &dyn Fn(f32) -> f32,
+        cursor: (f32, f32),
     ) {
         self.hits.clear();
         let a = alpha;
         let d = ui.density;
-        let follow = 1.0 - (-dt * 16.0).exp();
         let pointer = ui.cursor;
         let (w, h) = (ui.w, ui.h);
-        let pw = (w - 48.0).min(860.0);
-        let ph = (h - 48.0).min(520.0);
+        let pw = (w - 48.0).min(880.0);
+        let ph = (h - 48.0).min(540.0);
         let (px, py) = ((w - pw) / 2.0, (h - ph) / 2.0 + rise);
-        let hit = |hits: &mut Vec<([f32; 4], Hit)>, r: [f32; 4], what: Hit| {
-            let g = r.map(gui);
-            horizon_client::widgets::widget_cursor(inside(r, pointer), true);
-            hits.push((g, what));
+        let mut page = Page {
+            d,
+            pointer,
+            gui,
+            hits: std::mem::take(&mut self.hits),
         };
-        // An icon centred on (cx, cy), one texel to a pixel: the tiles' at 32 texels, the
-        // chrome's (`small`) at 20.
-        let icon_at = |ui: &mut Ui, name: &str, cx: f32, cy: f32, colour: u32, big: bool| {
-            let small = icon::small(name);
-            let (name, texels) = if big { (name, 32.0) } else { (small.as_str(), 20.0) };
-            if let Some(r) = ui.atlas.sprites.get(name).copied() {
-                let s = texels / d;
-                // On whole screen pixels, so no texel falls between two.
-                let k = ui.batch.scale;
-                let snap = |v: f32| (gui(v) * k).round() / k;
-                ui.batch.rect_uv(snap(cx - s / 2.0), snap(cy - s / 2.0), gui(s), gui(s), r, colour);
-            }
-        };
+
+        // A stroke on the grid goes on under the pointer while the button is down.
+        self.stroke(cursor);
 
         // The glass panel.
         ui.rounded(px, py, pw, ph, 14.0, argb(PANEL, 0.80 * a));
@@ -313,15 +481,15 @@ impl Mods {
             }
             ui.text(Face::Medium, 11.0, r[0] + 14.0, r[1] + (28.0 - 16.0) / 2.0, argb(WHITE, a), label);
             if !*on {
-                hit(&mut self.hits, r, Hit::Settings);
+                page.hit(r, Hit::Settings);
             }
             tab_x += lw + 8.0;
         }
         let close = [px + pw - 18.0 - 32.0, py + (hh - 32.0) / 2.0, 32.0, 32.0];
         let over = inside(close, pointer);
         ui.rounded(close[0], close[1], close[2], close[3], 8.0, argb(if over { OFF } else { WHITE }, if over { 0.85 } else { 0.06 } * a));
-        icon_at(ui, icon::X, close[0] + 16.0, close[1] + 16.0, argb(WHITE, a), false);
-        hit(&mut self.hits, close, Hit::Close);
+        page.icon(ui, icon::X, close[0] + 16.0, close[1] + 16.0, argb(WHITE, a), false);
+        page.hit(close, Hit::Close);
         ui.rounded(px + 14.0, py + hh, pw - 28.0, 1.0, 0.0, argb(WHITE, 0.08 * a));
 
         // The categories down the left, Edit HUD at their foot.
@@ -336,20 +504,22 @@ impl Mods {
             } else if over {
                 ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(WHITE, 0.06 * a));
             }
-            icon_at(ui, category.icon(), r[0] + 22.0, r[1] + 16.0, argb(WHITE, if on || over { 1.0 } else { 0.7 } * a), false);
+            page.icon(ui, category.icon(), r[0] + 22.0, r[1] + 16.0, argb(WHITE, if on || over { 1.0 } else { 0.7 } * a), false);
             let colour = argb(WHITE, if on || over { 1.0 } else { 0.72 } * a);
             ui.text(Face::Medium, 12.0, r[0] + 44.0, r[1] + (32.0 - 17.0) / 2.0, colour, &category.name());
-            hit(&mut self.hits, r, Hit::Category(*category));
+            page.hit(r, Hit::Category(*category));
+            horizon_client::widgets::record(&format!("oteria-cat-{k}"), r.map(gui), true);
         }
         let edit = [lx, py + ph - 14.0 - 36.0, lw, 36.0];
         let over = inside(edit, pointer);
         ui.rounded(edit[0], edit[1], edit[2], edit[3], 9.0, argb(ACCENT, if over { 0.95 } else { 0.75 } * a));
-        icon_at(ui, icon::LAYOUT, edit[0] + 22.0, edit[1] + 18.0, argb(WHITE, a), false);
+        page.icon(ui, icon::LAYOUT, edit[0] + 22.0, edit[1] + 18.0, argb(WHITE, a), false);
         let edit_label = lang::get_or("oteria.mods.edit_hud", "Edit HUD");
         ui.text(Face::Medium, 12.0, edit[0] + 44.0, edit[1] + (36.0 - 17.0) / 2.0, argb(WHITE, a), &edit_label);
-        hit(&mut self.hits, edit, Hit::EditHud);
+        page.hit(edit, Hit::EditHud);
+        horizon_client::widgets::record("oteria-edit-hud", edit.map(gui), true);
 
-        // The search field, and the count of what shows.
+        // The search field.
         let ax = lx + lw + 14.0;
         let aw = px + pw - 14.0 - ax;
         let search = [ax + aw - 240.0, ly, 240.0, 32.0];
@@ -357,7 +527,7 @@ impl Mods {
         if self.typing {
             ui.border(search[0], search[1], search[2], search[3], 9.0, argb(ACCENT, 0.7 * a));
         }
-        icon_at(ui, icon::SEARCH, search[0] + 18.0, search[1] + 16.0, argb(WHITE, 0.7 * a), false);
+        page.icon(ui, icon::SEARCH, search[0] + 18.0, search[1] + 16.0, argb(WHITE, 0.7 * a), false);
         self.blink = (self.blink + dt) % 1.0;
         let caret = if self.typing && self.blink < 0.55 { "|" } else { "" };
         let (text, colour) = if self.search.is_empty() && !self.typing {
@@ -366,33 +536,67 @@ impl Mods {
             (format!("{}{caret}", self.search), argb(WHITE, a))
         };
         ui.text(Face::Regular, 12.0, search[0] + 36.0, search[1] + (32.0 - 17.0) / 2.0, colour, &text);
-        hit(&mut self.hits, search, Hit::Search);
+        page.hit(search, Hit::Search);
+        horizon_client::widgets::record("oteria-search", search.map(gui), true);
+
+        // The view under the search: the grid, or a tile's settings, crossfading.
+        let target = if self.open.is_some() { 1.0 } else { 0.0 };
+        self.detail += (target - self.detail) * (1.0 - (-dt * 14.0).exp());
+        if (self.detail - target).abs() < 0.002 {
+            self.detail = target;
+        }
+        let view = [ax, ly + 44.0, aw, py + ph - 14.0 - (ly + 44.0)];
+        self.scroll += (self.target - self.scroll) * (1.0 - (-dt * 18.0).exp());
+        let t = ease(self.detail);
+        if t < 1.0 {
+            self.draw_grid(ui, &mut page, extras, a * (1.0 - t), dt, view, ly, self.open.is_none());
+        }
+        if t > 0.0 {
+            let slide = (1.0 - t) * 24.0;
+            self.draw_detail(ui, &mut page, extras, a * t, dt, view, slide, self.open.is_some());
+        }
+        // A thin scrollbar when the view's content goes past it.
+        if self.room > 0.0 {
+            let [_, gy, _, gh] = view;
+            let content = gh + self.room;
+            let thumb = (gh / content * gh).max(24.0);
+            let ty = gy + (self.scroll / self.room).clamp(0.0, 1.0) * (gh - thumb);
+            ui.rounded(px + pw - 9.0, ty, 3.0, thumb, 1.5, argb(WHITE, 0.25 * a));
+        }
+        self.hits = page.hits;
+    }
+
+    /// The grid of tiles, with the count of what shows above it.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_grid(&mut self, ui: &mut Ui, page: &mut Page, extras: &Extras, a: f32, dt: f32, view: [f32; 4], ly: f32, live: bool) {
+        let [gx, gy, aw, gh] = view;
+        let pointer = page.pointer;
+        let gui = page.gui;
+        let follow = 1.0 - (-dt * 16.0).exp();
         let shown = self.shown();
         let count = format!("{} mods", shown.len());
-        ui.text(Face::Medium, 12.0, ax + 2.0, ly + (32.0 - 17.0) / 2.0, argb(WHITE, 0.55 * a), &count);
-
-        // The grid: as many columns as fit, scrolled smoothly, clipped to its view.
-        let (gx, gy) = (ax, ly + 44.0);
-        let gh = py + ph - 14.0 - gy;
+        ui.text(Face::Medium, 12.0, gx + 2.0, ly + (32.0 - 17.0) / 2.0, argb(WHITE, 0.55 * a), &count);
         let gap = 10.0;
         let cols = (((aw + gap) / (176.0 + gap)).floor() as usize).clamp(2, 5);
         let tw = (aw - gap * (cols - 1) as f32) / cols as f32;
         let th = 116.0;
         let rows = shown.len().div_ceil(cols);
         let content = rows as f32 * (th + gap) - gap;
-        self.room = (content - gh).max(0.0);
-        self.target = self.target.clamp(0.0, self.room);
-        self.scroll += (self.target - self.scroll) * (1.0 - (-dt * 18.0).exp());
+        let scroll = if live { self.scroll } else { 0.0 };
+        if live {
+            self.room = (content - gh).max(0.0);
+            self.target = self.target.clamp(0.0, self.room);
+        }
         let start = ui.batch.vertices.len();
         for (n, &i) in shown.iter().enumerate() {
             let (col, row) = (n % cols, n / cols);
-            let r = [gx + col as f32 * (tw + gap), gy + row as f32 * (th + gap) - self.scroll, tw, th];
+            let r = [gx + col as f32 * (tw + gap), gy + row as f32 * (th + gap) - scroll, tw, th];
             if r[1] + th < gy || r[1] > gy + gh {
                 continue;
             }
             let tile = &TILES[i];
             let on = (tile.get)(extras);
-            let over = inside(r, pointer) && pointer.1 >= gy && pointer.1 < gy + gh;
+            let over = live && inside(r, pointer) && pointer.1 >= gy && pointer.1 < gy + gh;
             self.hover[i] += ((if over { 1.0 } else { 0.0 }) - self.hover[i]) * follow;
             let sw = self.switch[i].get_or_insert(if on { 1.0 } else { 0.0 });
             *sw += ((if on { 1.0 } else { 0.0 }) - *sw) * (1.0 - (-dt * 14.0).exp());
@@ -400,7 +604,7 @@ impl Mods {
             ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.05 + 0.04 * hv) * a));
             ui.border(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.07 + 0.14 * hv) * a));
             let cx = r[0] + tw / 2.0;
-            icon_at(ui, tile.icon, cx, r[1] + 30.0, argb(WHITE, (0.75 + 0.25 * hv) * a), true);
+            page.icon(ui, tile.icon, cx, r[1] + 30.0, argb(WHITE, (0.75 + 0.25 * hv) * a), true);
             let name = tile.name();
             let nw = ui.measure(Face::Medium, 13.0, &name);
             ui.text(Face::Medium, 13.0, cx - nw / 2.0, r[1] + 50.0, argb(WHITE, (0.82 + 0.18 * hv) * a), &name);
@@ -408,7 +612,7 @@ impl Mods {
             let gear = [r[0] + 10.0, by, 30.0, 30.0];
             let gear_over = over && inside(gear, pointer);
             ui.rounded(gear[0], gear[1], gear[2], gear[3], 7.0, argb(WHITE, if gear_over { 0.16 } else { 0.07 } * a));
-            icon_at(ui, icon::SETTINGS, gear[0] + 15.0, gear[1] + 15.0, argb(WHITE, 0.85 * a), false);
+            page.icon(ui, icon::SETTINGS, gear[0] + 15.0, gear[1] + 15.0, argb(WHITE, 0.85 * a), false);
             let bar = [gear[0] + 36.0, by, r[0] + tw - 10.0 - (gear[0] + 36.0), 30.0];
             let bar_over = over && inside(bar, pointer);
             let colour = mix(OFF, ON, sv);
@@ -420,16 +624,17 @@ impl Mods {
             };
             let lw = ui.measure(Face::Medium, 11.0, &label);
             ui.text(Face::Medium, 11.0, bar[0] + (bar[2] - lw) / 2.0, bar[1] + (30.0 - 16.0) / 2.0, argb(WHITE, a), &label);
-            if r[1] >= gy - th && r[1] <= gy + gh {
+            if live {
                 let visible = |b: [f32; 4]| [b[0], b[1].max(gy), b[2], (b[1] + b[3]).min(gy + gh) - b[1].max(gy)];
-                hit(&mut self.hits, visible(bar), Hit::Toggle(i));
+                page.hit(visible(bar), Hit::Toggle(i));
+                page.hit(visible(gear), Hit::Gear(i));
                 // Named for the tools that drive the game (`horizon-ctl click`).
                 horizon_client::widgets::record(tile.key, visible(bar).map(gui), true);
-                hit(&mut self.hits, visible(gear), Hit::Gear(i));
+                horizon_client::widgets::record(&format!("{}.gear", tile.key), visible(gear).map(gui), true);
                 // A press anywhere else on the tile turns it on or off too.
                 let body = visible([r[0], r[1], r[2], by - r[1]]);
                 if body[3] > 0.0 {
-                    hit(&mut self.hits, body, Hit::Toggle(i));
+                    page.hit(body, Hit::Toggle(i));
                 }
             }
         }
@@ -439,12 +644,259 @@ impl Mods {
             let nw = ui.measure(Face::Regular, 13.0, &none);
             ui.text(Face::Regular, 13.0, gx + (aw - nw) / 2.0, gy + 40.0, argb(WHITE, 0.55 * a), &none);
         }
-        // A thin scrollbar when the grid goes past its view.
-        if self.room > 0.0 {
-            let track = gh;
-            let thumb = (gh / content * track).max(24.0);
-            let ty = gy + (self.scroll / self.room) * (track - thumb);
-            ui.rounded(px + pw - 9.0, ty, 3.0, thumb, 1.5, argb(WHITE, 0.25 * a));
+    }
+
+    /// The open tile's settings: its name and switch, the crosshair's presets and grid, then
+    /// its options, scrolled within the view; the hovered option's description at the foot.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_detail(&mut self, ui: &mut Ui, page: &mut Page, extras: &Extras, a: f32, dt: f32, view: [f32; 4], slide: f32, live: bool) {
+        let [vx, vy, vw, vh] = view;
+        let (vx, pointer, gui) = (vx + slide, page.pointer, page.gui);
+        let tile = &TILES[self.shown];
+        let ease_k = 1.0 - (-dt * 14.0).exp();
+
+        // The head: back, icon, name, and the tile's own switch.
+        let back = [vx, vy, 36.0, 36.0];
+        let over = live && inside(back, pointer);
+        ui.rounded(back[0], back[1], back[2], back[3], 9.0, argb(WHITE, if over { 0.14 } else { 0.06 } * a));
+        ui.text_centered(Face::Medium, 18.0, back[0] + 18.0, back[1] + 6.0, argb(WHITE, a), "‹");
+        page.icon(ui, tile.icon, vx + 36.0 + 26.0, vy + 18.0, argb(WHITE, a), true);
+        ui.text(Face::SemiBold, 16.0, vx + 36.0 + 48.0, vy + 7.0, argb(WHITE, a), &tile.name());
+        let on = (tile.get)(extras);
+        let sw = self.switch[self.shown].get_or_insert(if on { 1.0 } else { 0.0 });
+        *sw += ((if on { 1.0 } else { 0.0 }) - *sw) * ease_k;
+        let bar = [vx + vw - 150.0, vy + 3.0, 150.0, 30.0];
+        let bar_over = live && inside(bar, pointer);
+        ui.rounded(bar[0], bar[1], bar[2], bar[3], 7.0, argb(mix(OFF, ON, *sw), if bar_over { 0.95 } else { 0.8 } * a));
+        let label = if on {
+            lang::get_or("oteria.mods.enabled", "ENABLED")
+        } else {
+            lang::get_or("oteria.mods.disabled", "DISABLED")
+        };
+        let lw = ui.measure(Face::Medium, 11.0, &label);
+        ui.text(Face::Medium, 11.0, bar[0] + (bar[2] - lw) / 2.0, bar[1] + 7.0, argb(WHITE, a), &label);
+        if live {
+            page.hit(back, Hit::Back);
+            page.hit(bar, Hit::Toggle(self.shown));
+            horizon_client::widgets::record("oteria-back", back.map(gui), true);
+        }
+
+        // The scrolled body, under the head and above the description's line.
+        let (by, bh) = (vy + 48.0, vh - 48.0 - 30.0);
+        let scroll = if live { self.scroll } else { 0.0 };
+        let mut y = by - scroll;
+        let start = ui.batch.vertices.len();
+        let within = |r: [f32; 4]| live && r[1] + r[3] > by && r[1] < by + bh;
+        let clipped = |r: [f32; 4]| [r[0], r[1].max(by), r[2], (r[1] + r[3]).min(by + bh) - r[1].max(by)];
+        let section = |ui: &mut Ui, y: f32, text: &str| {
+            ui.text(Face::Medium, 11.0, vx + 2.0, y, argb(WHITE, 0.5 * a), &text.to_uppercase());
+        };
+
+        if tile.is_crosshair() {
+            let c = &extras.pvp.crosshair;
+            // Five ready-made crosshairs, each drawn as it will look, larger.
+            section(ui, y, &lang::get_or("oteria.crosshair.presets", "Presets"));
+            y += 22.0;
+            let presets = pvp::crosshair_presets();
+            let gap = 10.0;
+            let cw = ((vw - gap * 4.0) / 5.0).min(110.0);
+            for (k, (key, english, preset)) in presets.iter().enumerate() {
+                let r = [vx + k as f32 * (cw + gap), y, cw, 86.0];
+                let chosen = c.custom
+                    && (c.shape, c.size, c.gap, c.thickness, c.dot) == (preset.shape, preset.size, preset.gap, preset.thickness, preset.dot);
+                let over = within(r) && inside(r, pointer);
+                ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(if chosen { ACCENT } else { WHITE }, if chosen { 0.2 } else if over { 0.1 } else { 0.05 } * a));
+                ui.border(r[0], r[1], r[2], r[3], 10.0, argb(if chosen { ACCENT } else { WHITE }, if chosen { 0.7 } else { 0.08 } * a));
+                draw_mask(ui, &preset.mask(), r[0] + cw / 2.0, r[1] + 32.0, 2.0, argb(WHITE, a));
+                let name = lang::get_or(key, english);
+                let nw = ui.measure(Face::Medium, 11.0, &name);
+                ui.text(Face::Medium, 11.0, r[0] + (cw - nw) / 2.0, r[1] + 62.0, argb(WHITE, 0.85 * a), &name);
+                if within(r) {
+                    page.hit(clipped(r), Hit::Preset(k));
+                    horizon_client::widgets::record(&format!("oteria-preset-{k}"), clipped(r).map(gui), true);
+                }
+            }
+            y += 86.0 + 18.0;
+
+            // The drawing grid: a click flips a pixel, a drag paints the same way.
+            section(ui, y, &lang::get_or("oteria.crosshair.draw", "Draw your own"));
+            y += 22.0;
+            let pixels = self.pixels.unwrap_or(c.pixels);
+            let cell = 13.0;
+            let side = cell * DRAWN as f32;
+            let grid = [vx, y, side, side];
+            ui.rounded(grid[0] - 4.0, grid[1] - 4.0, side + 8.0, side + 8.0, 8.0, argb(0x000000, 0.35 * a));
+            for (gy_, row) in pixels.iter().enumerate() {
+                for gx_ in 0..DRAWN {
+                    let set = row >> gx_ & 1 == 1;
+                    let (x0, y0) = (grid[0] + gx_ as f32 * cell, grid[1] + gy_ as f32 * cell);
+                    let middle = gx_ == DRAWN / 2 && gy_ == DRAWN / 2;
+                    let fill = if set {
+                        argb(WHITE, 0.95 * a)
+                    } else {
+                        argb(if middle { ACCENT } else { WHITE }, if middle { 0.25 } else { 0.06 } * a)
+                    };
+                    ui.rounded(x0 + 0.5, y0 + 0.5, cell - 1.0, cell - 1.0, 2.0, fill);
+                }
+            }
+            if within(grid) {
+                page.hit(clipped(grid), Hit::Grid);
+                horizon_client::widgets::record("oteria-crosshair-grid", clipped(grid).map(gui), true);
+            }
+            self.grid = (grid.map(gui), gui(cell));
+            // Beside it: how it looks at its real size, and a button to start again.
+            let (sx, sy) = (vx + side + 30.0, y);
+            let real = lang::get_or("oteria.crosshair.preview", "Real size");
+            ui.text(Face::Regular, 11.0, sx, sy, argb(WHITE, 0.6 * a), &real);
+            ui.rounded(sx, sy + 20.0, 64.0, 64.0, 8.0, argb(0x6E8B5A, 0.9 * a));
+            let drawn = pvp::Crosshair {
+                shape: pvp::Shape::Drawn,
+                pixels,
+                dot: false,
+                ..*c
+            };
+            draw_mask(ui, &drawn.mask(), sx + 32.0, sy + 52.0, ui_gui_scale(ui) / page.d, argb(WHITE, a));
+            let clear = [sx, sy + 96.0, 120.0, 30.0];
+            let over = within(clear) && inside(clear, pointer);
+            ui.rounded(clear[0], clear[1], clear[2], clear[3], 7.0, argb(WHITE, if over { 0.14 } else { 0.07 } * a));
+            let clear_label = lang::get_or("oteria.crosshair.clear", "Clear");
+            let cw = ui.measure(Face::Medium, 11.0, &clear_label);
+            ui.text(Face::Medium, 11.0, clear[0] + (120.0 - cw) / 2.0, clear[1] + 7.0, argb(WHITE, a), &clear_label);
+            if within(clear) {
+                page.hit(clipped(clear), Hit::ClearGrid);
+            }
+            let hint = lang::get_or("oteria.crosshair.hint", "Click or drag to paint. Drawing switches the shape to Drawn.");
+            let hint = fit(ui, Face::Regular, 11.0, &hint, vw - side - 30.0);
+            ui.text(Face::Regular, 11.0, sx, sy + 140.0, argb(WHITE, 0.5 * a), &hint);
+            y += side + 22.0;
+        }
+
+        // The options: a switch, or a value with arrows either side.
+        let items: Vec<Item> = tile.settings.iter().copied().filter(|i| i.key_name().is_none()).collect();
+        if self.rows.len() != items.len() {
+            self.rows = items
+                .iter()
+                .map(|i| if i.switch(extras) == Some(true) { 1.0 } else { 0.0 })
+                .collect();
+        }
+        if !items.is_empty() {
+            section(ui, y, &lang::get_or("oteria.mods.options", "Options"));
+            y += 22.0;
+        } else if !tile.is_crosshair() {
+            let none = lang::get_or("oteria.mods.no_options", "Nothing else to set: the switch above turns it on or off.");
+            ui.text(Face::Regular, 12.0, vx + 2.0, y, argb(WHITE, 0.55 * a), &none);
+        }
+        let mut hovered = None;
+        for (n, item) in items.iter().enumerate() {
+            let r = [vx, y, vw, 40.0];
+            let over = within(r) && inside(r, pointer);
+            if over {
+                hovered = Some(*item);
+            }
+            ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(WHITE, if over { 0.08 } else { 0.04 } * a));
+            ui.text(Face::Medium, 12.0, r[0] + 14.0, r[1] + 11.0, argb(WHITE, 0.92 * a), &caption(*item));
+            match item.switch(extras) {
+                Some(state) => {
+                    self.rows[n] += ((if state { 1.0 } else { 0.0 }) - self.rows[n]) * ease_k;
+                    let k = self.rows[n];
+                    let track = [r[0] + vw - 14.0 - 40.0, r[1] + 10.0, 40.0, 20.0];
+                    ui.rounded(track[0], track[1], track[2], track[3], 10.0, argb(mix(GREY, ON, k), a));
+                    let knob = track[0] + 2.0 + k * 20.0;
+                    ui.rounded(knob, track[1] + 2.0, 16.0, 16.0, 8.0, argb(WHITE, a));
+                    if within(r) {
+                        page.hit(clipped(r), Hit::Row(*item, false));
+                    }
+                }
+                None => {
+                    let value = item.value(extras);
+                    let pill = [r[0] + vw - 14.0 - 170.0, r[1] + 6.0, 170.0, 28.0];
+                    ui.rounded(pill[0], pill[1], pill[2], pill[3], 7.0, argb(WHITE, 0.07 * a));
+                    let half = [pill[0], pill[1], pill[2] / 2.0, pill[3]];
+                    let right = [pill[0] + pill[2] / 2.0, pill[1], pill[2] / 2.0, pill[3]];
+                    let lo = within(half) && inside(half, pointer);
+                    let hi = within(right) && inside(right, pointer);
+                    ui.text_centered(Face::Medium, 15.0, pill[0] + 12.0, pill[1] + 4.0, argb(WHITE, if lo { 1.0 } else { 0.55 } * a), "‹");
+                    ui.text_centered(Face::Medium, 15.0, pill[0] + pill[2] - 12.0, pill[1] + 4.0, argb(WHITE, if hi { 1.0 } else { 0.55 } * a), "›");
+                    let value = fit(ui, Face::Medium, 12.0, &value, pill[2] - 44.0);
+                    ui.text_centered(Face::Medium, 12.0, pill[0] + pill[2] / 2.0, pill[1] + 6.0, argb(WHITE, a), &value);
+                    if within(r) {
+                        // The row steps forwards; the pill's left half steps back.
+                        page.hit(clipped(r), Hit::Row(*item, false));
+                        page.hit(clipped(half), Hit::Row(*item, true));
+                    }
+                }
+            }
+            if within(r) {
+                horizon_client::widgets::record(item.caption_key(), clipped(r).map(gui), true);
+            }
+            y += 46.0;
+        }
+        let content = y + scroll - by;
+        if live {
+            self.room = (content - bh).max(0.0);
+            self.target = self.target.clamp(0.0, self.room);
+        }
+        ui.batch.clip_since(start, gui(vx - 2.0), gui(by), gui(vx + vw + 2.0), gui(by + bh));
+
+        // The hovered option's description, on one line at the foot.
+        if let Some(item) = hovered {
+            let text = fit(ui, Face::Regular, 11.0, &description(item), vw);
+            ui.text(Face::Regular, 11.0, vx + 2.0, by + bh + 8.0, argb(WHITE, 0.6 * a), &text);
+        }
+    }
+}
+
+/// The GUI scale (GUI pixels to screen pixels), for drawing a crosshair at its real size.
+fn ui_gui_scale(ui: &Ui) -> f32 {
+    ui.batch.scale
+}
+
+/// Sets or clears the drawn crosshair's pixel `(x, y)`.
+fn set_pixel(pixels: &mut [u16; DRAWN], (x, y): (usize, usize), on: bool) {
+    if on {
+        pixels[y] |= 1 << x;
+    } else {
+        pixels[y] &= !(1 << x);
+    }
+}
+
+/// A crosshair's pixels centred on `(cx, cy)` (dp), each `k` dp square.
+fn draw_mask(ui: &mut Ui, mask: &pvp::Mask, cx: f32, cy: f32, k: f32, colour: u32) {
+    for (x0, y, x1) in mask.runs() {
+        let (x, yy) = (cx + (x0 as f32 - 0.5) * k, cy + (y as f32 - 0.5) * k);
+        ui.rounded(x, yy, (x1 - x0) as f32 * k, k, 0.0, colour);
+    }
+}
+
+/// What every part of the page draws with: the pointer (dp), the dp-to-GUI scale, and the
+/// clickable places so far.
+struct Page<'g> {
+    d: f32,
+    pointer: (f32, f32),
+    gui: &'g dyn Fn(f32) -> f32,
+    hits: Vec<([f32; 4], Hit)>,
+}
+impl Page<'_> {
+    /// `r` (dp) answers `what` to a click, and shows the hand under the pointer.
+    fn hit(&mut self, r: [f32; 4], what: Hit) {
+        if r[3] <= 0.0 {
+            return;
+        }
+        horizon_client::widgets::widget_cursor(inside(r, self.pointer), true);
+        self.hits.push((r.map(self.gui), what));
+    }
+    /// An icon centred on (cx, cy), one texel to a pixel: the tiles' at 32 texels, the
+    /// chrome's (`small`) at 20.
+    fn icon(&self, ui: &mut Ui, name: &str, cx: f32, cy: f32, colour: u32, big: bool) {
+        let small = icon::small(name);
+        let (name, texels) = if big { (name, 32.0) } else { (small.as_str(), 20.0) };
+        if let Some(r) = ui.atlas.sprites.get(name).copied() {
+            let s = texels / self.d;
+            // On whole screen pixels, so no texel falls between two.
+            let k = ui.batch.scale;
+            let gui = self.gui;
+            let snap = |v: f32| (gui(v) * k).round() / k;
+            ui.batch.rect_uv(snap(cx - s / 2.0), snap(cy - s / 2.0), gui(s), gui(s), r, colour);
         }
     }
 }
@@ -476,6 +928,19 @@ mod tests {
     }
 
     #[test]
+    fn every_setting_steps_and_shows_a_value() {
+        for tile in &TILES {
+            for item in tile.settings {
+                let mut e = Extras::default();
+                let before = (item.switch(&e), item.value(&e));
+                item.cycle(&mut e, false);
+                assert_ne!((item.switch(&e), item.value(&e)), before, "{:?} of {}", item, tile.english);
+                assert!(!caption(*item).is_empty());
+            }
+        }
+    }
+
+    #[test]
     fn the_filters_and_the_search_narrow_the_grid() {
         let mut m = Mods::default();
         assert_eq!(m.shown().len(), TILES.len());
@@ -496,6 +961,33 @@ mod tests {
         assert!(m.type_key(Some("ab"), false));
         assert!(m.type_key(None, true));
         assert_eq!(m.search, "a");
+    }
+
+    #[test]
+    fn escape_leaves_the_search_then_the_settings() {
+        let mut m = Mods {
+            typing: true,
+            open: Some(0),
+            ..Mods::default()
+        };
+        assert!(m.back() && !m.typing && m.open.is_some());
+        assert!(m.back() && m.open.is_none());
+        assert!(!m.back());
+    }
+
+    #[test]
+    fn a_stroke_paints_what_its_first_cell_was_not() {
+        let mut m = Mods {
+            grid: ([0.0, 0.0, 150.0, 150.0], 10.0),
+            hits: vec![([0.0, 0.0, 150.0, 150.0], Hit::Grid)],
+            ..Mods::default()
+        };
+        assert_eq!(m.click((5.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.paint, Some(true));
+        // Let go far along the row: the cells between are painted too.
+        let Some(Action::Pixels(p)) = m.release((95.0, 5.0)) else { panic!("a stroke ends in pixels") };
+        assert_eq!(p[0], (1 << 10) - 1);
+        assert_eq!(m.release((5.0, 5.0)), None, "only once");
     }
 
     #[test]

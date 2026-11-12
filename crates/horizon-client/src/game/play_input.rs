@@ -94,6 +94,33 @@ impl Game<'_> {
     /// drop. Those do not care what sneak and sprint are bound to. A modifier
     /// says nothing about which side is down, so one being up means both
     /// Shifts, or both Controls, are.
+    /// In play, lets go of every key the keyboard holds for a mapping when no physical key bound
+    /// to it is down any more. A release can miss the mapping (a screen opened or closed between
+    /// the press and the release, a menu that read the key): without this the player would walk
+    /// on until the key is pressed again. Sneak and sprint are left to their toggles
+    /// (`heal_hold_latches`), and the other devices' holds stay theirs.
+    pub(super) fn heal_lost_releases(&mut self) {
+        if self.screen != Screen::Playing || !self.focused || self.scripted_run() {
+            return;
+        }
+        let lost: Vec<KeyCode> = self
+            .keys
+            .iter()
+            .copied()
+            .filter(|key| !matches!(key, KeyCode::ShiftLeft | KeyCode::ControlLeft))
+            .filter(|key| self.keys.held_by(key, horizon_client::held::Source::Keyboard))
+            .filter(|key| {
+                !self.physical_keys.contains(key)
+                    && !self.physical_keys.iter().any(|physical| {
+                        self.settings.keys.translate_all(*physical).contains(&Ok(*key))
+                    })
+            })
+            .collect();
+        for key in lost {
+            self.keys.release(&key, horizon_client::held::Source::Keyboard);
+        }
+    }
+
     pub(super) fn heal_hold_latches(&mut self) {
         let (shift, control) = (self.modifiers.shift_key(), self.modifiers.control_key());
         if !shift {

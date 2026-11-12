@@ -134,15 +134,18 @@ pub enum Shape {
     Square,
     /// Only the dot.
     Dot,
+    /// The player's own pixels (`Crosshair::pixels`), drawn on the mods menu's grid.
+    Drawn,
 }
 impl Shape {
-    pub const ALL: [Shape; 6] = [
+    pub const ALL: [Shape; 7] = [
         Shape::Cross,
         Shape::T,
         Shape::X,
         Shape::Circle,
         Shape::Square,
         Shape::Dot,
+        Shape::Drawn,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -152,6 +155,7 @@ impl Shape {
             Shape::Circle => "circle",
             Shape::Square => "square",
             Shape::Dot => "dot",
+            Shape::Drawn => "drawn",
         }
     }
     fn english(self) -> &'static str {
@@ -162,6 +166,7 @@ impl Shape {
             Shape::Circle => "Circle",
             Shape::Square => "Square",
             Shape::Dot => "Dot",
+            Shape::Drawn => "Drawn",
         }
     }
     pub fn label(self) -> String {
@@ -290,7 +295,12 @@ pub struct Crosshair {
     pub dot: bool,
     /// The colour while the crosshair is over a living entity; `None` keeps `colour`.
     pub hover: Option<Colour>,
+    /// The drawn shape's pixels: a 15x15 grid as vanilla's sprite, bit `x` of row `y`, the
+    /// middle pixel at (7, 7).
+    pub pixels: [u16; DRAWN],
 }
+/// The drawn crosshair's grid side, in GUI pixels.
+pub const DRAWN: usize = 15;
 pub const SIZES: (u8, u8) = (1, 12);
 pub const GAPS: (u8, u8) = (0, 8);
 pub const THICKNESSES: (u8, u8) = (1, 4);
@@ -306,8 +316,33 @@ impl Default for Crosshair {
             outline: false,
             dot: false,
             hover: None,
+            pixels: plus_pixels(),
         }
     }
+}
+/// A plus to start drawing from: vanilla's crosshair.
+pub fn plus_pixels() -> [u16; DRAWN] {
+    let mut p = [0u16; DRAWN];
+    for (y, row) in p.iter_mut().enumerate() {
+        *row = if y == DRAWN / 2 { (1 << DRAWN) - 1 } else { 1 << (DRAWN / 2) };
+    }
+    p
+}
+
+/// The five ready-made crosshairs of the mods menu, by name: shape and sizes (the colour stays
+/// the player's).
+pub fn crosshair_presets() -> [(&'static str, &'static str, Crosshair); 5] {
+    let base = Crosshair {
+        custom: true,
+        ..Crosshair::default()
+    };
+    [
+        ("oteria.crosshair.classic", "Classic", Crosshair { size: 5, ..base }),
+        ("oteria.crosshair.dot", "Dot", Crosshair { shape: Shape::Dot, thickness: 2, outline: true, ..base }),
+        ("oteria.crosshair.gap", "Gap", Crosshair { size: 4, gap: 2, dot: true, ..base }),
+        ("oteria.crosshair.circle", "Circle", Crosshair { shape: Shape::Circle, size: 4, gap: 1, dot: true, ..base }),
+        ("oteria.crosshair.x", "X", Crosshair { shape: Shape::X, size: 3, gap: 1, ..base }),
+    ]
 }
 
 /// The crosshair's pixels on a 64x64 grid centred on bit 32 of row 32 (the middle pixel of
@@ -421,6 +456,16 @@ impl Crosshair {
                 }
             }
             Shape::Dot => {}
+            Shape::Drawn => {
+                let mid = (DRAWN / 2) as i32;
+                for (y, row) in self.pixels.iter().enumerate() {
+                    for x in 0..DRAWN {
+                        if row >> x & 1 == 1 {
+                            m.set(x as i32 - mid, y as i32 - mid);
+                        }
+                    }
+                }
+            }
         }
         if self.dot || self.shape == Shape::Dot {
             m.rect(lo, lo, hi, hi);
@@ -838,6 +883,15 @@ impl Pvp {
             "crosshairColour" => c.colour = Colour::parse(value).unwrap_or(c.colour),
             "crosshairOutline" => c.outline = flag(value, c.outline),
             "crosshairDot" => c.dot = flag(value, c.dot),
+            "crosshairPixels" => {
+                let rows: Vec<u16> = value
+                    .split(',')
+                    .filter_map(|v| u16::from_str_radix(v, 16).ok())
+                    .collect();
+                if rows.len() == DRAWN {
+                    c.pixels.copy_from_slice(&rows);
+                }
+            }
             "crosshairHover" => {
                 c.hover = match value {
                     "off" => None,
@@ -951,6 +1005,8 @@ impl Pvp {
             c.dot,
             c.hover.map_or("off", Colour::name),
         );
+        let pixels: Vec<String> = c.pixels.iter().map(|row| format!("{row:x}")).collect();
+        let _ = writeln!(out, "crosshairPixels:{}", pixels.join(","));
         let (o, h) = (&self.outline, &self.hit);
         let _ = write!(
             out,

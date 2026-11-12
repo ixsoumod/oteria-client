@@ -1,15 +1,15 @@
 //! The HUD editor (`docs/pvp.md`): the PvP & HUD widgets on the game, each in a frame the
 //! player drags anywhere (snapping to the screen's edges and middle and to the other
-//! widgets), resizes with the wheel and sends back to its corner with a right click; buttons
-//! for the text colour, shadow, boxes and their opacity, and Reset. Opened from the PvP & HUD
-//! page or its key. Nothing here reaches the server.
+//! widgets), resizes with the wheel and sends back to its corner with a right click. In the
+//! middle, Oteria's glass toolbar: the hint, Reset and Done (the widgets' style is on the mods
+//! page). Opened from the PvP & HUD page, the mods page or its key. Nothing here reaches the
+//! server.
 use super::{Game, Screen};
+use crate::ui_theme::{Face, Ui};
 use horizon_client::{
     hud::{HudBatch, rgba},
-    pvp::Opt,
+    lang,
     pvp_hud::{self, Layout, Place, WidgetId},
-    text::Text,
-    ui,
 };
 
 #[derive(Default)]
@@ -20,37 +20,22 @@ pub(super) struct HudEditor {
     guides: (Option<f32>, Option<f32>),
     /// Opened from the PvP & HUD page: Done goes back there.
     from_options: bool,
+    /// Opened from Oteria's mods page: Done goes back there.
+    pub(super) to_oteria: bool,
+    /// Where Reset and Done were drawn (GUI pixels), for clicks.
+    buttons: [[f32; 4]; 2],
 }
 
-/// The style buttons, two to a row, then Reset and Done.
-const STYLE: [Opt; 4] = [
-    Opt::HudTextColour,
-    Opt::HudShadow,
-    Opt::HudBackground,
-    Opt::HudOpacity,
-];
-const BUTTON_W: f32 = 150.0;
-const BUTTON_H: f32 = 20.0;
-const GAP: f32 = 4.0;
 /// A frame's colour, and the held or hovered one's.
 const FRAME: u32 = 0xB0FF_FFFF;
-const FRAME_HOT: u32 = 0xFFFF_FF55;
-const GUIDE: u32 = 0xFF55_FFFF;
+const FRAME_HOT: u32 = 0xFF2B_BFE9;
+const GUIDE: u32 = 0xFF2B_BFE9;
+/// The toolbar's glass and its Done, as `0xRRGGBB` (`oteria_menu::argb`).
+const PANEL: u32 = 0x0B_1119;
+const ACCENT: u32 = 0x2B_BFE9;
 
-/// The buttons' places, in the middle of the screen: style buttons, then Reset and Done.
-fn buttons((w, h): (f32, f32)) -> [(f32, f32); 6] {
-    let left = (w / 2.0 - BUTTON_W - GAP / 2.0).floor();
-    let right = left + BUTTON_W + GAP;
-    let top = (h / 2.0 - (3.0 * BUTTON_H + 2.0 * GAP) / 2.0).floor();
-    let row = |i: f32| top + i * (BUTTON_H + GAP);
-    [
-        (left, row(0.0)),
-        (right, row(0.0)),
-        (left, row(1.0)),
-        (right, row(1.0)),
-        (left, row(2.0)),
-        (right, row(2.0)),
-    ]
+fn inside([x, y, w, h]: [f32; 4], (px, py): (f32, f32)) -> bool {
+    px >= x && px < x + w && py >= y && py < y + h
 }
 
 impl Game<'_> {
@@ -68,9 +53,13 @@ impl Game<'_> {
         self.capture(false);
     }
     pub(super) fn close_hud_editor(&mut self) {
-        let from_options = self.pvp.editor.take().is_some_and(|e| e.from_options);
+        let editor = self.pvp.editor.take();
+        let from_options = editor.as_ref().is_some_and(|e| e.from_options);
         self.settings.save(&Self::options_path());
-        if from_options {
+        if editor.is_some_and(|e| e.to_oteria) {
+            self.screen = Screen::Playing;
+            self.open_oteria_mods();
+        } else if from_options {
             self.open_options_at(false, horizon_client::options_ui::Page::Pvp);
         } else {
             self.screen = Screen::Playing;
@@ -91,15 +80,6 @@ impl Game<'_> {
     /// Whether the HUD draws the editor's stand-ins for widgets that have nothing to show.
     pub(super) fn hud_editing(&self) -> bool {
         self.screen == Screen::HudEditor
-    }
-    fn style_label(&self, opt: Opt) -> Text {
-        let p = &self.settings.extras.pvp;
-        let value = match opt.switch(p) {
-            Some(true) => Text::translate("options.on", &[]),
-            Some(false) => Text::translate("options.off", &[]),
-            None => Text::literal(opt.value(p).unwrap_or_default()),
-        };
-        Text::option_name_value(Text::translate(opt.caption_key(), &[]), value)
     }
     /// The topmost widget under the cursor.
     fn widget_under_cursor(&self) -> Option<(WidgetId, [f32; 4])> {
@@ -135,47 +115,70 @@ impl Game<'_> {
                 batch.fill(atlas, 0.0, y, w, 1.0, colour(GUIDE));
             }
         }
-        let places = buttons((w, h));
-        let hint = Text::translate("horizon.pvp.editor.hint", &[]);
-        let hw = atlas.font.width_text(&hint);
-        let top = places[0].1;
-        let hx = ((w - hw) / 2.0).floor();
-        batch.text_styled(atlas, &hint, hx, top - 14.0, u32::MAX, true);
-        let labels = STYLE.map(|o| self.style_label(o));
-        let rest = [
-            Text::translate("controls.reset", &[]),
-            Text::translate("gui.done", &[]),
+        // The toolbar, in Oteria's style: the hint over Reset and Done.
+        let argb = super::oteria_menu::argb;
+        let mut ui = Ui::new(atlas, batch, self.cursor);
+        let (d, scale) = (ui.density, ui.batch.scale);
+        let gui = |v: f32| v * d / scale;
+        let hint = lang::get_or(
+            "oteria.hud.hint",
+            "Drag the widgets · Wheel: size · Right click: back to its corner",
+        );
+        let (bw, bh, gap) = (150.0, 34.0, 10.0);
+        let pw = (ui.measure(Face::Regular, 12.0, &hint) + 40.0).max(2.0 * bw + gap + 32.0);
+        let ph = 96.0;
+        let (px, py) = ((ui.w - pw) / 2.0, (ui.h - ph) / 2.0);
+        ui.rounded(px, py, pw, ph, 12.0, argb(PANEL, 0.82));
+        ui.border(px, py, pw, ph, 12.0, argb(0xFF_FFFF, 0.08));
+        ui.text_centered(Face::Regular, 12.0, px + pw / 2.0, py + 14.0, argb(0xFF_FFFF, 0.7), &hint);
+        let cx = px + pw / 2.0;
+        let places = [
+            [cx - gap / 2.0 - bw, py + 44.0, bw, bh],
+            [cx + gap / 2.0, py + 44.0, bw, bh],
         ];
-        // Opacity does nothing without the boxes.
-        let boxes = self.settings.extras.pvp.hud.background;
-        for (i, (label, &(x, y))) in labels.iter().chain(&rest).zip(&places).enumerate() {
-            let active = i != 3 || boxes;
-            let hover = active && ui::hovered(self.cursor, x, y, BUTTON_W, BUTTON_H);
-            ui::button(batch, atlas, x, y, BUTTON_W, BUTTON_H, label, active, hover);
+        let labels = [
+            lang::get_or("oteria.hud.reset", "Reset"),
+            lang::get_or("oteria.hud.done", "Done"),
+        ];
+        for (k, (r, label)) in places.iter().zip(&labels).enumerate() {
+            let over = inside(*r, ui.cursor);
+            let fill = match k {
+                0 => argb(0xFF_FFFF, if over { 0.16 } else { 0.08 }),
+                _ => argb(ACCENT, if over { 0.95 } else { 0.78 }),
+            };
+            ui.rounded(r[0], r[1], r[2], r[3], 8.0, fill);
+            ui.text_centered(Face::Medium, 12.0, r[0] + r[2] / 2.0, r[1] + 9.0, argb(0xFF_FFFF, 1.0), label);
+            horizon_client::widgets::widget_cursor(over, true);
+        }
+        ui.finish();
+        let rects = places.map(|r| r.map(gui));
+        horizon_client::widgets::record("oteria-hud-reset", rects[0], true);
+        horizon_client::widgets::record("oteria-hud-done", rects[1], true);
+        if let Some(e) = &mut self.pvp.editor {
+            e.buttons = rects;
         }
     }
     /// A press: a button, else the widget under the cursor (right button: back to its corner).
     pub(super) fn hud_editor_press(&mut self, right: bool) {
-        let size = self.gui_size();
-        for (i, &(x, y)) in buttons(size).iter().enumerate() {
-            if right || !ui::hovered(self.cursor, x, y, BUTTON_W, BUTTON_H) {
-                continue;
+        let pressed = self
+            .pvp
+            .editor
+            .as_ref()
+            .and_then(|e| e.buttons.iter().position(|r| inside(*r, self.cursor)));
+        match pressed {
+            Some(_) if right => return,
+            Some(0) => {
+                self.audio.play_button_click();
+                self.settings.extras.pvp.layout = Layout::default();
+                self.settings.save(&Self::options_path());
+                return;
             }
-            let back = self.has_shift_down();
-            let pvp = &mut self.settings.extras.pvp;
-            match i {
-                3 if !pvp.hud.background => return,
-                0..4 => STYLE[i].cycle(pvp, back),
-                4 => pvp.layout = Layout::default(),
-                _ => {
-                    self.audio.play_button_click();
-                    self.close_hud_editor();
-                    return;
-                }
+            Some(_) => {
+                self.audio.play_button_click();
+                self.close_hud_editor();
+                return;
             }
-            self.audio.play_button_click();
-            self.settings.save(&Self::options_path());
-            return;
+            None => {}
         }
         let Some((id, [x, y, _, _])) = self.widget_under_cursor() else {
             return;
@@ -228,28 +231,5 @@ impl Game<'_> {
             place.scale.saturating_sub(10).max(lo)
         };
         self.settings.save(&Self::options_path());
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_buttons_sit_in_the_middle_without_overlapping() {
-        let screen = (480.0, 270.0);
-        let places = buttons(screen);
-        for (i, &(x, y)) in places.iter().enumerate() {
-            assert!(x >= 0.0 && x + BUTTON_W <= screen.0 && y >= 0.0 && y + BUTTON_H <= screen.1);
-            for &(ox, oy) in &places[i + 1..] {
-                let apart = x + BUTTON_W <= ox
-                    || ox + BUTTON_W <= x
-                    || y + BUTTON_H <= oy
-                    || oy + BUTTON_H <= y;
-                assert!(apart);
-            }
-        }
-        let (left, right) = (places[0].0, places[1].0 + BUTTON_W);
-        assert!((screen.0 - right - left).abs() <= 1.0, "centred");
     }
 }

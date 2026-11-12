@@ -1091,5 +1091,21 @@
   "oteria.mod.minimap": "Minimap",
   "oteria.mod.mouse": "Mouse Tweaks",
   "oteria.mod.reconnect": "Reconnexion auto",
-  "oteria.mod.nametag": "Mon pseudo"
+  "oteria.mod.nametag": "Mon pseudo",
+  "horizon.pvp.shape.drawn": "Dessin",
+  "oteria.crosshair.presets": "Préréglages",
+  "oteria.crosshair.draw": "Dessine le tien",
+  "oteria.crosshair.preview": "Taille réelle",
+  "oteria.crosshair.clear": "Effacer",
+  "oteria.crosshair.hint": "Clique ou glisse pour peindre. Dessiner passe la forme sur Dessin.",
+  "oteria.crosshair.classic": "Classique",
+  "oteria.crosshair.dot": "Point",
+  "oteria.crosshair.gap": "Écart",
+  "oteria.crosshair.circle": "Cercle",
+  "oteria.crosshair.x": "X",
+  "oteria.mods.options": "Options",
+  "oteria.mods.no_options": "Rien d'autre à régler : l'interrupteur au-dessus l'active ou le désactive.",
+  "oteria.hud.hint": "Glisse les éléments · Molette : taille · Clic droit : retour à son coin",
+  "oteria.hud.reset": "Réinitialiser",
+  "oteria.hud.done": "Terminé"
 }

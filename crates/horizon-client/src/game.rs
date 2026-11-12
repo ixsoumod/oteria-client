@@ -10210,6 +10210,13 @@ impl Game<'_> {
         // carries text closes that screen or moves its focus. The title's
         // screens keep theirs for the same reason: their key path types into
         // the world name, the seed and a server's address.
+        // Oteria's menu's search field takes the keys while it has the keyboard, text and all.
+        if self.screen == Screen::OteriaMenu
+            && matches!(event, WindowEvent::KeyboardInput { .. })
+            && self.oteria_menu_event(&event)
+        {
+            return;
+        }
         let mut typed: Option<String> = None;
         if let WindowEvent::KeyboardInput {
             event: key_event, ..
@@ -11241,6 +11248,7 @@ impl Game<'_> {
                     let updated = Instant::now();
                     self.track_toggle_screens();
                     self.heal_hold_latches();
+                    self.heal_lost_releases();
                     // For the hooks above the engine (the "I'm playing" ping): said when it changes.
                     horizon_hooks::engine::published(self.is_published());
                     self.report_activity();

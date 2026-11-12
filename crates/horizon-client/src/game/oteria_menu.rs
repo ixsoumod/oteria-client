@@ -129,6 +129,18 @@ impl Game<'_> {
         self.capture(false);
     }
 
+    /// Opens the menu straight on its mods page (back from the HUD editor).
+    pub(in crate::game) fn open_oteria_mods(&mut self) {
+        self.open_oteria_menu();
+        MENU.with(|m| {
+            if let Some(menu) = m.borrow_mut().as_mut() {
+                menu.mods = Some(Mods::default());
+                // Already there: no way in to watch.
+                menu.mods_at = Instant::now().checked_sub(std::time::Duration::from_secs(1));
+            }
+        });
+    }
+
     /// Starts the menu's way out; it is gone, and the pointer back to play, once it has faded.
     pub(in crate::game) fn close_oteria_menu(&mut self) {
         MENU.with(|m| {
@@ -158,9 +170,7 @@ impl Game<'_> {
             };
             match menu.mods.as_mut() {
                 Some(mods) if menu.back.is_none() => {
-                    if mods.typing {
-                        mods.typing = false;
-                    } else {
+                    if !mods.back() {
                         menu.back = Some(Instant::now());
                     }
                     false
@@ -177,6 +187,7 @@ impl Game<'_> {
     /// their search. True when taken.
     pub(in crate::game) fn oteria_menu_event(&mut self, event: &WindowEvent) -> bool {
         let cursor = self.cursor;
+        let drawn = self.settings.extras.pvp.crosshair.pixels;
         let mut taken = matches!(event, WindowEvent::MouseInput { .. });
         let action = MENU.with(|m| {
             let mut m = m.borrow_mut();
@@ -221,7 +232,7 @@ impl Game<'_> {
                     ..
                 } => {
                     if on_mods {
-                        return menu.mods.as_mut()?.click(cursor);
+                        return menu.mods.as_mut()?.click(cursor, drawn);
                     }
                     let i = menu.rects.iter().position(|r| inside(*r, cursor))?;
                     menu.pressed[i] = Some(Instant::now());
@@ -239,6 +250,12 @@ impl Game<'_> {
                     }
                     None
                 }
+                // The end of a stroke on the crosshair's grid.
+                WindowEvent::MouseInput {
+                    state: ElementState::Released,
+                    button: MouseButton::Left,
+                    ..
+                } => menu.mods.as_mut()?.release(cursor),
                 _ => None,
             }
         });
@@ -256,10 +273,29 @@ impl Game<'_> {
                 self.settings.save(&Self::options_path());
                 self.apply_settings();
             }
-            Action::Options(i) => {
-                leave();
-                self.open_options_at(false, TILES[i].page);
-                self.capture(false);
+            Action::Cycle(item, back) => {
+                item.cycle(&mut self.settings.extras, back);
+                self.settings.save(&Self::options_path());
+                self.apply_settings();
+            }
+            Action::Preset(k) => {
+                let (_, _, preset) = horizon_client::pvp::crosshair_presets()[k];
+                let c = &mut self.settings.extras.pvp.crosshair;
+                // The look of the preset; the player's colours and drawing stay.
+                *c = horizon_client::pvp::Crosshair {
+                    colour: c.colour,
+                    hover: c.hover,
+                    pixels: c.pixels,
+                    ..preset
+                };
+                self.settings.save(&Self::options_path());
+            }
+            Action::Pixels(pixels) => {
+                let c = &mut self.settings.extras.pvp.crosshair;
+                c.pixels = pixels;
+                c.shape = horizon_client::pvp::Shape::Drawn;
+                c.custom = true;
+                self.settings.save(&Self::options_path());
             }
             Action::Settings => {
                 leave();
@@ -269,6 +305,10 @@ impl Game<'_> {
             Action::EditHud => {
                 leave();
                 self.open_hud_editor(false);
+                // Done brings the mods back.
+                if let Some(editor) = self.pvp.editor.as_mut() {
+                    editor.to_oteria = true;
+                }
             }
             Action::Close => self.close_oteria_menu(),
         }
@@ -475,7 +515,7 @@ impl Game<'_> {
             if page > 0.0
                 && let Some(mods) = menu.mods.as_mut()
             {
-                mods.draw(&mut ui, extras, shown * page, (1.0 - page) * 18.0, dt, &gui);
+                mods.draw(&mut ui, extras, shown * page, (1.0 - page) * 18.0, dt, &gui, cursor);
             }
             ui.finish();
         });
