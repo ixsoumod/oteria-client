@@ -4,8 +4,12 @@
 //!
 //! Every motion runs on the clock, not on the frame count, so the menu looks the same at 60 or
 //! 600 FPS: it eases in and out, the buttons light up and give under the pointer, Boost glows
-//! violet in a loop with a rocket that floats, and pressing Boost sends a shock wave across the
-//! screen. For now Boost and Cosmetics only animate; Mods opens Oteria's settings.
+//! violet in a loop, and pressing Boost sends a shock wave across the screen. For now Boost and
+//! Cosmetics only animate; Mods opens Oteria's settings.
+//!
+//! The GUI is drawn pixel for pixel (crisp text and icons), so a slow drift would move one pixel
+//! at a time and stutter: what loops slowly changes its light (a glow's opacity), and only fast
+//! motions (the ripple, the sparks, the shock wave) change places.
 
 use crate::game::{Game, Screen};
 use crate::ui_theme::{Face, Ui};
@@ -159,9 +163,11 @@ impl Game<'_> {
             Some(BUTTONS[i])
         });
         if hit == Some(Button::Mods) {
-            // Oteria's settings: what the menu will hold, for now on the options' own page.
-            self.drop_oteria_menu();
+            // Oteria's settings: what the menu will hold, for now on the options' own page. The
+            // pointer stays free on the way (dropping the menu would grab it back for play).
+            MENU.with(|m| *m.borrow_mut() = None);
             self.open_options_at(false, horizon_client::options_ui::Page::Horizon);
+            self.capture(false);
         }
         true
     }
@@ -213,11 +219,20 @@ impl Game<'_> {
             // The logo drawn one texel to a pixel (sharp), floating a little; the name under it.
             let logo = 160.0 / d * pop;
             let title_size = 24.0 * pop;
-            let block = logo + 8.0 + title_size * 1.45 + 22.0 + SQUARE;
-            let top = ((h - block) / 2.0 - 8.0).max(8.0) + (1.0 - open) * 10.0;
-            let float = (t * TAU / 3.0).sin() * 2.0;
+            // Mods sits in the middle of the window, where the freed pointer appears: open, and the
+            // pointer is already on it. The logo and the name go above it.
+            let by = (h - SQUARE) / 2.0 + (1.0 - open) * 10.0;
+            let top = (by - 22.0 - title_size * 1.45 - 8.0 - logo).max(8.0);
+            // A soft light behind the logo that breathes: its opacity, which changes smoothly.
+            let glow_breath = 0.5 + 0.5 * (t * TAU / 3.2).sin();
+            let halo = logo * 0.62;
+            for (k, spread) in [(0.0, 1.0), (1.0, 1.35), (2.0, 1.75)] {
+                let size = halo * spread;
+                let alpha = (0.07 - 0.02 * k) * (0.6 + 0.4 * glow_breath) * a;
+                ui.rounded(cx - size / 2.0, top + logo / 2.0 - size / 2.0, size, size, size / 2.0, argb(0x8FD8FF, alpha));
+            }
             if let Some(r) = ui.atlas.sprites.get(oteria_art::LOGO).copied() {
-                let (lx, ly) = (cx - logo / 2.0, top + float);
+                let (lx, ly) = (cx - logo / 2.0, top);
                 ui.batch.rect_uv(gui(lx), gui(ly), gui(logo), gui(logo), r, argb(WHITE, a));
             }
             let ty = top + logo + 8.0;
@@ -229,7 +244,6 @@ impl Game<'_> {
             ui.text(Face::Regular, title_size, tx + bw, ty, argb(WHITE, 0.82 * a), light);
 
             // The buttons' places, in dp.
-            let by = ty + title_size * 1.45 + 22.0;
             let row = SQUARE * 2.0 + MODS_W + GAP * 2.0;
             let x0 = cx - row / 2.0;
             let places = [
@@ -256,10 +270,15 @@ impl Game<'_> {
             let phase = (t / PULSE_S).fract();
             let breath = 0.5 + 0.5 * (t * TAU / PULSE_S).sin();
             let boost = places[0];
-            let glow = grown(boost, 3.0 + 3.0 * breath);
-            ui.rounded(glow[0], glow[1], glow[2], glow[3], RADIUS + 4.0, argb(VIOLET, (0.16 + 0.16 * breath) * a));
-            let ripple = grown(boost, 2.0 + 14.0 * ease_out(phase));
-            ui.border(ripple[0], ripple[1], ripple[2], ripple[3], RADIUS + 6.0, argb(VIOLET, (1.0 - phase) * 0.55 * a));
+            let glow = grown(boost, 5.0);
+            ui.rounded(glow[0], glow[1], glow[2], glow[3], RADIUS + 4.0, argb(VIOLET, (0.12 + 0.22 * breath) * a));
+            // The ripple leaves fast enough to move several pixels a frame; then waits.
+            let leave = (phase / 0.55).min(1.0);
+            if leave < 1.0 {
+                let ripple = grown(boost, 2.0 + 34.0 * ease_out(leave));
+                let fade = (1.0 - leave).powi(2) * 0.6 * a;
+                ui.border(ripple[0], ripple[1], ripple[2], ripple[3], RADIUS + 10.0, argb(VIOLET, fade));
+            }
 
             // The buttons: glass that lights up under the pointer, and gives when pressed.
             for (i, place) in places.iter().enumerate() {
@@ -288,19 +307,15 @@ impl Game<'_> {
                     button => {
                         let sprite = if button == Button::Boost { oteria_art::ROCKET } else { oteria_art::SHIRT };
                         let icon = 32.0 / d;
-                        // Boost's rocket floats, and climbs a little under the pointer.
-                        let lift = if button == Button::Boost {
-                            (t * TAU / 1.2).sin() * 1.2 + 2.0 * hover
-                        } else {
-                            0.0
-                        };
+                        // Boost's rocket climbs a little under the pointer (quickly, eased).
+                        let lift = if button == Button::Boost { 2.0 * hover } else { 0.0 };
                         if button == Button::Boost {
                             // Sparks falling from the rocket's nozzle, in a loop.
                             for k in 0..3 {
-                                let p = ((t * 1.6) + k as f32 / 3.0).fract();
-                                let sy = my + icon * 0.42 - lift + p * 9.0;
-                                let sx = mx + ((k as f32 * 2.1 + t * 3.0).sin()) * 1.6;
-                                let size = 1.6 * (1.0 - p);
+                                let p = ((t * 2.4) + k as f32 / 3.0).fract();
+                                let sy = my + icon * 0.42 - lift + p * 16.0;
+                                let sx = mx + (k as f32 - 1.0) * 2.5;
+                                let size = 2.2 * (1.0 - p);
                                 ui.rounded(sx - size / 2.0, sy, size, size, size / 2.0, argb(VIOLET, (1.0 - p) * 0.9 * a));
                             }
                         }
