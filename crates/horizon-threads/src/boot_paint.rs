@@ -125,7 +125,7 @@ pub fn paint(hwnd: isize, semibold: &'static [u8], mono: &'static [u8], logs: &[
         let old_mark = SelectObject(hdc, mark);
         SetBkMode(hdc, TRANSPARENT as i32);
         SetTextColor(hdc, WORDMARK);
-        let text: Vec<u16> = "Horizon".encode_utf16().collect();
+        let text: Vec<u16> = "Oteria Client".encode_utf16().collect();
         let mut mark_rect = RECT {
             left: 0,
             top: top as i32,
@@ -142,7 +142,7 @@ pub fn paint(hwnd: isize, semibold: &'static [u8], mono: &'static [u8], logs: &[
         let tagline = face(small as i32, 400, "Geist Mono");
         let old_tagline = SelectObject(hdc, tagline);
         SetTextColor(hdc, CONSOLE);
-        let tagline_text: Vec<u16> = "Rust based minecraft client".encode_utf16().collect();
+        let tagline_text: Vec<u16> = "Rust based Minecraft client".encode_utf16().collect();
         let tagline_top = top + size * 1.45 + small * 0.6;
         let mut tagline_rect = RECT {
             left: 0,
@@ -170,7 +170,8 @@ pub fn paint(hwnd: isize, semibold: &'static [u8], mono: &'static [u8], logs: &[
             if text.is_empty() {
                 continue;
             }
-            let wide: Vec<u16> = text.encode_utf16().collect();
+            // The engine's lines name it; the player sees the client's name.
+            let wide: Vec<u16> = text.replace("Horizon", "Oteria").encode_utf16().collect();
             // The wrapped height, measured without drawing (DT_CALCRECT);
             // every row is the face's cell height, `line`.
             let mut rect = RECT {

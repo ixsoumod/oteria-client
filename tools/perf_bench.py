@@ -707,7 +707,7 @@ def release_version(log):
     """A release's or nightly's version, from the first line it logs ("Horizon v0.2.97"); None for a dev build
     ("Horizon 0.1.0", or "Horizon v0.2.97 (client 0.1.0)" in a release's folder)."""
     first = log.read_text(errors="replace").partition("\n")[0].strip() if log.exists() else ""
-    m = re.fullmatch(r"Horizon ((?:v\d|nightly-)\S*)", first)
+    m = re.fullmatch(r"(?:Horizon|Oteria Client) ((?:v\d|nightly-)\S*)", first)
     return m and m.group(1)
 
 

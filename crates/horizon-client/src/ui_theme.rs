@@ -670,14 +670,14 @@ fn wordmark(atlas: &HudAtlas, batch: &mut HudBatch) {
     let small = (size * 0.25).clamp(micro(), 18.0);
     let block = size * 1.45 + small * 0.6 + small * 1.5;
     let top = (ui.h - block) / 2.0;
-    ui.text_centered(Face::SemiBold, size, ui.w / 2.0, top, BOOT_TEXT, "Oteria");
+    ui.text_centered(Face::SemiBold, size, ui.w / 2.0, top, BOOT_TEXT, "Oteria Client");
     ui.text_centered(
         Face::Mono,
         small,
         ui.w / 2.0,
         top + size * 1.45 + small * 0.6,
         BOOT_LOG,
-        "Rust based minecraft client",
+        "Rust based Minecraft client",
     );
     ui.finish();
 }
@@ -695,7 +695,9 @@ pub fn draw_boot_log(atlas: &HudAtlas, batch: &mut HudBatch, logs: &[String]) {
     let mut y = ui.h - pad - line;
     let mut drawn = 0;
     'lines: for text in logs.iter().rev() {
-        let chunks = wrapping_lines(&ui, Face::Mono, size, text, max_w);
+        // The engine's lines name it; the player sees the client's name.
+        let text = text.replace("Horizon", "Oteria");
+        let chunks = wrapping_lines(&ui, Face::Mono, size, &text, max_w);
         for chunk in chunks.iter().rev() {
             if drawn == max_rows {
                 break 'lines;
