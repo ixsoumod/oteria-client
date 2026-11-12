@@ -4,22 +4,26 @@
 //!
 //! Every motion runs on the clock, not on the frame count, so the menu looks the same at 60 or
 //! 600 FPS: it eases in and out, the buttons light up and give under the pointer, Boost glows
-//! violet in a loop, and pressing Boost sends a shock wave across the screen. For now Boost and
-//! Cosmetics only animate; Mods fades the buttons out for the mods page (`oteria_mods`), and
-//! Escape fades back.
+//! violet in a loop. Boost is the performance mode (`oteria_boost`): pressed, it sends a shock
+//! wave across the screen, then smoulders while on (the rocket shakes, embers rise around it);
+//! pressed again, it calms down slowly as violet trails from every edge of the screen fly into
+//! it. Neither can be pressed again before its animation is over. Cosmetics only animates for
+//! now; Mods fades the buttons out for the mods page (`oteria_mods`), and Escape fades back.
 //!
 //! The GUI is drawn pixel for pixel (crisp text and icons), so a slow drift would move one pixel
 //! at a time and stutter: what loops slowly changes its light (a glow's opacity), and only fast
 //! motions (the ripple, the sparks, the shock wave) change places.
 
-use super::oteria_mods::{Action, Mods, TILES};
+use super::oteria_boost;
+use super::oteria_mods::{Action, Mods, ProfileOp, TILES};
+use super::oteria_profiles::Profiles;
 use crate::game::{Game, Screen};
 use crate::ui_theme::{Face, Ui};
 use horizon_client::hud::HudBatch;
-use horizon_client::oteria_art;
+use horizon_client::{lang, oteria_art};
 use std::cell::RefCell;
-use std::f32::consts::TAU;
-use std::time::Instant;
+use std::f32::consts::{PI, TAU};
+use std::time::{Duration, Instant};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -27,6 +31,12 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 const OPEN_S: f32 = 0.22;
 const CLOSE_S: f32 = 0.14;
 const SHOCK_S: f32 = 0.9;
+/// Boost turned off: the trails' flight into the rocket (s), and how many fly.
+const CALM_S: f32 = 1.3;
+const TRAILS: usize = 32;
+/// How fast Boost's look comes on, and goes (per second, exponential): it calms slowly.
+const SMOULDER_IN: f32 = 3.5;
+const SMOULDER_OUT: f32 = 1.4;
 /// The way between the buttons and the mods page, either direction (s).
 const PAGE_S: f32 = 0.2;
 /// Boost's glow breathes, and its ripple leaves it, once a period (s).
@@ -61,6 +71,18 @@ struct Menu {
     pressed: [Option<Instant>; 3],
     /// The shock wave's start and centre (GUI pixels).
     shock: Option<(Instant, [f32; 2])>,
+    /// Boost turned off: the trails' start and where they fly to (GUI pixels).
+    calm: Option<(Instant, [f32; 2])>,
+    /// Boost is on, and its look (0 to 1, eased: it smoulders once the wave has gone).
+    boost: bool,
+    smoulder: f32,
+    /// Boost can't be pressed again before this (its animation plays out).
+    busy: Option<Instant>,
+    /// Boost's pulse and its nozzle's sparks, run on as phases (they quicken while it's on).
+    pulse: f32,
+    sparks: f32,
+    /// The player's profiles, for the mods page's PROFILES tab.
+    profiles: Option<Profiles>,
     /// Where each button was drawn (GUI pixels), for clicks.
     rects: [[f32; 4]; 3],
     /// The mods page, from when it was asked for; `back` when it is fading back to the buttons.
@@ -79,6 +101,13 @@ impl Menu {
             hover: [0.0; 3],
             pressed: [None; 3],
             shock: None,
+            calm: None,
+            boost: false,
+            smoulder: 0.0,
+            busy: None,
+            pulse: 0.0,
+            sparks: 0.0,
+            profiles: None,
             rects: [[0.0; 4]; 3],
             mods: None,
             mods_at: None,
@@ -116,11 +145,46 @@ fn grown([x, y, w, h]: [f32; 4], by: f32) -> [f32; 4] {
 fn inside([x, y, w, h]: [f32; 4], (px, py): (f32, f32)) -> bool {
     px >= x && px < x + w && py >= y && py < y + h
 }
+/// `t` from 0 to 1, slow at both ends.
+fn smooth(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+/// A number from 0 to 1 that looks random, the same for the same `seed`.
+fn hash(seed: f32) -> f32 {
+    ((seed * 12.9898).sin() * 43_758.547).fract().abs()
+}
+/// The point `along` (0 to 1) the way round a `w` x `h` screen's edge, from its top left,
+/// clockwise, `out` dp past it.
+fn edge_point(along: f32, w: f32, h: f32, out: f32) -> [f32; 2] {
+    let d = along.rem_euclid(1.0) * 2.0 * (w + h);
+    if d < w {
+        [d, -out]
+    } else if d < w + h {
+        [w + out, d - w]
+    } else if d < 2.0 * w + h {
+        [w - (d - w - h), h + out]
+    } else {
+        [-out, h - (d - 2.0 * w - h)]
+    }
+}
 
 impl Game<'_> {
     /// Opens the menu from play: the pointer is freed, the game goes on.
     pub(in crate::game) fn open_oteria_menu(&mut self) {
-        MENU.with(|m| *m.borrow_mut() = Some(Menu::new()));
+        let dir = Self::options_dir();
+        let first = lang::get_or("oteria.profiles.default", "Default");
+        let profiles = Profiles::load(&dir, &first, &self.extras_text());
+        let boost = oteria_boost::is_on(&dir);
+        MENU.with(|m| {
+            *m.borrow_mut() = Some(Menu {
+                profiles: Some(profiles),
+                boost,
+                // Already on: it smoulders from the start.
+                smoulder: if boost { 1.0 } else { 0.0 },
+                ..Menu::new()
+            })
+        });
         self.screen = Screen::OteriaMenu;
         self.keys.clear();
         self.left = false;
@@ -139,6 +203,78 @@ impl Game<'_> {
                 menu.mods_at = Instant::now().checked_sub(std::time::Duration::from_secs(1));
             }
         });
+    }
+
+    /// The folder of `options.txt`, where the profiles and Boost keep their files.
+    fn options_dir() -> std::path::PathBuf {
+        Self::options_path().parent().map(|d| d.to_path_buf()).unwrap_or_default()
+    }
+
+    /// The mods' settings on now, as `horizon-extras.txt` has them: what a profile keeps.
+    fn extras_text(&self) -> String {
+        let mut extras = self.settings.extras.clone();
+        extras.emote_key = self.settings.keys.get("key.emote").to_owned();
+        extras.serialize()
+    }
+
+    /// Settings changed from the menu: saved and put on, as the options screens do.
+    fn settings_changed(&mut self) {
+        let _ = self.handle_option_events(vec![horizon_client::options_ui::Event::Changed]);
+    }
+
+    /// The profiles tab's asks: each saves what is on into the profile in use first.
+    fn profile_op(&mut self, op: ProfileOp) {
+        let dir = Self::options_dir();
+        let current = self.extras_text();
+        let first = lang::get_or("oteria.profiles.default", "Default");
+        let base = lang::get_or("oteria.profiles.new", "Profile");
+        let put_on = MENU.with(|m| {
+            let mut m = m.borrow_mut();
+            let menu = m.as_mut()?;
+            let profiles = menu
+                .profiles
+                .get_or_insert_with(|| Profiles::load(&dir, &first, &current));
+            match op {
+                ProfileOp::Create => {
+                    let i = profiles.create(&base, &current);
+                    // Its name is typed straight away (or it keeps the one given).
+                    if let Some(mods) = menu.mods.as_mut() {
+                        mods.renaming = Some((i, String::new()));
+                    }
+                    None
+                }
+                ProfileOp::Use(i) => profiles.switch(i, &current),
+                ProfileOp::Rename(i, name) => {
+                    profiles.rename(i, &name);
+                    None
+                }
+                ProfileOp::Duplicate(i) => {
+                    profiles.duplicate(i, &current);
+                    None
+                }
+                ProfileOp::Delete(i) => profiles.delete(i).ok().flatten(),
+            }
+        });
+        if let Some(text) = put_on {
+            self.put_on_extras(&text);
+        }
+    }
+
+    /// A profile's settings on. What belongs to the account or the machine, not to a profile
+    /// (cosmetics owned, the AI agent, splitscreen), stays as it is.
+    fn put_on_extras(&mut self, text: &str) {
+        let old = &self.settings.extras;
+        let mut extras = horizon_client::extras::Extras::parse(text);
+        extras.cosmetics_owner = old.cosmetics_owner;
+        extras.no_ai = old.no_ai;
+        extras.agent_control = old.agent_control;
+        extras.repro_keys = old.repro_keys;
+        extras.splitscreen = old.splitscreen;
+        extras.splitscreen_two = old.splitscreen_two;
+        extras.splitscreen_three = old.splitscreen_three;
+        extras.splitscreen_names = old.splitscreen_names;
+        self.settings.extras = extras;
+        self.settings_changed();
     }
 
     /// Starts the menu's way out; it is gone, and the pointer back to play, once it has faded.
@@ -212,16 +348,26 @@ impl Game<'_> {
                         PhysicalKey::Code(code) => Some(code),
                         _ => None,
                     };
-                    // Right Shift still closes the menu; the rest goes to the search.
-                    if !mods.typing || code == Some(KeyCode::ShiftRight) {
+                    // Right Shift still closes the menu; the rest goes to the search, or to the
+                    // profile being renamed.
+                    if !mods.wants_keys() || code == Some(KeyCode::ShiftRight) {
                         return None;
                     }
                     taken = true;
                     if key.state == ElementState::Pressed {
-                        if code == Some(KeyCode::Escape) || code == Some(KeyCode::Enter) {
-                            mods.typing = false;
-                        } else {
-                            mods.type_key(key.text.as_deref(), code == Some(KeyCode::Backspace));
+                        match code {
+                            Some(KeyCode::Escape) => {
+                                mods.back();
+                            }
+                            Some(KeyCode::Enter | KeyCode::NumpadEnter) => {
+                                if mods.renaming.is_some() {
+                                    return mods.commit_name();
+                                }
+                                mods.typing = false;
+                            }
+                            _ => {
+                                mods.type_key(key.text.as_deref(), code == Some(KeyCode::Backspace));
+                            }
                         }
                     }
                     None
@@ -235,11 +381,26 @@ impl Game<'_> {
                         return menu.mods.as_mut()?.click(cursor, drawn);
                     }
                     let i = menu.rects.iter().position(|r| inside(*r, cursor))?;
-                    menu.pressed[i] = Some(Instant::now());
+                    let now = Instant::now();
+                    menu.pressed[i] = Some(now);
                     match BUTTONS[i] {
                         Button::Boost => {
+                            // Not again before the wave or the trails are over.
+                            if menu.busy.is_some_and(|b| now < b) {
+                                return None;
+                            }
                             let [x, y, w, h] = menu.rects[i];
-                            menu.shock = Some((Instant::now(), [x + w / 2.0, y + h / 2.0]));
+                            let centre = [x + w / 2.0, y + h / 2.0];
+                            menu.boost = !menu.boost;
+                            let lasts = if menu.boost {
+                                menu.shock = Some((now, centre));
+                                SHOCK_S
+                            } else {
+                                menu.calm = Some((now, centre));
+                                CALM_S
+                            };
+                            menu.busy = Some(now + Duration::from_secs_f32(lasts));
+                            return Some(Action::Boost(menu.boost));
                         }
                         Button::Mods => {
                             menu.mods.get_or_insert_with(Mods::default);
@@ -297,10 +458,22 @@ impl Game<'_> {
                 c.custom = true;
                 self.settings.save(&Self::options_path());
             }
-            Action::Settings => {
-                leave();
-                self.open_options_at(false, horizon_client::options_ui::Page::Horizon);
-                self.capture(false);
+            Action::Profile(op) => self.profile_op(op),
+            Action::Boost(on) => {
+                let dir = Self::options_dir();
+                if on {
+                    if !oteria_boost::turn_on(&mut self.settings, &dir) {
+                        // Not saved, so not on: the rocket says so.
+                        MENU.with(|m| {
+                            if let Some(menu) = m.borrow_mut().as_mut() {
+                                menu.boost = false;
+                            }
+                        });
+                    }
+                } else {
+                    oteria_boost::turn_off(&mut self.settings, &dir);
+                }
+                self.settings_changed();
             }
             Action::EditHud => {
                 leave();
@@ -426,18 +599,57 @@ impl Game<'_> {
                 horizon_client::widgets::widget_cursor(over, true);
             }
 
+            // Boost's look: it comes on once the wave is most of the way out, and goes slowly.
+            let waving = menu
+                .shock
+                .is_some_and(|(start, _)| start.elapsed().as_secs_f32() < SHOCK_S * 0.35);
+            let goal = if menu.boost && !waving { 1.0 } else { 0.0 };
+            let rate = if goal > menu.smoulder { SMOULDER_IN } else { SMOULDER_OUT };
+            menu.smoulder += (goal - menu.smoulder) * (1.0 - (-dt * rate).exp());
+            let on = smooth(menu.smoulder);
+            // Its fire's flicker: a few waves out of step.
+            let flicker = 0.5 + 0.25 * (t * 23.0).sin() + 0.25 * (t * 37.0 + 1.3).sin();
+            menu.pulse += dt / (PULSE_S * (1.0 - 0.45 * on));
+            menu.sparks += dt * (2.4 + 2.2 * on);
+
             // Boost's loop under its button: a breathing violet glow, and a ripple leaving it.
-            let phase = (t / PULSE_S).fract();
-            let breath = 0.5 + 0.5 * (t * TAU / PULSE_S).sin();
+            let phase = menu.pulse.fract();
+            let breath = 0.5 + 0.5 * (menu.pulse * TAU).sin();
             let boost = places[0];
-            let glow = grown(boost, 5.0);
-            ui.rounded(glow[0], glow[1], glow[2], glow[3], RADIUS + 4.0, argb(VIOLET, (0.12 + 0.22 * breath) * a));
+            let glow = grown(boost, 5.0 + 3.0 * on);
+            let glow_alpha = (0.12 + 0.22 * breath) * (1.0 - on) + (0.34 + 0.22 * flicker) * on;
+            ui.rounded(glow[0], glow[1], glow[2], glow[3], RADIUS + 4.0, argb(VIOLET, glow_alpha * a));
+            if on > 0.0 {
+                let outer = grown(boost, 14.0);
+                ui.rounded(outer[0], outer[1], outer[2], outer[3], RADIUS + 12.0, argb(VIOLET, 0.16 * on * flicker * a));
+            }
             // The ripple leaves fast enough to move several pixels a frame; then waits.
             let leave = (phase / 0.55).min(1.0);
             if leave < 1.0 {
                 let ripple = grown(boost, 2.0 + 34.0 * ease_out(leave));
-                let fade = (1.0 - leave).powi(2) * 0.6 * a;
+                let fade = (1.0 - leave).powi(2) * (0.6 + 0.3 * on) * a;
                 ui.border(ripple[0], ripple[1], ripple[2], ripple[3], RADIUS + 10.0, argb(VIOLET, fade));
+            }
+            // On: embers rise from all round the button, hot white turning violet as they go.
+            if on > 0.0 {
+                let (bcx, bcy) = (boost[0] + boost[2] / 2.0, boost[1] + boost[3] / 2.0);
+                for k in 0..28 {
+                    let seed = k as f32 + 1.0;
+                    let speed = 1.1 + 1.1 * hash(seed * 7.3);
+                    let p = (t * speed + hash(seed * 13.1)).fract();
+                    let angle = hash(seed) * TAU + t * 0.4;
+                    let (dx, dy) = (angle.cos(), angle.sin());
+                    // From the button's edge (a square's), outwards and up.
+                    let edge = (boost[2] / 2.0) / dx.abs().max(dy.abs());
+                    let out = 3.0 + 22.0 * p;
+                    let x = bcx + dx * (edge + out) + (t * 6.0 + seed * 9.0).sin() * 1.5;
+                    let y = bcy + dy * (edge + out) - 16.0 * p * p;
+                    let size = 1.2 + 3.0 * (1.0 - p);
+                    let colour = if p < 0.25 { 0xF0E4FF } else if p < 0.55 { 0xC9A6FF } else { VIOLET };
+                    let twinkle = 0.65 + 0.35 * (t * 19.0 + seed * 4.0).sin();
+                    let alpha = on * (1.0 - p).powf(0.9) * twinkle * a;
+                    ui.rounded(x - size / 2.0, y - size / 2.0, size, size, size / 2.0, argb(colour, alpha));
+                }
             }
 
             // The buttons: glass that lights up under the pointer, and gives when pressed.
@@ -451,8 +663,12 @@ impl Game<'_> {
                 let r = grown(*place, -1.5 * give + 1.0 * hover);
                 let fill = argb(WHITE, (0.10 + 0.10 * hover - 0.04 * give) * a);
                 ui.rounded(r[0], r[1], r[2], r[3], RADIUS, fill);
+                if BUTTONS[i] == Button::Boost && on > 0.0 {
+                    // On, the glass takes the violet.
+                    ui.rounded(r[0], r[1], r[2], r[3], RADIUS, argb(VIOLET, (0.16 + 0.08 * flicker) * on * a));
+                }
                 let edge = match BUTTONS[i] {
-                    Button::Boost => argb(VIOLET, (0.65 + 0.35 * hover) * a),
+                    Button::Boost => argb(VIOLET, (0.65 + 0.35 * hover.max(on * (0.7 + 0.3 * flicker))) * a),
                     _ => argb(WHITE, (0.40 + 0.50 * hover) * a),
                 };
                 ui.border(r[0], r[1], r[2], r[3], RADIUS, edge);
@@ -467,20 +683,31 @@ impl Game<'_> {
                     button => {
                         let sprite = if button == Button::Boost { oteria_art::ROCKET } else { oteria_art::SHIRT };
                         let icon = 32.0 / d;
-                        // Boost's rocket climbs a little under the pointer (quickly, eased).
+                        // Boost's rocket climbs a little under the pointer (quickly, eased), and
+                        // shakes while on: a whole pixel this way or that, 30 times a second.
                         let lift = if button == Button::Boost { 2.0 * hover } else { 0.0 };
+                        let (jx, jy) = if button == Button::Boost && on > 0.3 {
+                            let step = (t * 30.0).floor();
+                            let px = 1.0 / d;
+                            (((hash(step) * 3.0).floor() - 1.0) * px, ((hash(step + 0.5) * 3.0).floor() - 1.0) * px)
+                        } else {
+                            (0.0, 0.0)
+                        };
                         if button == Button::Boost {
-                            // Sparks falling from the rocket's nozzle, in a loop.
-                            for k in 0..3 {
-                                let p = ((t * 2.4) + k as f32 / 3.0).fract();
-                                let sy = my + icon * 0.42 - lift + p * 16.0;
-                                let sx = mx + (k as f32 - 1.0) * 2.5;
-                                let size = 2.2 * (1.0 - p);
-                                ui.rounded(sx - size / 2.0, sy, size, size, size / 2.0, argb(VIOLET, (1.0 - p) * 0.9 * a));
+                            // Sparks falling from the rocket's nozzle, in a loop: more, longer
+                            // and hotter while on.
+                            let count = if on > 0.0 { 5 } else { 3 };
+                            for k in 0..count {
+                                let p = (menu.sparks + k as f32 / count as f32).fract();
+                                let sy = my + icon * 0.42 - lift + p * (16.0 + 10.0 * on);
+                                let sx = mx + (k as f32 - (count - 1) as f32 / 2.0) * 2.5 + jx;
+                                let size = (2.2 + 1.2 * on) * (1.0 - p);
+                                let colour = if on > 0.0 && p < 0.3 { 0xF0E4FF } else { VIOLET };
+                                ui.rounded(sx - size / 2.0, sy, size, size, size / 2.0, argb(colour, (1.0 - p) * 0.9 * a));
                             }
                         }
                         if let Some(rect) = ui.atlas.sprites.get(sprite).copied() {
-                            let (ix, iy) = (mx - icon / 2.0, my - icon / 2.0 - lift);
+                            let (ix, iy) = (mx - icon / 2.0 + jx, my - icon / 2.0 - lift + jy);
                             ui.batch.rect_uv(gui(ix), gui(iy), gui(icon), gui(icon), rect, argb(WHITE, a));
                         }
                         if button == Button::Cosmetics {
@@ -511,11 +738,83 @@ impl Game<'_> {
                     ring(&mut *ui.batch, atlas, centre, gui((radius - 2.0).max(0.0)), gui(radius), inner);
                 }
             }
+            // Boost turned off: violet trails from every edge of the screen fly into the rocket,
+            // and a ring closes on it as they arrive.
+            if let Some((start, [tx, ty])) = menu.calm {
+                let s = start.elapsed().as_secs_f32();
+                if s >= CALM_S {
+                    menu.calm = None;
+                } else {
+                    let (cx, cy) = (tx * scale / d, ty * scale / d);
+                    let atlas = ui.atlas;
+                    for k in 0..TRAILS {
+                        let seed = k as f32 + 0.37;
+                        let delay = hash(seed * 5.7) * 0.28;
+                        let flight = 0.62 + hash(seed * 3.1) * 0.2;
+                        // Past 1 the head has arrived and the tail follows it in.
+                        let v = (s - delay) / flight;
+                        if v <= 0.0 || v >= 1.3 {
+                            continue;
+                        }
+                        let along = (k as f32 + hash(seed * 11.0) * 0.7) / TRAILS as f32;
+                        let [x0, y0] = edge_point(along, w, h, 6.0);
+                        // A bend to the side, so they swirl in rather than all fly straight.
+                        let (dx, dy) = (cx - x0, cy - y0);
+                        let len = dx.hypot(dy).max(1.0);
+                        let bend = (hash(seed * 17.0) - 0.5) * 0.6 * len;
+                        let ctrl = [(x0 + cx) / 2.0 - dy / len * bend, (y0 + cy) / 2.0 + dx / len * bend];
+                        let at = |u: f32| {
+                            let (u, q) = (u.clamp(0.0, 1.0), 1.0 - u.clamp(0.0, 1.0));
+                            [
+                                q * q * x0 + 2.0 * q * u * ctrl[0] + u * u * cx,
+                                q * q * y0 + 2.0 * q * u * ctrl[1] + u * u * cy,
+                            ]
+                        };
+                        // Drawn in: slow off the edge, faster as it nears the rocket.
+                        let pull = |u: f32| u.clamp(0.0, 1.0).powf(1.8);
+                        let (head, tail) = (pull(v), pull(v - 0.3));
+                        let fade = smooth(v * 4.0) * (1.0 - smooth((v - 1.0) / 0.3));
+                        const SEGMENTS: usize = 14;
+                        for n in 0..SEGMENTS {
+                            let (u0, u1) = (n as f32 / SEGMENTS as f32, (n + 1) as f32 / SEGMENTS as f32);
+                            let (p0, p1) = (at(tail + (head - tail) * u0), at(tail + (head - tail) * u1));
+                            let (sx, sy) = (p1[0] - p0[0], p1[1] - p0[1]);
+                            let sl = sx.hypot(sy).max(0.001);
+                            let (nx, ny) = (-sy / sl, sx / sl);
+                            // Thin at the tail, thickest at the head.
+                            let (w0, w1) = (2.6 * u0, 2.6 * u1);
+                            let quad = [
+                                [gui(p0[0] + nx * w0 / 2.0), gui(p0[1] + ny * w0 / 2.0)],
+                                [gui(p1[0] + nx * w1 / 2.0), gui(p1[1] + ny * w1 / 2.0)],
+                                [gui(p1[0] - nx * w1 / 2.0), gui(p1[1] - ny * w1 / 2.0)],
+                                [gui(p0[0] - nx * w0 / 2.0), gui(p0[1] - ny * w0 / 2.0)],
+                            ];
+                            let colour = argb(VIOLET, u1 * 0.85 * fade * shown);
+                            ui.batch.fill_quad(atlas, quad, colour);
+                        }
+                        if v < 1.0 {
+                            let [hx, hy] = at(head);
+                            ui.rounded(hx - 2.0, hy - 2.0, 4.0, 4.0, 2.0, argb(0xF0E4FF, 0.9 * fade * shown));
+                        }
+                    }
+                    // The rocket takes them in: a ring closing on it, and a last soft light.
+                    let take = ((s - 0.45) / (CALM_S - 0.45)).clamp(0.0, 1.0);
+                    if take > 0.0 {
+                        let light = (take * PI).sin();
+                        let ring_r = 46.0 * (1.0 - ease_out(take)) + 4.0;
+                        let centre = [gui(cx), gui(cy)];
+                        let atlas = ui.atlas;
+                        ring(&mut *ui.batch, atlas, centre, gui(ring_r - 2.5), gui(ring_r), argb(VIOLET, 0.55 * light * shown));
+                        let halo = grown(boost, 4.0);
+                        ui.rounded(halo[0], halo[1], halo[2], halo[3], RADIUS + 4.0, argb(VIOLET, 0.25 * light * a));
+                    }
+                }
+            }
             // The mods page, rising into place as it comes.
             if page > 0.0
                 && let Some(mods) = menu.mods.as_mut()
             {
-                mods.draw(&mut ui, extras, shown * page, (1.0 - page) * 18.0, dt, &gui, cursor);
+                mods.draw(&mut ui, extras, shown * page, (1.0 - page) * 18.0, dt, &gui, cursor, menu.profiles.as_ref());
             }
             ui.finish();
         });
@@ -561,6 +860,21 @@ mod tests {
             (0..10).any(|i| ease_out_back(0.6 + i as f32 * 0.04) > 1.0),
             "it overshoots a little"
         );
+    }
+
+    #[test]
+    fn the_trails_start_all_round_the_screen() {
+        let (w, h) = (400.0, 200.0);
+        assert_eq!(edge_point(0.0, w, h, 0.0), [0.0, 0.0]);
+        assert_eq!(edge_point(0.25, w, h, 0.0), [300.0, 0.0]);
+        assert_eq!(edge_point(0.5, w, h, 0.0), [400.0, 200.0]);
+        assert_eq!(edge_point(0.75, w, h, 0.0), [100.0, 200.0]);
+        // Past the edge by `out`, on every side.
+        for k in 0..20 {
+            let [x, y] = edge_point(k as f32 / 20.0, w, h, 5.0);
+            assert!(x <= 0.0 || x >= w || y <= 0.0 || y >= h, "{x} {y}");
+        }
+        assert!((0..100).all(|k| (0.0..1.0).contains(&hash(k as f32))));
     }
 
     #[test]

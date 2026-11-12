@@ -1,5 +1,5 @@
 //! The Mods page of Oteria's menu (`oteria_menu`), as Lunar's and Feather's: a glass panel with
-//! the header (logo, MODS and SETTINGS tabs, close), the categories down the left with Edit HUD
+//! the header (logo, MODS and PROFILES tabs, close), the categories down the left with Edit HUD
 //! at their foot, a search field, and a grid of tiles. Each tile is one of the engine's own
 //! features (`Extras` and its PvP part): its icon, its name, a gear that opens its settings, and a
 //! bar that turns it on or off, eased from red to green.
@@ -8,9 +8,13 @@
 //! of its options (`extras::Item`) as a switch or a value stepped with arrows. The crosshair's
 //! adds five ready-made crosshairs and a grid to draw one pixel by pixel.
 //!
+//! The PROFILES tab lists the player's profiles (`oteria_profiles`): Create, and on each card
+//! Use, Rename (typed in place), Duplicate and Delete (a second click confirms).
+//!
 //! As the menu, it moves on the clock: the hover lights, the switches' colours, the scroll and
 //! the way between the grid and a tile's settings all ease towards where they are going.
 
+use super::oteria_profiles::{NAME_MAX, Profiles};
 use crate::ui_theme::{Face, Ui};
 use horizon_client::extras::{Extras, Item};
 use horizon_client::lang;
@@ -167,8 +171,25 @@ pub(super) static TILES: [Tile; 26] = [
     tile!("oteria.mod.nametag", "Own Name Tag", icon::USER, Utility, &[], e => e.own_name_tag),
 ];
 
-/// What a click on the page asks of the game.
+/// The page's two tabs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Tab {
+    Mods,
+    Profiles,
+}
+
+/// What the profiles tab asks of the game, by profile index (`Profiles::names`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ProfileOp {
+    Create,
+    Use(usize),
+    Rename(usize, String),
+    Duplicate(usize),
+    Delete(usize),
+}
+
+/// What a click on the page asks of the game.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Action {
     Toggle(usize),
     /// An option stepped forwards, or back.
@@ -177,7 +198,9 @@ pub(super) enum Action {
     Preset(usize),
     /// The drawn crosshair's pixels, once the stroke is done.
     Pixels([u16; DRAWN]),
-    Settings,
+    Profile(ProfileOp),
+    /// The menu's rocket: Boost on (true) or off (`oteria_boost`).
+    Boost(bool),
     Close,
     EditHud,
 }
@@ -185,6 +208,17 @@ pub(super) enum Action {
 /// The page's state: its filter, search, scroll, the tile whose settings are open, and the
 /// lights that ease.
 pub(super) struct Mods {
+    pub(super) tab: Tab,
+    /// How far the profiles tab has come in (0: the mods, 1: the profiles).
+    tab_k: f32,
+    /// The profile being renamed, and the name typed so far.
+    pub(super) renaming: Option<(usize, String)>,
+    /// The profile whose Delete was pressed once: a second press deletes it.
+    confirm: Option<usize>,
+    /// Each profile card's hover light.
+    cards: Vec<f32>,
+    /// The scrolled view's top and height (dp), for the scrollbar.
+    track: [f32; 2],
     category: Category,
     search: String,
     pub(super) typing: bool,
@@ -218,7 +252,7 @@ pub(super) struct Mods {
 enum Hit {
     Category(Category),
     Search,
-    Settings,
+    Tab(Tab),
     Close,
     EditHud,
     Toggle(usize),
@@ -228,10 +262,22 @@ enum Hit {
     Preset(usize),
     Grid,
     ClearGrid,
+    NewProfile,
+    UseProfile(usize),
+    RenameProfile(usize),
+    NameField,
+    CopyProfile(usize),
+    DeleteProfile(usize),
 }
 impl Default for Mods {
     fn default() -> Self {
         Self {
+            tab: Tab::Mods,
+            tab_k: 0.0,
+            renaming: None,
+            confirm: None,
+            cards: Vec::new(),
+            track: [0.0; 2],
             category: Category::All,
             search: String::new(),
             typing: false,
@@ -301,7 +347,9 @@ impl Mods {
     /// Escape: out of the search, then out of a tile's settings. False when there was neither
     /// (the menu goes back to its buttons).
     pub(super) fn back(&mut self) -> bool {
-        if self.typing {
+        if self.renaming.take().is_some() {
+            // The name typed is dropped; the profile keeps its own.
+        } else if self.typing {
             self.typing = false;
         } else if self.open.is_some() {
             self.open = None;
@@ -315,8 +363,40 @@ impl Mods {
     /// A press at `cursor` (GUI pixels): what the game should do, if anything.
     pub(super) fn click(&mut self, cursor: (f32, f32), crosshair: [u16; DRAWN]) -> Option<Action> {
         let hit = self.hits.iter().rev().find(|(r, _)| inside(*r, cursor)).map(|h| h.1);
+        // A name being typed is kept by a click anywhere else.
+        if self.renaming.is_some() && hit != Some(Hit::NameField) {
+            return self.commit_name();
+        }
+        if !matches!(hit, Some(Hit::DeleteProfile(_))) {
+            self.confirm = None;
+        }
         self.typing = hit == Some(Hit::Search);
         match hit? {
+            Hit::Tab(tab) => {
+                if self.tab != tab {
+                    self.tab = tab;
+                    self.open = None;
+                    (self.scroll, self.target) = (0.0, 0.0);
+                }
+                None
+            }
+            Hit::NewProfile => Some(Action::Profile(ProfileOp::Create)),
+            Hit::UseProfile(i) => Some(Action::Profile(ProfileOp::Use(i))),
+            Hit::RenameProfile(i) => {
+                self.renaming = Some((i, String::new()));
+                None
+            }
+            Hit::NameField => None,
+            Hit::CopyProfile(i) => Some(Action::Profile(ProfileOp::Duplicate(i))),
+            Hit::DeleteProfile(i) => {
+                if self.confirm == Some(i) {
+                    self.confirm = None;
+                    Some(Action::Profile(ProfileOp::Delete(i)))
+                } else {
+                    self.confirm = Some(i);
+                    None
+                }
+            }
             Hit::Category(c) => {
                 self.category = c;
                 self.open = None;
@@ -327,7 +407,6 @@ impl Mods {
                 self.open = None;
                 None
             }
-            Hit::Settings => Some(Action::Settings),
             Hit::Close => Some(Action::Close),
             Hit::EditHud => Some(Action::EditHud),
             Hit::Toggle(i) => Some(Action::Toggle(i)),
@@ -398,6 +477,18 @@ impl Mods {
         (cx < DRAWN && cy < DRAWN).then_some((cx, cy))
     }
 
+    /// The name typed for a profile, to give it (Enter, or a click elsewhere). None when nothing
+    /// was typed: it keeps its name.
+    pub(super) fn commit_name(&mut self) -> Option<Action> {
+        let (i, name) = self.renaming.take()?;
+        (!name.trim().is_empty()).then_some(Action::Profile(ProfileOp::Rename(i, name)))
+    }
+
+    /// Whether the keyboard goes to the page: the search, or a profile's name.
+    pub(super) fn wants_keys(&self) -> bool {
+        self.typing || self.renaming.is_some()
+    }
+
     /// The wheel turned by `lines` (positive: up).
     pub(super) fn wheel(&mut self, lines: f32) {
         self.target = (self.target - lines * 48.0).clamp(0.0, self.room);
@@ -405,6 +496,15 @@ impl Mods {
 
     /// A key while the search field has the keyboard: typed text, or Backspace. True when taken.
     pub(super) fn type_key(&mut self, text: Option<&str>, backspace: bool) -> bool {
+        if let Some((_, name)) = self.renaming.as_mut() {
+            if backspace {
+                name.pop();
+            } else if let Some(text) = text {
+                let room = NAME_MAX.saturating_sub(name.chars().count());
+                name.extend(text.chars().filter(|c| !c.is_control()).take(room));
+            }
+            return true;
+        }
         if !self.typing {
             return false;
         }
@@ -432,6 +532,7 @@ impl Mods {
         dt: f32,
         gui: &dyn Fn(f32) -> f32,
         cursor: (f32, f32),
+        profiles: Option<&Profiles>,
     ) {
         self.hits.clear();
         let a = alpha;
@@ -445,6 +546,7 @@ impl Mods {
             d,
             pointer,
             gui,
+            live: true,
             hits: std::mem::take(&mut self.hits),
         };
 
@@ -466,11 +568,12 @@ impl Mods {
         ui.text(Face::SemiBold, 14.0, tx, py + (hh - 20.0) / 2.0, argb(WHITE, a), "OTERIA");
         ui.text(Face::Regular, 14.0, tx + bw, py + (hh - 20.0) / 2.0, argb(WHITE, 0.75 * a), " CLIENT");
         let tabs = [
-            (lang::get_or("oteria.mods.tab", "MODS"), true),
-            (lang::get_or("oteria.mods.settings", "SETTINGS"), false),
+            (lang::get_or("oteria.mods.tab", "MODS"), Tab::Mods, "oteria-tab-mods"),
+            (lang::get_or("oteria.profiles.tab", "PROFILES"), Tab::Profiles, "oteria-tab-profiles"),
         ];
         let mut tab_x = px + 200.0;
-        for (label, on) in &tabs {
+        for (label, tab, id) in &tabs {
+            let on = &(self.tab == *tab);
             let lw = ui.measure(Face::Medium, 11.0, label) + 28.0;
             let r = [tab_x, py + (hh - 28.0) / 2.0, lw, 28.0];
             let over = inside(r, pointer);
@@ -481,7 +584,8 @@ impl Mods {
             }
             ui.text(Face::Medium, 11.0, r[0] + 14.0, r[1] + (28.0 - 16.0) / 2.0, argb(WHITE, a), label);
             if !*on {
-                page.hit(r, Hit::Settings);
+                page.hit(r, Hit::Tab(*tab));
+                horizon_client::widgets::record(id, r.map(gui), true);
             }
             tab_x += lw + 8.0;
         }
@@ -492,78 +596,261 @@ impl Mods {
         page.hit(close, Hit::Close);
         ui.rounded(px + 14.0, py + hh, pw - 28.0, 1.0, 0.0, argb(WHITE, 0.08 * a));
 
-        // The categories down the left, Edit HUD at their foot.
-        let (lx, ly, lw) = (px + 14.0, py + hh + 12.0, 158.0);
-        for (k, category) in CATEGORIES.iter().enumerate() {
-            let r = [lx, ly + k as f32 * 36.0, lw, 32.0];
-            let on = *category == self.category;
-            let over = inside(r, pointer);
-            if on {
-                ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(ACCENT, 0.22 * a));
-                ui.rounded(r[0], r[1] + 8.0, 3.0, 16.0, 1.5, argb(ACCENT, a));
-            } else if over {
-                ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(WHITE, 0.06 * a));
-            }
-            page.icon(ui, category.icon(), r[0] + 22.0, r[1] + 16.0, argb(WHITE, if on || over { 1.0 } else { 0.7 } * a), false);
-            let colour = argb(WHITE, if on || over { 1.0 } else { 0.72 } * a);
-            ui.text(Face::Medium, 12.0, r[0] + 44.0, r[1] + (32.0 - 17.0) / 2.0, colour, &category.name());
-            page.hit(r, Hit::Category(*category));
-            horizon_client::widgets::record(&format!("oteria-cat-{k}"), r.map(gui), true);
+        // The tabs' crossfade: the mods' body out as the profiles come in, and back.
+        let goal = if self.tab == Tab::Profiles { 1.0 } else { 0.0 };
+        self.tab_k += (goal - self.tab_k) * (1.0 - (-dt * 14.0).exp());
+        if (self.tab_k - goal).abs() < 0.002 {
+            self.tab_k = goal;
         }
-        let edit = [lx, py + ph - 14.0 - 36.0, lw, 36.0];
-        let over = inside(edit, pointer);
-        ui.rounded(edit[0], edit[1], edit[2], edit[3], 9.0, argb(ACCENT, if over { 0.95 } else { 0.75 } * a));
-        page.icon(ui, icon::LAYOUT, edit[0] + 22.0, edit[1] + 18.0, argb(WHITE, a), false);
-        let edit_label = lang::get_or("oteria.mods.edit_hud", "Edit HUD");
-        ui.text(Face::Medium, 12.0, edit[0] + 44.0, edit[1] + (36.0 - 17.0) / 2.0, argb(WHITE, a), &edit_label);
-        page.hit(edit, Hit::EditHud);
-        horizon_client::widgets::record("oteria-edit-hud", edit.map(gui), true);
-
-        // The search field.
-        let ax = lx + lw + 14.0;
-        let aw = px + pw - 14.0 - ax;
-        let search = [ax + aw - 240.0, ly, 240.0, 32.0];
-        ui.rounded(search[0], search[1], search[2], search[3], 9.0, argb(WHITE, if self.typing { 0.12 } else { 0.06 } * a));
-        if self.typing {
-            ui.border(search[0], search[1], search[2], search[3], 9.0, argb(ACCENT, 0.7 * a));
-        }
-        page.icon(ui, icon::SEARCH, search[0] + 18.0, search[1] + 16.0, argb(WHITE, 0.7 * a), false);
+        let k = ease(self.tab_k);
+        let on_mods = self.tab == Tab::Mods;
         self.blink = (self.blink + dt) % 1.0;
-        let caret = if self.typing && self.blink < 0.55 { "|" } else { "" };
-        let (text, colour) = if self.search.is_empty() && !self.typing {
-            (lang::get_or("oteria.mods.search", "Search…"), argb(WHITE, 0.45 * a))
-        } else {
-            (format!("{}{caret}", self.search), argb(WHITE, a))
-        };
-        ui.text(Face::Regular, 12.0, search[0] + 36.0, search[1] + (32.0 - 17.0) / 2.0, colour, &text);
-        page.hit(search, Hit::Search);
-        horizon_client::widgets::record("oteria-search", search.map(gui), true);
+        if k < 1.0 {
+            let a = a * (1.0 - k);
+            page.live = on_mods;
+            // The categories down the left, Edit HUD at their foot.
+            let (lx, ly, lw) = (px + 14.0, py + hh + 12.0, 158.0);
+            for (k, category) in CATEGORIES.iter().enumerate() {
+                let r = [lx, ly + k as f32 * 36.0, lw, 32.0];
+                let on = *category == self.category;
+                let over = inside(r, pointer);
+                if on {
+                    ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(ACCENT, 0.22 * a));
+                    ui.rounded(r[0], r[1] + 8.0, 3.0, 16.0, 1.5, argb(ACCENT, a));
+                } else if over {
+                    ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(WHITE, 0.06 * a));
+                }
+                page.icon(ui, category.icon(), r[0] + 22.0, r[1] + 16.0, argb(WHITE, if on || over { 1.0 } else { 0.7 } * a), false);
+                let colour = argb(WHITE, if on || over { 1.0 } else { 0.72 } * a);
+                ui.text(Face::Medium, 12.0, r[0] + 44.0, r[1] + (32.0 - 17.0) / 2.0, colour, &category.name());
+                page.hit(r, Hit::Category(*category));
+                horizon_client::widgets::record(&format!("oteria-cat-{k}"), r.map(gui), true);
+            }
+            let edit = [lx, py + ph - 14.0 - 36.0, lw, 36.0];
+            let over = inside(edit, pointer);
+            ui.rounded(edit[0], edit[1], edit[2], edit[3], 9.0, argb(ACCENT, if over { 0.95 } else { 0.75 } * a));
+            page.icon(ui, icon::LAYOUT, edit[0] + 22.0, edit[1] + 18.0, argb(WHITE, a), false);
+            let edit_label = lang::get_or("oteria.mods.edit_hud", "Edit HUD");
+            ui.text(Face::Medium, 12.0, edit[0] + 44.0, edit[1] + (36.0 - 17.0) / 2.0, argb(WHITE, a), &edit_label);
+            page.hit(edit, Hit::EditHud);
+            horizon_client::widgets::record("oteria-edit-hud", edit.map(gui), true);
 
-        // The view under the search: the grid, or a tile's settings, crossfading.
-        let target = if self.open.is_some() { 1.0 } else { 0.0 };
-        self.detail += (target - self.detail) * (1.0 - (-dt * 14.0).exp());
-        if (self.detail - target).abs() < 0.002 {
-            self.detail = target;
+            // The search field.
+            let ax = lx + lw + 14.0;
+            let aw = px + pw - 14.0 - ax;
+            let search = [ax + aw - 240.0, ly, 240.0, 32.0];
+            ui.rounded(search[0], search[1], search[2], search[3], 9.0, argb(WHITE, if self.typing { 0.12 } else { 0.06 } * a));
+            if self.typing {
+                ui.border(search[0], search[1], search[2], search[3], 9.0, argb(ACCENT, 0.7 * a));
+            }
+            page.icon(ui, icon::SEARCH, search[0] + 18.0, search[1] + 16.0, argb(WHITE, 0.7 * a), false);
+            let caret = if self.typing && self.blink < 0.55 { "|" } else { "" };
+            let (text, colour) = if self.search.is_empty() && !self.typing {
+                (lang::get_or("oteria.mods.search", "Search…"), argb(WHITE, 0.45 * a))
+            } else {
+                (format!("{}{caret}", self.search), argb(WHITE, a))
+            };
+            ui.text(Face::Regular, 12.0, search[0] + 36.0, search[1] + (32.0 - 17.0) / 2.0, colour, &text);
+            page.hit(search, Hit::Search);
+            horizon_client::widgets::record("oteria-search", search.map(gui), true);
+
+            // The view under the search: the grid, or a tile's settings, crossfading.
+            let target = if self.open.is_some() { 1.0 } else { 0.0 };
+            self.detail += (target - self.detail) * (1.0 - (-dt * 14.0).exp());
+            if (self.detail - target).abs() < 0.002 {
+                self.detail = target;
+            }
+            let view = [ax, ly + 44.0, aw, py + ph - 14.0 - (ly + 44.0)];
+            if on_mods {
+                self.track = [view[1], view[3]];
+            }
+            self.scroll += (self.target - self.scroll) * (1.0 - (-dt * 18.0).exp());
+            let t = ease(self.detail);
+            if t < 1.0 {
+                self.draw_grid(ui, &mut page, extras, a * (1.0 - t), dt, view, ly, self.open.is_none() && on_mods);
+            }
+            if t > 0.0 {
+                let slide = (1.0 - t) * 24.0;
+                self.draw_detail(ui, &mut page, extras, a * t, dt, view, slide, self.open.is_some() && on_mods);
+            }
         }
-        let view = [ax, ly + 44.0, aw, py + ph - 14.0 - (ly + 44.0)];
-        self.scroll += (self.target - self.scroll) * (1.0 - (-dt * 18.0).exp());
-        let t = ease(self.detail);
-        if t < 1.0 {
-            self.draw_grid(ui, &mut page, extras, a * (1.0 - t), dt, view, ly, self.open.is_none());
+        if k > 0.0 {
+            page.live = !on_mods;
+            let view = [px + 24.0 + (1.0 - k) * 24.0, py + hh + 18.0, pw - 48.0, ph - hh - 18.0 - 18.0];
+            self.draw_profiles(ui, &mut page, profiles, a * k, dt, view, !on_mods);
         }
-        if t > 0.0 {
-            let slide = (1.0 - t) * 24.0;
-            self.draw_detail(ui, &mut page, extras, a * t, dt, view, slide, self.open.is_some());
-        }
+        page.live = true;
         // A thin scrollbar when the view's content goes past it.
         if self.room > 0.0 {
-            let [_, gy, _, gh] = view;
+            let [gy, gh] = self.track;
             let content = gh + self.room;
             let thumb = (gh / content * gh).max(24.0);
             let ty = gy + (self.scroll / self.room).clamp(0.0, 1.0) * (gh - thumb);
             ui.rounded(px + pw - 9.0, ty, 3.0, thumb, 1.5, argb(WHITE, 0.25 * a));
         }
         self.hits = page.hits;
+    }
+
+    /// The profiles tab: its title and Create, then a card for each profile: its name (or the
+    /// field its new name is typed in), and Use, Rename, Duplicate and Delete.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_profiles(&mut self, ui: &mut Ui, page: &mut Page, profiles: Option<&Profiles>, a: f32, dt: f32, view: [f32; 4], live: bool) {
+        let [vx, vy, vw, vh] = view;
+        let (pointer, gui) = (page.pointer, page.gui);
+        let follow = 1.0 - (-dt * 16.0).exp();
+        let title = lang::get_or("oteria.profiles.title", "Profiles");
+        ui.text(Face::SemiBold, 16.0, vx, vy + 2.0, argb(WHITE, a), &title);
+        let sub = lang::get_or("oteria.profiles.subtitle", "Each profile keeps its own mods, HUD and crosshair.");
+        let sub = fit(ui, Face::Regular, 12.0, &sub, vw - 240.0);
+        ui.text(Face::Regular, 12.0, vx, vy + 26.0, argb(WHITE, 0.55 * a), &sub);
+        // Create: green, with its plus.
+        let create = [vx + vw - 210.0, vy + 4.0, 210.0, 38.0];
+        let over = live && inside(create, pointer);
+        ui.rounded(create[0], create[1], create[2], create[3], 9.0, argb(ON, if over { 1.0 } else { 0.82 } * a));
+        page.icon(ui, icon::PLUS, create[0] + 24.0, create[1] + 19.0, argb(WHITE, a), false);
+        let label = lang::get_or("oteria.profiles.create", "Create a profile");
+        ui.text(Face::Medium, 12.0, create[0] + 44.0, create[1] + (38.0 - 17.0) / 2.0, argb(WHITE, a), &label);
+        page.hit(create, Hit::NewProfile);
+        if live {
+            horizon_client::widgets::record("oteria-profile-new", create.map(gui), true);
+        }
+        let Some(profiles) = profiles else {
+            return;
+        };
+
+        // The cards, scrolled under the title.
+        let (ly, lh) = (vy + 60.0, vh - 60.0);
+        let n = profiles.names.len();
+        self.cards.resize(n, 0.0);
+        let (ch, gap, bs) = (60.0, 10.0, 34.0);
+        let scroll = if live {
+            self.track = [ly, lh];
+            self.room = (n as f32 * (ch + gap) - gap - lh).max(0.0);
+            self.target = self.target.clamp(0.0, self.room);
+            self.scroll
+        } else {
+            0.0
+        };
+        let within = |r: [f32; 4]| live && r[1] + r[3] > ly && r[1] < ly + lh;
+        let clipped = |r: [f32; 4]| [r[0], r[1].max(ly), r[2], (r[1] + r[3]).min(ly + lh) - r[1].max(ly)];
+        let start = ui.batch.vertices.len();
+        for (i, name) in profiles.names.iter().enumerate() {
+            let r = [vx, ly + i as f32 * (ch + gap) - scroll, vw, ch];
+            if r[1] + ch < ly || r[1] > ly + lh {
+                continue;
+            }
+            let active = i == profiles.active;
+            let over = within(r) && inside(r, pointer) && pointer.1 >= ly && pointer.1 < ly + lh;
+            self.cards[i] += ((if over { 1.0 } else { 0.0 }) - self.cards[i]) * follow;
+            let hv = self.cards[i];
+            if active {
+                ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(ACCENT, (0.14 + 0.04 * hv) * a));
+                ui.border(r[0], r[1], r[2], r[3], 10.0, argb(ACCENT, 0.6 * a));
+                ui.rounded(r[0], r[1] + 16.0, 3.0, ch - 32.0, 1.5, argb(ACCENT, a));
+            } else {
+                ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.05 + 0.04 * hv) * a));
+                ui.border(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.07 + 0.12 * hv) * a));
+            }
+            let (ax, ay) = (r[0] + 18.0, r[1] + (ch - 36.0) / 2.0);
+            ui.rounded(ax, ay, 36.0, 36.0, 18.0, argb(if active { ACCENT } else { WHITE }, if active { 0.35 } else { 0.08 } * a));
+            page.icon(ui, icon::USER, ax + 18.0, ay + 18.0, argb(WHITE, a), false);
+
+            // The buttons, from the right: Delete, Duplicate, Rename, and Use for the others.
+            let by = r[1] + (ch - bs) / 2.0;
+            let mut buttons: Vec<([f32; 4], Hit, String)> = Vec::new();
+            let confirm = self.confirm == Some(i);
+            let can_delete = n > 1;
+            let confirm_label = lang::get_or("oteria.profiles.confirm", "Delete?");
+            let dw = if confirm { ui.measure(Face::Medium, 11.0, &confirm_label) + 28.0 } else { bs };
+            let mut bx = r[0] + vw - 14.0 - dw;
+            let del = [bx, by, dw, bs];
+            let del_over = within(del) && inside(del, pointer) && can_delete;
+            let fill = if confirm {
+                argb(OFF, if del_over { 1.0 } else { 0.85 } * a)
+            } else if del_over {
+                argb(OFF, 0.8 * a)
+            } else {
+                argb(WHITE, 0.07 * a)
+            };
+            ui.rounded(del[0], del[1], del[2], del[3], 8.0, fill);
+            if confirm {
+                ui.text_centered(Face::Medium, 11.0, del[0] + dw / 2.0, del[1] + (bs - 16.0) / 2.0, argb(WHITE, a), &confirm_label);
+            } else {
+                page.icon(ui, icon::TRASH, del[0] + bs / 2.0, del[1] + bs / 2.0, argb(WHITE, if can_delete { 0.85 } else { 0.3 } * a), false);
+            }
+            if can_delete {
+                buttons.push((del, Hit::DeleteProfile(i), format!("oteria-profile-{i}-delete")));
+            }
+            for (sprite, hit, id) in [
+                (icon::COPY, Hit::CopyProfile(i), "copy"),
+                (icon::PENCIL, Hit::RenameProfile(i), "rename"),
+            ] {
+                bx -= 8.0 + bs;
+                let b = [bx, by, bs, bs];
+                let over = within(b) && inside(b, pointer);
+                ui.rounded(b[0], b[1], b[2], b[3], 8.0, argb(WHITE, if over { 0.16 } else { 0.07 } * a));
+                page.icon(ui, sprite, b[0] + bs / 2.0, b[1] + bs / 2.0, argb(WHITE, 0.85 * a), false);
+                buttons.push((b, hit, format!("oteria-profile-{i}-{id}")));
+            }
+            if !active {
+                let use_label = lang::get_or("oteria.profiles.use", "Use");
+                let uw = ui.measure(Face::Medium, 11.0, &use_label) + 36.0;
+                bx -= 8.0 + uw;
+                let b = [bx, by, uw, bs];
+                let over = within(b) && inside(b, pointer);
+                ui.rounded(b[0], b[1], b[2], b[3], 8.0, argb(ACCENT, if over { 0.95 } else { 0.7 } * a));
+                ui.text_centered(Face::Medium, 11.0, b[0] + uw / 2.0, b[1] + (bs - 16.0) / 2.0, argb(WHITE, a), &use_label);
+                buttons.push((b, Hit::UseProfile(i), format!("oteria-profile-{i}-use")));
+            }
+
+            // The name, or the field its new one is typed in (the old one shown faintly until
+            // something is typed).
+            let nx = ax + 36.0 + 14.0;
+            let room = bx - 14.0 - nx;
+            match &self.renaming {
+                Some((k, typed)) if *k == i => {
+                    let field = [nx - 8.0, r[1] + (ch - 34.0) / 2.0, room.min(300.0), 34.0];
+                    ui.rounded(field[0], field[1], field[2], field[3], 8.0, argb(WHITE, 0.10 * a));
+                    ui.border(field[0], field[1], field[2], field[3], 8.0, argb(ACCENT, 0.8 * a));
+                    let ty = field[1] + (34.0 - 20.0) / 2.0;
+                    let caret_x = if typed.is_empty() {
+                        ui.text(Face::Medium, 14.0, nx, ty, argb(WHITE, 0.3 * a), name);
+                        nx
+                    } else {
+                        ui.text(Face::Medium, 14.0, nx, ty, argb(WHITE, a), typed);
+                        nx + ui.measure(Face::Medium, 14.0, typed)
+                    };
+                    if self.blink < 0.55 {
+                        ui.rounded(caret_x + 1.0, ty + 1.0, 1.5, 18.0, 0.0, argb(WHITE, a));
+                    }
+                    buttons.push((field, Hit::NameField, format!("oteria-profile-{i}-name")));
+                }
+                _ => {
+                    let label = fit(ui, Face::Medium, 14.0, name, room);
+                    ui.text(Face::Medium, 14.0, nx, r[1] + 11.0, argb(WHITE, a), &label);
+                    let (state, colour) = if active {
+                        (lang::get_or("oteria.profiles.active", "In use"), argb(ACCENT, a))
+                    } else {
+                        (lang::get_or("oteria.profiles.inactive", "Click to use"), argb(WHITE, 0.5 * a))
+                    };
+                    ui.text(Face::Regular, 11.0, nx, r[1] + 32.0, colour, &state);
+                }
+            }
+            // The card under its buttons: a press on it puts it on.
+            if within(r) {
+                if !active {
+                    page.hit(clipped(r), Hit::UseProfile(i));
+                }
+                horizon_client::widgets::record(&format!("oteria-profile-{i}"), clipped(r).map(gui), true);
+                for (b, hit, id) in buttons {
+                    if within(b) {
+                        page.hit(clipped(b), hit);
+                        horizon_client::widgets::record(&id, clipped(b).map(gui), true);
+                    }
+                }
+            }
+        }
+        ui.batch.clip_since(start, gui(vx - 2.0), gui(ly), gui(vx + vw + 2.0), gui(ly + lh));
     }
 
     /// The grid of tiles, with the count of what shows above it.
@@ -874,12 +1161,14 @@ struct Page<'g> {
     d: f32,
     pointer: (f32, f32),
     gui: &'g dyn Fn(f32) -> f32,
+    /// False while its part fades out: it draws, but takes no click.
+    live: bool,
     hits: Vec<([f32; 4], Hit)>,
 }
 impl Page<'_> {
     /// `r` (dp) answers `what` to a click, and shows the hand under the pointer.
     fn hit(&mut self, r: [f32; 4], what: Hit) {
-        if r[3] <= 0.0 {
+        if r[3] <= 0.0 || !self.live {
             return;
         }
         horizon_client::widgets::widget_cursor(inside(r, self.pointer), true);
@@ -988,6 +1277,40 @@ mod tests {
         let Some(Action::Pixels(p)) = m.release((95.0, 5.0)) else { panic!("a stroke ends in pixels") };
         assert_eq!(p[0], (1 << 10) - 1);
         assert_eq!(m.release((5.0, 5.0)), None, "only once");
+    }
+
+    #[test]
+    fn a_profile_is_renamed_by_typing_and_deleted_on_a_second_press() {
+        let mut m = Mods {
+            tab: Tab::Profiles,
+            hits: vec![
+                ([0.0, 0.0, 10.0, 10.0], Hit::RenameProfile(1)),
+                ([20.0, 0.0, 10.0, 10.0], Hit::DeleteProfile(1)),
+                ([40.0, 0.0, 10.0, 10.0], Hit::NameField),
+            ],
+            ..Mods::default()
+        };
+        assert_eq!(m.click((5.0, 5.0), [0; DRAWN]), None);
+        assert!(m.wants_keys());
+        assert!(m.type_key(Some("Bed"), false) && m.type_key(Some("wars!"), false));
+        // A press in the field keeps typing; one elsewhere gives the name.
+        assert_eq!(m.click((45.0, 5.0), [0; DRAWN]), None);
+        let renamed = Action::Profile(ProfileOp::Rename(1, "Bedwars!".into()));
+        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), Some(renamed));
+        assert!(!m.wants_keys());
+        // Nothing typed: the name stays.
+        m.renaming = Some((1, String::new()));
+        assert_eq!(m.commit_name(), None);
+        // Escape drops a name being typed before anything else.
+        m.renaming = Some((1, "x".into()));
+        assert!(m.back() && m.renaming.is_none());
+        // Delete asks once.
+        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), Some(Action::Profile(ProfileOp::Delete(1))));
+        // Pressed once, then elsewhere: it asks again.
+        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.click((100.0, 100.0), [0; DRAWN]), None);
+        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
     }
 
     #[test]

@@ -1113,8 +1113,7 @@ impl Pvp {
 pub const PRESET_MODS: [&str; 2] = ["fps_overlay", "keystrokes"];
 /// Fire overlay's place under the PvP preset (percent of its height down).
 const PRESET_FIRE_LOWER: u8 = 40;
-/// The PvP preset: the custom crosshair, the armour and effects widgets, vanilla's toggle sprint
-/// and toggle sneak, lower fire, and the FPS and keystrokes mods when installed. It only turns
+/// The PvP preset: the custom crosshair, the armour and effects widgets, lower fire, and the FPS and keystrokes mods when installed. It only turns
 /// things on; each keeps its own settings, so it can be undone option by option.
 pub fn apply_preset(s: &mut crate::settings::Settings) {
     let p = &mut s.extras.pvp;
@@ -1124,8 +1123,6 @@ pub fn apply_preset(s: &mut crate::settings::Settings) {
     if p.tweaks.fire_lower == 0 {
         p.tweaks.fire_lower = PRESET_FIRE_LOWER;
     }
-    s.toggle_sprint = true;
-    s.toggle_crouch = true;
     for id in PRESET_MODS {
         s.mods.turn_on(id);
     }
@@ -1751,7 +1748,8 @@ mod tests {
         apply_preset(&mut s);
         let p = &s.extras.pvp;
         assert!(p.crosshair.custom && p.hud.armour && p.hud.effects);
-        assert!(s.toggle_sprint && s.toggle_crouch);
+        // Sprint and sneak stay held, as vanilla's defaults: toggled, they caught players out.
+        assert!(!s.toggle_sprint && !s.toggle_crouch);
         // What the player had chosen stays: the crosshair's colour, a lower fire already set.
         assert_eq!(p.crosshair.colour, Colour::Green);
         assert_eq!(p.tweaks.fire_lower, 60);

@@ -115,7 +115,9 @@ mod core_tests;
 mod cosmetics;
 /// Oteria's menu on Right Shift (`Screen::OteriaMenu`).
 mod oteria_menu;
+mod oteria_boost;
 mod oteria_mods;
+mod oteria_profiles;
 mod creaking;
 mod creative_hotbar;
 mod creative_screen;
