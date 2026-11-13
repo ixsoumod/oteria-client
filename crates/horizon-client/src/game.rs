@@ -116,6 +116,8 @@ mod cosmetics;
 /// Oteria's menu on Right Shift (`Screen::OteriaMenu`).
 mod oteria_menu;
 mod oteria_boost;
+/// The Host page of Oteria's menu: sharing the world being played.
+mod oteria_host;
 mod oteria_mods;
 mod oteria_profiles;
 /// Oteria's voice chat, on Simple Voice Chat's protocol.

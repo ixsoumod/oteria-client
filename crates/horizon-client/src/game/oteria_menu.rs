@@ -17,6 +17,7 @@
 use super::oteria_boost;
 use super::oteria_mods::{Action, Mods, ProfileOp, TILES};
 use super::oteria_profiles::Profiles;
+use super::oteria_host::{HostAction, HostMenu, HostView};
 use super::oteria_voice_ui::VoiceMenu;
 use crate::game::{Game, Screen};
 use crate::ui_theme::{Face, Ui};
@@ -90,6 +91,11 @@ struct Menu {
     mods: Option<Mods>,
     /// The voice chat's menu (V), shown as the mods page is.
     voice: Option<VoiceMenu>,
+    /// The Host page, from the button at the bottom right.
+    host: Option<HostMenu>,
+    /// Where the Host button was drawn (GUI pixels), and its hover light.
+    host_rect: [f32; 4],
+    host_hover: f32,
     mods_at: Option<Instant>,
     back: Option<Instant>,
 }
@@ -114,6 +120,9 @@ impl Menu {
             rects: [[0.0; 4]; 3],
             mods: None,
             voice: None,
+            host: None,
+            host_rect: [0.0; 4],
+            host_hover: 0.0,
             mods_at: None,
             back: None,
         }
@@ -220,6 +229,44 @@ impl Game<'_> {
         });
     }
 
+    /// What the Host page shows: the world's options (`with_options`: the first frame only, the
+    /// server thread asked once) and sharing's state.
+    fn host_view(&mut self, with_options: bool) -> HostView {
+        self.tick_friends();
+        let options = if with_options { self.host_options() } else { None };
+        let friends = self.friends_view();
+        let short = self.friends_short();
+        HostView {
+            options,
+            sharing: friends.sharing.then(|| super::oteria_host::Sharing {
+                code: friends.code.clone(),
+                short,
+                status: friends.status.clone(),
+                reachable: friends.reachable,
+                guests: friends.guests.clone(),
+                copied: friends.copied,
+            }),
+        }
+    }
+
+    /// What the Host page asked for.
+    fn host_action(&mut self, action: HostAction) {
+        self.audio.play_button_click();
+        match action {
+            HostAction::Host(options) => {
+                if let Err(e) = self.host_world(options) {
+                    self.system_message(horizon_client::text::Text::literal(
+                        horizon_client::lang::get_or("oteria.host.failed", "Couldn't host the world: %s")
+                            .replacen("%s", &e.to_string(), 1),
+                    ));
+                }
+            }
+            HostAction::Copy => self.friends_copy(),
+            HostAction::CopyShort => self.friends_copy_short(),
+            HostAction::Stop => self.friends_stop(),
+        }
+    }
+
     /// The folder of `options.txt`, where the profiles and Boost keep their files.
     fn options_dir() -> std::path::PathBuf {
         Self::options_path().parent().map(|d| d.to_path_buf()).unwrap_or_default()
@@ -320,6 +367,13 @@ impl Game<'_> {
             let Some(menu) = m.as_mut() else {
                 return true;
             };
+            // The Host page: back to the buttons.
+            if menu.host.is_some() {
+                if menu.back.is_none() {
+                    menu.back = Some(Instant::now());
+                }
+                return false;
+            }
             // The voice menu: a page back, then closed (it was opened from the game).
             if let Some(voice) = menu.voice.as_mut() {
                 if voice.at_main() {
@@ -361,6 +415,19 @@ impl Game<'_> {
                 return None;
             }
             let on_mods = menu.back.is_none() && menu.mods.is_some();
+            // The Host page takes the clicks while it shows.
+            if menu.back.is_none()
+                && let Some(host) = menu.host.as_mut()
+            {
+                return match event {
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } => host.click(cursor).map(Action::Host),
+                    _ => None,
+                };
+            }
             // The voice menu takes the events while it shows.
             if let Some(voice) = menu.voice.as_mut() {
                 return match event {
@@ -456,6 +523,13 @@ impl Game<'_> {
                 } => {
                     if on_mods {
                         return menu.mods.as_mut()?.click(cursor, drawn);
+                    }
+                    // The Host button, at the bottom right.
+                    if inside(menu.host_rect, cursor) {
+                        menu.host = Some(HostMenu::new());
+                        menu.mods_at = Some(Instant::now());
+                        menu.back = None;
+                        return None;
                     }
                     let i = menu.rects.iter().position(|r| inside(*r, cursor))?;
                     let now = Instant::now();
@@ -561,6 +635,7 @@ impl Game<'_> {
                 }
             }
             Action::Voice(a) => self.voice_action(a),
+            Action::Host(a) => self.host_action(a),
             Action::Close => self.close_oteria_menu(),
         }
         true
@@ -582,6 +657,11 @@ impl Game<'_> {
             self.drop_oteria_menu();
             return;
         }
+        // The Host page's view: the world's options the first time, sharing's state each frame.
+        let host_view = MENU
+            .with(|m| m.borrow().as_ref().and_then(|menu| menu.host.as_ref().map(HostMenu::needs_options)))
+            .map(|needs| self.host_view(needs));
+        let sharing = self.friends_sharing();
         let scale = batch.scale;
         let cursor = self.cursor;
         let atlas = &self.gui.atlas;
@@ -605,6 +685,7 @@ impl Game<'_> {
                     if s >= 1.0 {
                         (menu.mods, menu.mods_at, menu.back) = (None, None, None);
                         menu.voice = None;
+                        menu.host = None;
                         0.0
                     } else {
                         1.0 - ease_out(s)
@@ -895,7 +976,37 @@ impl Game<'_> {
                 }
             }
             // The mods page, rising into place as it comes.
+            // The Host button, at the bottom right (only with the buttons).
+            {
+                let hb = [w - 16.0 - 150.0, h - 16.0 - 42.0, 150.0, 42.0];
+                let over = menu.closing.is_none() && page == 0.0 && inside(hb, ui.cursor);
+                menu.host_hover += ((if over { 1.0 } else { 0.0 }) - menu.host_hover) * follow;
+                menu.host_rect = if page == 0.0 { hb.map(gui) } else { [0.0; 4] };
+                let hv = menu.host_hover;
+                let r = grown(hb, hv);
+                ui.rounded(r[0], r[1], r[2], r[3], RADIUS, argb(0x23A35C, (0.70 + 0.30 * hv) * a));
+                ui.border(r[0], r[1], r[2], r[3], RADIUS, argb(WHITE, (0.25 + 0.4 * hv) * a));
+                let label = horizon_client::lang::get_or("oteria.host.button", "HOST");
+                let lw = ui.measure(Face::Medium, 13.0, &label);
+                let lx = r[0] + (r[2] - lw - 26.0) / 2.0 + 26.0;
+                if let Some(s) = ui.atlas.sprites.get(horizon_client::oteria_icons::small(horizon_client::oteria_icons::SERVER).as_str()).copied() {
+                    let side = 20.0 / d;
+                    ui.batch.rect_uv(gui(lx - 26.0 + 2.0), gui(r[1] + (r[3] - side) / 2.0), gui(side), gui(side), s, argb(WHITE, a));
+                }
+                ui.text(Face::Medium, 13.0, lx, r[1] + (r[3] - 19.0) / 2.0, argb(WHITE, a), &label);
+                if sharing {
+                    // Shared now: a light that breathes in its corner.
+                    let glow = 0.6 + 0.4 * (t * TAU / 1.6).sin();
+                    ui.rounded(r[0] + r[2] - 13.0, r[1] + 5.0, 8.0, 8.0, 4.0, argb(0xB8FFC8, glow * a));
+                }
+                horizon_client::widgets::record("host", menu.host_rect, page == 0.0);
+                horizon_client::widgets::widget_cursor(over, true);
+            }
             if page > 0.0
+                && let (Some(host), Some(view)) = (menu.host.as_mut(), host_view.as_ref())
+            {
+                host.draw(&mut ui, view, shown * page, (1.0 - page) * 18.0, &gui);
+            } else if page > 0.0
                 && let (Some(voice), Some(view)) = (menu.voice.as_mut(), voice_view.as_ref())
             {
                 voice.draw(&mut ui, view, &extras.pvp, shown * page, (1.0 - page) * 18.0, dt, &gui, cursor);

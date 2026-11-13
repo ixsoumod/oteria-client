@@ -40,7 +40,7 @@ horizon-shaders = { path = "../horizon-shaders" }
 # Horizon's own shader packs: the format, the stages and the check (docs/shaders.md).
 horizon-shader-api = { path = "../horizon-shader-api" }
 # Play with Friends: invite codes and their tunnel; the `friends` feature.
-horizon-friends = { path = "../horizon-friends", optional = true }
+horizon-friends = { path = "../horizon-friends", optional = true, features = ["game"] }
 # The narrator (GameNarrator): text-to-speech of chat, system messages and screens.
 horizon-narrator = { path = "../horizon-narrator" }
 # Horizon mods: sandboxed WebAssembly components, off unless installed and turned on (docs/mods.md).

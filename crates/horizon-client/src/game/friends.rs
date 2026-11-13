@@ -54,8 +54,19 @@ fn env_flag(name: &str, default: bool) -> bool {
 }
 
 impl Game<'_> {
-    /// Start sharing the open world.
+    /// Start sharing the open world, opened to LAN with Open to LAN's defaults if it isn't.
     pub(super) fn friends_start(&mut self) -> Result<()> {
+        // ShareToLanScreen's defaults, as the world options screen offers them.
+        self.friends_start_with(LanSettings {
+            port: horizon_client::lan::available_port(),
+            guest_commands: false,
+            force_game_mode: true,
+        })
+    }
+
+    /// Start sharing the open world, opened to LAN with `lan` if it isn't (Oteria's Host page
+    /// chooses the players' commands and game mode).
+    pub(super) fn friends_start_with(&mut self, lan: LanSettings) -> Result<()> {
         if self.friends.is_some() {
             return Ok(());
         }
@@ -66,12 +77,7 @@ impl Game<'_> {
         }
         let opened_lan = self.lan_port().is_none();
         if opened_lan {
-            // ShareToLanScreen's defaults, as the world options screen offers them.
-            self.lan_open(LanSettings {
-                port: horizon_client::lan::available_port(),
-                guest_commands: false,
-                force_game_mode: true,
-            })?;
+            self.lan_open(lan)?;
         }
         let port = self.lan_port().ok_or("the world isn't open to LAN")?;
         let host = match Host::start(HostConfig {
@@ -238,6 +244,23 @@ impl Game<'_> {
             }
             Action::Done => self.screen = super::Screen::Paused,
         }
+    }
+
+    /// The relay's short code, while sharing has one.
+    pub(super) fn friends_short(&self) -> Option<String> {
+        let s = self.friends.as_ref()?;
+        s.host.state().short.as_ref().map(ToString::to_string)
+    }
+    /// Copies the relay's short code.
+    pub(super) fn friends_copy_short(&mut self) {
+        if let Some(short) = self.friends_short() {
+            use horizon_client::clipboard::Clipboard;
+            self.clipboard.set(&short);
+        }
+    }
+    /// Whether the world is shared now.
+    pub(super) fn friends_sharing(&self) -> bool {
+        self.friends.is_some()
     }
 
     /// Whether the pause menu offers Play with Friends (a singleplayer world).

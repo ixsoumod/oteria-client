@@ -556,7 +556,74 @@ impl Restrictions {
     }
 }
 
+/// What Oteria's Host page (`oteria_host`) sets before the world is shared: the world
+/// options screen's, without the port (sharing picks it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct HostOptions {
+    /// The players' game mode (`MODES`).
+    pub default_mode: i32,
+    /// The host's own.
+    pub personal_mode: i32,
+    /// Commands (cheats) for the host.
+    pub cheats: bool,
+    pub difficulty: u8,
+    /// Commands for the players who join.
+    pub guest_commands: bool,
+    /// The players who join take `default_mode`, whatever they had.
+    pub force: bool,
+    /// The world is hardcore or its difficulty is locked: the difficulty can't change.
+    pub locked: bool,
+}
+
 impl Game<'_> {
+    /// The world's options as the Host page starts from them; None when this window runs no
+    /// world (a server's) or the server thread doesn't answer.
+    pub(super) fn host_options(&self) -> Option<HostOptions> {
+        if self.external_server() || self.title.is_some() {
+            return None;
+        }
+        let state = match &self.integrated {
+            Some(server) => server.call(|g| g.server_options())?,
+            None => self.local_server_options(),
+        };
+        Some(HostOptions {
+            default_mode: state.default_mode,
+            personal_mode: state.personal_mode,
+            cheats: state.cheats,
+            difficulty: state.difficulty,
+            // As the screen: there are no commands for the players without the host's.
+            guest_commands: state.guest_commands,
+            force: state.force,
+            locked: state.difficulty_locked || state.hardcore,
+        })
+    }
+
+    /// Puts `wanted` on the world, then shares it behind an invite code (Play with Friends),
+    /// opened to LAN with its players' commands and game mode.
+    pub(super) fn host_world(&mut self, wanted: HostOptions) -> horizon_client::Result<()> {
+        let before = self.host_options().ok_or("open a singleplayer world first")?;
+        let lan = self.lan_port();
+        let snapshot = |o: &HostOptions| Snapshot {
+            default_mode: o.default_mode,
+            personal_mode: o.personal_mode,
+            cheats: o.cheats,
+            difficulty: o.difficulty,
+            locked: o.locked,
+            // Sharing opens the LAN server itself (and closes it when it stops).
+            lan: lan.is_some(),
+            port: lan.unwrap_or(0),
+            guest_commands: o.guest_commands && o.cheats,
+            force: o.force,
+        };
+        if wanted != before {
+            self.apply_world_options(&snapshot(&before), &snapshot(&wanted));
+        }
+        self.friends_start_with(LanSettings {
+            port: horizon_client::lan::available_port(),
+            guest_commands: wanted.guest_commands && wanted.cheats,
+            force_game_mode: wanted.force,
+        })
+    }
     pub(super) fn remote_world_options_permission(&mut self, permission: bool) {
         if let Some(o) = self.world_options.as_mut() {
             let lost = o.gamemaster && !permission;

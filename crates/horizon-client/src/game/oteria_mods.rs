@@ -230,6 +230,8 @@ pub(super) enum Action {
     Boost(bool),
     /// The voice chat's menu (`oteria_voice_ui`).
     Voice(super::oteria_voice_ui::VAction),
+    /// The Host page (`oteria_host`).
+    Host(super::oteria_host::HostAction),
     Close,
     EditHud,
 }
