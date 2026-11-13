@@ -8,7 +8,7 @@
 use super::proto::{self, FRAME, Packet, RATE, Secret};
 use std::collections::{HashMap, VecDeque};
 use std::net::{ToSocketAddrs, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -33,6 +33,16 @@ pub struct Settings {
     /// The microphone's and the voices' gains (1 is as they are).
     pub mic: f32,
     pub volume: f32,
+    /// Our microphone sends nothing.
+    pub muted: bool,
+    /// The others aren't heard (Simple Voice Chat's "disabled").
+    pub deafened: bool,
+    /// The microphone plays back to us (the settings' test).
+    pub loopback: bool,
+    /// Voices placed where the players are (else all in the middle).
+    pub spatial: bool,
+    /// The background noise taken out of our microphone.
+    pub noise: bool,
 }
 
 /// The connection's state, for the HUD.
@@ -52,6 +62,8 @@ pub struct World {
     pub players: HashMap<u128, [f64; 3]>,
     pub push_to_talk: bool,
     pub settings: Option<Settings>,
+    /// Each player's own volume (1 is as they are).
+    pub volumes: HashMap<u128, f32>,
 }
 
 /// What both sides share.
@@ -60,6 +72,8 @@ pub struct Shared {
     /// Who was heard last, and when.
     pub heard: Mutex<HashMap<u128, Instant>>,
     pub talking: AtomicBool,
+    /// Our microphone's last level, in dB (an `f32`'s bits), for the settings' meter.
+    level: AtomicU32,
     pub status: Mutex<Status>,
     stop: AtomicBool,
     /// Our microphone at 48 kHz mono, waiting to be encoded.
@@ -68,6 +82,10 @@ pub struct Shared {
 }
 
 impl Shared {
+    /// Our microphone's level, in dB below full scale (-127 is silence).
+    pub fn level(&self) -> f32 {
+        f32::from_bits(self.level.load(Ordering::Relaxed))
+    }
     /// The players talking now (heard within `TALK_SHOWN`).
     pub fn talking_players(&self) -> Vec<u128> {
         let now = Instant::now();
@@ -176,6 +194,54 @@ impl Converter {
     }
 }
 
+/// The microphones and the speakers there are, by name.
+pub fn devices() -> (Vec<String>, Vec<String>) {
+    #[cfg(feature = "audio")]
+    {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        let host = cpal::default_host();
+        let inputs = host
+            .input_devices()
+            .map(|l| l.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default();
+        let outputs = host
+            .output_devices()
+            .map(|l| l.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default();
+        (inputs, outputs)
+    }
+    #[cfg(not(feature = "audio"))]
+    {
+        (Vec::new(), Vec::new())
+    }
+}
+
+/// A noise gate that follows the room: it learns the background's level and lets through what
+/// rises well above it, easing in and out so words aren't cut.
+struct Gate {
+    floor: f32,
+    gain: f32,
+}
+impl Default for Gate {
+    fn default() -> Self {
+        Self { floor: 0.01, gain: 1.0 }
+    }
+}
+impl Gate {
+    fn apply(&mut self, frame: &mut [f32]) {
+        let rms = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len().max(1) as f32).sqrt();
+        // The floor falls at once to a quieter frame and rises slowly.
+        self.floor = if rms < self.floor { rms.max(1e-5) } else { self.floor * 1.002 + 1e-6 };
+        let open = ((rms / (self.floor * 3.0)) - 1.0).clamp(0.0, 1.0);
+        let start = self.gain;
+        self.gain += (open - self.gain) * if open > self.gain { 0.6 } else { 0.15 };
+        let n = frame.len() as f32;
+        for (i, s) in frame.iter_mut().enumerate() {
+            *s *= start + (self.gain - start) * i as f32 / n;
+        }
+    }
+}
+
 /// A running voice connection; dropping it stops everything.
 pub struct Session {
     pub shared: Arc<Shared>,
@@ -194,19 +260,21 @@ impl Drop for Session {
 }
 
 impl Session {
-    /// Connects to the voice server at `host`:`port` with `secret`, and opens the audio.
-    pub fn start(host: String, port: u16, secret: Secret) -> Self {
+    /// Connects to the voice server at `host`:`port` with `secret`, and opens the audio on the
+    /// named microphone and speakers (empty: the system's).
+    pub fn start(host: String, port: u16, secret: Secret, mic: &str, speaker: &str) -> Self {
         let shared = Arc::new(Shared {
             world: Mutex::new(World::default()),
             heard: Mutex::new(HashMap::new()),
             talking: AtomicBool::new(false),
+            level: AtomicU32::new((-127.0f32).to_bits()),
             status: Mutex::new(Status::Connecting),
             stop: AtomicBool::new(false),
             mic: Mutex::new(VecDeque::new()),
             mixer: Mutex::new(Mixer::default()),
         });
         #[cfg(feature = "audio")]
-        let streams = match audio::open(&shared) {
+        let streams = match audio::open(&shared, mic, speaker) {
             Ok(streams) => streams,
             Err(e) => {
                 log::warn!("Oteria voice: no audio ({e})");
@@ -231,6 +299,29 @@ impl Session {
             #[cfg(feature = "audio")]
             _streams: streams,
         }
+    }
+
+    /// The audio opened again on other devices (the settings' choice).
+    pub fn reopen_audio(&mut self, mic: &str, speaker: &str) {
+        #[cfg(feature = "audio")]
+        {
+            self._streams.clear();
+            match audio::open(&self.shared, mic, speaker) {
+                Ok(streams) => {
+                    self._streams = streams;
+                    let mut status = self.shared.status.lock().unwrap();
+                    if *status == Status::NoAudio {
+                        *status = Status::Connecting;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Oteria voice: no audio ({e})");
+                    *self.shared.status.lock().unwrap() = Status::NoAudio;
+                }
+            }
+        }
+        #[cfg(not(feature = "audio"))]
+        let _ = (mic, speaker);
     }
 }
 
@@ -280,6 +371,7 @@ fn run(shared: &Shared, host: &str, port: u16, secret: &Secret) -> std::io::Resu
     let mut buf = [0u8; 4096];
     let mut pcm = vec![0f32; FRAME * 6];
     let mut packet = vec![0u8; proto::MAX_OPUS];
+    let mut gate = Gate::default();
     while !shared.stop.load(Ordering::Relaxed) {
         // The handshake, once a second until it holds.
         if !connected && last_try.elapsed() >= Duration::from_secs(1) {
@@ -345,23 +437,33 @@ fn run(shared: &Shared, host: &str, port: u16, secret: &Secret) -> std::io::Resu
         };
         let Some(settings) = settings else { continue };
         loop {
-            let frame: Vec<f32> = {
+            let mut frame: Vec<f32> = {
                 let mut mic = shared.mic.lock().unwrap();
                 if mic.len() < FRAME {
                     break;
                 }
                 mic.drain(..FRAME).map(|s| (s * settings.mic).clamp(-1.0, 1.0)).collect()
             };
+            if settings.noise {
+                gate.apply(&mut frame);
+            }
             let rms = (frame.iter().map(|s| s * s).sum::<f32>() / FRAME as f32).sqrt();
-            let db = 20.0 * rms.max(1e-9).log10();
-            let talking = if settings.activation {
-                if db > -settings.threshold {
-                    loud_until = Instant::now() + HANG;
-                }
-                Instant::now() < loud_until
-            } else {
-                push
-            };
+            let db = (20.0 * rms.max(1e-9).log10()).max(-127.0);
+            shared.level.store(db.to_bits(), Ordering::Relaxed);
+            if settings.loopback {
+                // The test: ourselves, in the middle.
+                let g = std::f32::consts::FRAC_1_SQRT_2 * settings.volume;
+                shared.mixer.lock().unwrap().push(0, &frame, [g, g]);
+            }
+            let talking = !settings.muted
+                && if settings.activation {
+                    if db > -settings.threshold {
+                        loud_until = Instant::now() + HANG;
+                    }
+                    Instant::now() < loud_until
+                } else {
+                    push
+                };
             shared.talking.store(talking && connected, Ordering::Relaxed);
             if talking && connected {
                 if let Ok(n) = encoder.encode(&frame, FRAME, &mut packet) {
@@ -404,6 +506,10 @@ fn hear(
         decoders.remove(&sender);
         return;
     }
+    let deafened = shared.world.lock().unwrap().settings.as_ref().is_some_and(|s| s.deafened);
+    if deafened {
+        return;
+    }
     shared.heard.lock().unwrap().insert(sender, Instant::now());
     let decoder = match decoders.entry(sender) {
         std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -417,9 +523,11 @@ fn hear(
     };
     let gains = {
         let w = shared.world.lock().unwrap();
-        let volume = w.settings.as_ref().map_or(1.0, |s| s.volume);
+        let volume = w.settings.as_ref().map_or(1.0, |s| s.volume)
+            * w.volumes.get(&sender).copied().unwrap_or(1.0);
+        let spatial = w.settings.as_ref().is_none_or(|s| s.spatial);
         let (listener, yaw) = w.listener;
-        let at = distance.and_then(|_| w.players.get(&sender).copied());
+        let at = distance.filter(|_| spatial).and_then(|_| w.players.get(&sender).copied());
         place(at, listener, yaw, distance.unwrap_or(0.0)).map(|g| g * volume)
     };
     shared.mixer.lock().unwrap().push(sender, &pcm[..n], gains);
@@ -447,13 +555,28 @@ mod audio {
             .unwrap_or(default)
     }
 
-    pub(super) fn open(shared: &Arc<Shared>) -> Result<Vec<cpal::Stream>, String> {
+    /// The device named `name` among `list`, else the default one.
+    fn named(
+        list: Result<impl Iterator<Item = cpal::Device>, cpal::DevicesError>,
+        name: &str,
+        default: Option<cpal::Device>,
+    ) -> Option<cpal::Device> {
+        if !name.is_empty()
+            && let Ok(mut list) = list
+            && let Some(d) = list.find(|d| d.name().is_ok_and(|n| n == name))
+        {
+            return Some(d);
+        }
+        default
+    }
+
+    pub(super) fn open(shared: &Arc<Shared>, mic: &str, speaker: &str) -> Result<Vec<cpal::Stream>, String> {
         let host = cpal::default_host();
         let mut streams = Vec::new();
         let err = |e: cpal::StreamError| log::warn!("Oteria voice: audio stream: {e}");
 
         // The speakers: the mixed voices.
-        let out = host.default_output_device().ok_or("no output device")?;
+        let out = named(host.output_devices(), speaker, host.default_output_device()).ok_or("no output device")?;
         let default = out.default_output_config().map_err(|e| e.to_string())?;
         let config = pick(out.supported_output_configs().map_err(|e| e.to_string())?, default);
         if config.sample_format() != cpal::SampleFormat::F32 {
@@ -489,7 +612,7 @@ mod audio {
         streams.push(stream);
 
         // The microphone: mono at 48 kHz into `mic`.
-        let input = host.default_input_device().ok_or("no microphone")?;
+        let input = named(host.input_devices(), mic, host.default_input_device()).ok_or("no microphone")?;
         let default = input.default_input_config().map_err(|e| e.to_string())?;
         let config = pick(input.supported_input_configs().map_err(|e| e.to_string())?, default);
         if config.sample_format() != cpal::SampleFormat::F32 {
@@ -553,6 +676,26 @@ mod tests {
             m.next();
         }
         assert!(!m.voices[&1].primed);
+    }
+
+    #[test]
+    fn the_gate_quiets_the_background_and_lets_speech_through() {
+        let mut g = Gate::default();
+        let hum = |k: usize| ((k as f32) * 0.3).sin() * 0.002;
+        let mut last = Vec::new();
+        for _ in 0..200 {
+            let mut f: Vec<f32> = (0..FRAME).map(hum).collect();
+            g.apply(&mut f);
+            last = f;
+        }
+        let quiet = last.iter().map(|s| s.abs()).fold(0.0, f32::max);
+        assert!(quiet < 0.001, "the hum is gated: {quiet}");
+        let mut speech: Vec<f32> = (0..FRAME).map(|k| ((k as f32) * 0.05).sin() * 0.3).collect();
+        for _ in 0..3 {
+            speech = (0..FRAME).map(|k| ((k as f32) * 0.05).sin() * 0.3).collect();
+            g.apply(&mut speech);
+        }
+        assert!(speech.iter().map(|s| s.abs()).fold(0.0, f32::max) > 0.25, "speech passes");
     }
 
     #[test]

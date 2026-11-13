@@ -28,8 +28,18 @@ pub const UPDATE_STATE: &str = "voicechat:update_state";
 pub const STATE: &str = "voicechat:state";
 pub const STATES: &str = "voicechat:states";
 pub const REMOVE_STATE: &str = "voicechat:remove_state";
+/// Groups: made, joined and left by us; listed, and ours said, by the server.
+pub const CREATE_GROUP: &str = "voicechat:create_group";
+pub const SET_GROUP: &str = "voicechat:set_group";
+pub const LEAVE_GROUP: &str = "voicechat:leave_group";
+pub const ADD_GROUP: &str = "voicechat:add_group";
+pub const REMOVE_GROUP: &str = "voicechat:remove_group";
+pub const JOINED_GROUP: &str = "voicechat:joined_group";
 /// Every channel this client takes or sends, for `minecraft:register`.
-pub const CHANNELS: [&str; 6] = [REQUEST_SECRET, SECRET, UPDATE_STATE, STATE, STATES, REMOVE_STATE];
+pub const CHANNELS: [&str; 12] = [
+    REQUEST_SECRET, SECRET, UPDATE_STATE, STATE, STATES, REMOVE_STATE,
+    CREATE_GROUP, SET_GROUP, LEAVE_GROUP, ADD_GROUP, REMOVE_GROUP, JOINED_GROUP,
+];
 /// The longest Opus frame a packet may carry (`readByteArray(1275)`).
 pub const MAX_OPUS: usize = 1275;
 /// The audio's rate and its frames: 20 ms of mono at 48 kHz.
@@ -139,6 +149,92 @@ impl Writer {
         self.out.extend_from_slice(v);
         self
     }
+    pub fn string(&mut self, v: &str) -> &mut Self {
+        self.bytes(v.as_bytes())
+    }
+    pub fn i16(&mut self, v: i16) -> &mut Self {
+        self.out.extend_from_slice(&v.to_be_bytes());
+        self
+    }
+}
+
+/// A group's kind: everyone in it hears each other only (normal), also hears the players near
+/// (open), or hears nobody else (isolated).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroupKind {
+    Normal,
+    Open,
+    Isolated,
+}
+impl GroupKind {
+    pub const ALL: [GroupKind; 3] = [GroupKind::Normal, GroupKind::Open, GroupKind::Isolated];
+    fn from_short(v: i16) -> Self {
+        match v {
+            1 => GroupKind::Open,
+            2 => GroupKind::Isolated,
+            _ => GroupKind::Normal,
+        }
+    }
+    fn short(self) -> i16 {
+        match self {
+            GroupKind::Normal => 0,
+            GroupKind::Open => 1,
+            GroupKind::Isolated => 2,
+        }
+    }
+}
+
+/// A group the server lists (`voicechat:add_group`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Group {
+    pub id: u128,
+    pub name: String,
+    pub password: bool,
+    pub persistent: bool,
+    pub hidden: bool,
+    pub kind: GroupKind,
+}
+impl Group {
+    pub fn parse(data: &[u8]) -> Option<Self> {
+        let mut r = Reader::new(data);
+        Some(Self {
+            id: r.uuid()?,
+            name: r.string(512)?,
+            password: r.bool()?,
+            persistent: r.bool()?,
+            hidden: r.bool()?,
+            kind: GroupKind::from_short(i16::from_be_bytes(r.take(2)?.try_into().ok()?)),
+        })
+    }
+}
+/// `voicechat:create_group`: a name (24 at most), a password or none, the kind.
+pub fn create_group(name: &str, password: Option<&str>, kind: GroupKind) -> Vec<u8> {
+    let mut w = Writer::default();
+    w.string(&name.chars().take(24).collect::<String>()).bool(password.is_some());
+    if let Some(p) = password {
+        w.string(&p.chars().take(24).collect::<String>());
+    }
+    w.i16(kind.short());
+    w.out
+}
+/// `voicechat:set_group`: joins `group`, with its password if it has one.
+pub fn set_group(group: u128, password: Option<&str>) -> Vec<u8> {
+    let mut w = Writer::default();
+    w.uuid(group).bool(password.is_some());
+    if let Some(p) = password {
+        w.string(p);
+    }
+    w.out
+}
+/// `voicechat:joined_group`: the group we are in now, if any, and whether a password was wrong.
+pub fn joined_group(data: &[u8]) -> Option<(Option<u128>, bool)> {
+    let mut r = Reader::new(data);
+    let group = if r.bool()? { Some(r.uuid()?) } else { None };
+    Some((group, r.bool()?))
+}
+/// `voicechat:remove_group`: the group gone.
+pub fn removed_group(data: &[u8]) -> Option<u128> {
+    Reader::new(data).uuid()
 }
 
 /// What the server tells a client it may join with (`voicechat:secret`).
@@ -468,6 +564,22 @@ mod tests {
         let out = to_server(0xAB, &key, &Packet::KeepAlive).unwrap();
         let mut r = Reader::new(&out);
         assert_eq!((r.u8(), r.uuid()), (Some(0xFF), Some(0xAB)));
+    }
+
+    #[test]
+    fn groups_read_and_write_as_the_mod_does() {
+        let mut w = Writer::default();
+        w.uuid(42).string("PvP").bool(true).bool(false).bool(false).i16(2);
+        let g = Group::parse(&w.out).unwrap();
+        assert_eq!((g.id, g.name.as_str(), g.password, g.kind), (42, "PvP", true, GroupKind::Isolated));
+        let made = create_group("Team", None, GroupKind::Open);
+        let mut r = Reader::new(&made);
+        assert_eq!((r.string(24).as_deref(), r.bool()), (Some("Team"), Some(false)));
+        assert_eq!(r.take(2), Some(&[0u8, 1][..]));
+        let mut w = Writer::default();
+        w.bool(true).uuid(7).bool(false);
+        assert_eq!(joined_group(&w.out), Some((Some(7), false)));
+        assert_eq!(joined_group(&[0, 1]), Some((None, true)));
     }
 
     #[test]

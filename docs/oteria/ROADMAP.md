@@ -142,6 +142,12 @@ Des jeux de réglages qu'on change en un clic : « PvP » (FPS max, HUD PvP), «
 | 4 | Cosmétiques (5), shaders Oteria niveau léger puis moyen (4) | Plus de travail d'art et de rendu |
 | 5 | Voice chat (3), mods à chaud (contenu puis scripts) (2), mods Java recréés (1) | Les plus gros chantiers |
 
+## File d'attente
+
+- **Tier Tagger** (comme le mod Fabric `tiertagger`) : le tier PvP de chaque joueur (MCTiers et autres listes) à
+  côté de son pseudo, au-dessus de sa tête et dans la liste des joueurs, avec le mode de jeu choisi. Demandé le
+  12 novembre 2026, à faire après le chat vocal et Mouse Tweaks.
+
 ## Idées en plus
 
 - **Intégration OteriaPvP Practice** : bouton « Jouer à Oteria Practice » sur l'écran titre, statistiques de

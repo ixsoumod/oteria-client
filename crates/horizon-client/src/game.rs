@@ -120,6 +120,8 @@ mod oteria_mods;
 mod oteria_profiles;
 /// Oteria's voice chat, on Simple Voice Chat's protocol.
 mod oteria_voice;
+/// The voice chat's menu, in Oteria's menu.
+mod oteria_voice_ui;
 mod creaking;
 mod creative_hotbar;
 mod creative_screen;

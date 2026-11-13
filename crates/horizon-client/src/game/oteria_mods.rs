@@ -164,18 +164,36 @@ pub(super) static TILES: [Tile; 28] = [
     tile!("oteria.mod.water", "Clear Water", icon::RIPPLE, Visual,
         &[Item::Pvp(Opt::ClearLava)], e => e.pvp.tweaks.clear_water),
     tile!("oteria.mod.particles", "No Block Particles", icon::SPARKLES, Visual, &[], e => e.hide_block_particles),
-    tile!("oteria.mod.minimap", "Minimap", icon::MAP, Utility, &[], e => e.minimap),
+    tile!("oteria.mod.minimap", "Minimap", icon::MAP, Utility,
+        &[
+            Item::Pvp(Opt::MapShape),
+            Item::Pvp(Opt::MapBiome),
+            Item::Pvp(Opt::MapRotate),
+            Item::Pvp(Opt::MapZoom),
+        ], e => e.minimap),
     tile!("oteria.mod.elytra", "Elytra Indicator", icon::FEATHER, Pvp, &[], e => e.pvp.tweaks.elytra_indicator),
     tile!("oteria.mod.voice", "Voice Chat", icon::MICROPHONE, Utility,
         &[
+            Item::Pvp(Opt::VoiceMenuKey),
             Item::Pvp(Opt::VoiceActivation),
             Item::Pvp(Opt::VoiceKey),
             Item::Pvp(Opt::VoiceVolume),
             Item::Pvp(Opt::VoiceMic),
             Item::Pvp(Opt::VoiceThreshold),
+            Item::Pvp(Opt::VoiceNoise),
+            Item::Pvp(Opt::VoiceSpatial),
         ], e => e.pvp.voice.enabled),
     tile!("oteria.mod.mouse", "Mouse Tweaks", icon::POINTER, Utility,
-        &[Item::MouseTweaksWheel, Item::Sort], e => e.mouse_tweaks),
+        &[
+            Item::Pvp(Opt::MouseRmb),
+            Item::Pvp(Opt::MouseLmbItem),
+            Item::Pvp(Opt::MouseLmbEmpty),
+            Item::MouseTweaksWheel,
+            Item::Pvp(Opt::MouseWheelOrder),
+            Item::Pvp(Opt::MouseWheelDirection),
+            Item::Pvp(Opt::MouseScrollScaling),
+            Item::Sort,
+        ], e => e.mouse_tweaks),
     tile!("oteria.mod.reconnect", "Auto Reconnect", icon::REFRESH, Utility, &[], e => e.auto_reconnect),
     tile!("oteria.mod.nametag", "Own Name Tag", icon::USER, Utility, &[], e => e.own_name_tag),
 ];
@@ -210,6 +228,8 @@ pub(super) enum Action {
     Profile(ProfileOp),
     /// The menu's rocket: Boost on (true) or off (`oteria_boost`).
     Boost(bool),
+    /// The voice chat's menu (`oteria_voice_ui`).
+    Voice(super::oteria_voice_ui::VAction),
     Close,
     EditHud,
 }

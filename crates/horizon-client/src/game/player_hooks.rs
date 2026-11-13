@@ -560,6 +560,10 @@ impl Game<'_> {
         if own {
             marks.badge = Some(horizon_client::name_badge::SPRITE);
         }
+        // The voice chat's icon by other players' names.
+        if !own {
+            marks.voice = self.voice_name_icon(self.remote_player_uuid(m.id));
+        }
         if !engine::any() {
             return marks;
         }

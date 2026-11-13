@@ -53,25 +53,29 @@ impl Corners {
 /// map turns.
 pub struct MinimapLook {
     pub corner: Corner,
+    /// Where the player put it in the HUD editor (GUI pixels), else in its corner.
+    pub at: Option<(f32, f32)>,
     pub size: f32,
     pub image: Rect,
     pub arrow: f32,
     pub north: Option<(f32, f32)>,
 }
+/// Draws the minimap; where it went (`[x, y, side, side]`), for the HUD editor.
 pub fn draw_minimap(
     batch: &mut HudBatch,
     atlas: &HudAtlas,
     corners: &mut Corners,
     look: &MinimapLook,
-) {
+) -> [f32; 4] {
     let MinimapLook {
         corner,
+        at,
         size,
         image,
         arrow,
         north,
     } = *look;
-    let (x, y) = corners.place(corner, size, size);
+    let (x, y) = at.unwrap_or_else(|| corners.place(corner, size, size));
     batch.rect_uv(x, y, size, size, image, u32::MAX);
     let (cx, cy) = (x + size / 2.0, y + size / 2.0);
     if let Some(r) = atlas.sprites.get("map/decorations/player").copied() {
@@ -99,6 +103,7 @@ pub fn draw_minimap(
             true,
         );
     }
+    [x, y, size, size]
 }
 
 /// A box of text lines (a mod's HUD panel): `(text, 0xRRGGBB)` each.

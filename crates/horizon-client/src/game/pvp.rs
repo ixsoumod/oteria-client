@@ -84,18 +84,25 @@ impl Game<'_> {
     /// The custom crosshair, centred where vanilla's 15x15 sprite is (`Hud.extractCrosshair`):
     /// its outline in black, then the shape, inverting what is under it when its colour is
     /// `Inverted`. The runs are cached, so a frame only adds their quads.
-    /// Elytra Indicator: the worn elytra's icon (with its durability bar) just under the
-    /// crosshair, while one is in the chest slot.
+    /// Elytra Indicator: its icon just under the crosshair while an elytra is worn, in the
+    /// custom crosshair's colour (else white), as the ElytraIndicator mod draws it.
     pub(super) fn draw_elytra_indicator(&self, batch: &mut HudBatch, w: i32, h: i32) {
-        if !self.settings.extras.pvp.tweaks.elytra_indicator {
+        let pvp = &self.settings.extras.pvp;
+        if !pvp.tweaks.elytra_indicator
+            || self.armor[1].as_ref().is_none_or(|s| &*s.item != "minecraft:elytra")
+        {
             return;
         }
-        let Some(stack) = self.armor[1].as_ref() else {
+        let Some(r) = self.gui.atlas.sprites.get(horizon_client::oteria_art::ELYTRA).copied() else {
             return;
         };
-        if &*stack.item == "minecraft:elytra" {
-            self.draw_item(batch, stack, (w / 2 - 8) as f32, (h / 2 + 6) as f32);
-        }
+        let colour = if pvp.crosshair.custom && pvp.crosshair.colour != Colour::Inverted {
+            let [_, r, g, b] = pvp.crosshair.colour.argb().to_be_bytes();
+            rgba(r, g, b, 255)
+        } else {
+            rgba(255, 255, 255, 255)
+        };
+        batch.rect_uv((w / 2 - 8) as f32, (h / 2 + 6) as f32, 16.0, 16.0, r, colour);
     }
     pub(super) fn draw_custom_crosshair(&mut self, batch: &mut HudBatch, w: i32, h: i32) {
         let mut c = self.settings.extras.pvp.crosshair;

@@ -1,6 +1,7 @@
 //! The HUD editor (`docs/pvp.md`): the PvP & HUD widgets on the game, each in a frame the
 //! player drags anywhere (snapping to the screen's edges and middle and to the other
-//! widgets), resizes with the wheel and sends back to its corner with a right click. In the
+//! widgets), resizes by a corner's square (proportionally, between `pvp_hud::SCALES`) or with
+//! the wheel, and sends back to its corner with a right click. In the
 //! middle, Oteria's glass toolbar: the hint, Reset and Done (the widgets' style is on the mods
 //! page). Opened from the PvP & HUD page, the mods page or its key. Nothing here reaches the
 //! server.
@@ -24,6 +25,38 @@ pub(super) struct HudEditor {
     pub(super) to_oteria: bool,
     /// Where Reset and Done were drawn (GUI pixels), for clicks.
     buttons: [[f32; 4]; 2],
+    /// A corner held: the widget, its opposite corner (which stays), and its size at 100%.
+    resize: Option<(WidgetId, (f32, f32), (f32, f32))>,
+}
+
+/// The corners' squares: their side, and how far from a corner a press still takes it.
+const HANDLE: f32 = 3.0;
+const HANDLE_REACH: f32 = 3.5;
+
+/// The corner of `[x, y, w, h]` near `(px, py)`, and the corner across from it.
+fn corner_near([x, y, w, h]: [f32; 4], (px, py): (f32, f32)) -> Option<((f32, f32), (f32, f32))> {
+    [(x, y), (x + w, y), (x, y + h), (x + w, y + h)]
+        .into_iter()
+        .find(|&(cx, cy)| (px - cx).abs() <= HANDLE_REACH && (py - cy).abs() <= HANDLE_REACH)
+        .map(|(cx, cy)| ((cx, cy), (2.0 * x + w - cx, 2.0 * y + h - cy)))
+}
+
+/// The scale (percent, within `SCALES`) a box of `base` size takes to reach `cursor` from
+/// `anchor`, keeping its proportions; and its top left there.
+fn resized(
+    anchor: (f32, f32),
+    base: (f32, f32),
+    cursor: (f32, f32),
+) -> (u8, (f32, f32), (f32, f32)) {
+    let (lo, hi) = pvp_hud::SCALES;
+    let (dx, dy) = (cursor.0 - anchor.0, cursor.1 - anchor.1);
+    let k = (dx.abs() / base.0.max(1.0)).max(dy.abs() / base.1.max(1.0));
+    let scale = (k * 100.0).round().clamp(f32::from(lo), f32::from(hi)) as u8;
+    let size = (base.0 * f32::from(scale) / 100.0, base.1 * f32::from(scale) / 100.0);
+    // The held corner goes where the cursor is; the opposite one stays.
+    let x = if dx < 0.0 { anchor.0 - size.0 } else { anchor.0 };
+    let y = if dy < 0.0 { anchor.1 - size.1 } else { anchor.1 };
+    (scale, (x, y), size)
 }
 
 /// A frame's colour, and the held or hovered one's.
@@ -100,12 +133,23 @@ impl Game<'_> {
         };
         let held = self.pvp.editor.as_ref().and_then(|e| e.drag).map(|d| d.0);
         let hot = held.or(self.widget_under_cursor().map(|(id, _)| id));
+        let resizing = self.pvp.editor.as_ref().and_then(|e| e.resize).map(|r| r.0);
+        let hot = resizing.or(hot);
         for &(id, [x, y, bw, bh]) in &self.pvp.boxes {
             let c = colour(if Some(id) == hot { FRAME_HOT } else { FRAME });
             batch.fill(atlas, x - 1.0, y - 1.0, bw + 2.0, 1.0, c);
             batch.fill(atlas, x - 1.0, y + bh, bw + 2.0, 1.0, c);
             batch.fill(atlas, x - 1.0, y, 1.0, bh, c);
             batch.fill(atlas, x + bw, y, 1.0, bh, c);
+            // A square on each corner: drag one to resize.
+            for (cx, cy) in [(x, y), (x + bw, y), (x, y + bh), (x + bw, y + bh)] {
+                let over = corner_near([x, y, bw, bh], self.cursor)
+                    .is_some_and(|(at, _)| at == (cx, cy));
+                let h = if over { HANDLE + 1.0 } else { HANDLE };
+                let (hx, hy) = (cx - h / 2.0 - 0.5, cy - h / 2.0 - 0.5);
+                batch.fill(atlas, hx - 0.5, hy - 0.5, h + 1.0, h + 1.0, rgba(0, 0, 0, 160));
+                batch.fill(atlas, hx, hy, h, h, colour(if Some(id) == hot { FRAME_HOT } else { 0xFFFF_FFFF }));
+            }
         }
         if let Some(e) = &self.pvp.editor {
             if let Some(x) = e.guides.0 {
@@ -122,7 +166,7 @@ impl Game<'_> {
         let gui = |v: f32| v * d / scale;
         let hint = lang::get_or(
             "oteria.hud.hint",
-            "Drag the widgets · Wheel: size · Right click: back to its corner",
+            "Drag the widgets · A corner or the wheel: size · Right click: back to its corner",
         );
         let (bw, bh, gap) = (150.0, 34.0, 10.0);
         let pw = (ui.measure(Face::Regular, 12.0, &hint) + 40.0).max(2.0 * bw + gap + 32.0);
@@ -180,6 +224,20 @@ impl Game<'_> {
             }
             None => {}
         }
+        // A corner's square: resizing, around the opposite corner.
+        if !right {
+            let held = self.pvp.boxes.iter().rev().find_map(|&(id, rect)| {
+                let (_, anchor) = corner_near(rect, self.cursor)?;
+                let scale = f32::from(self.settings.extras.pvp.layout.get(id).scale) / 100.0;
+                Some((id, anchor, (rect[2] / scale, rect[3] / scale)))
+            });
+            if let Some(held) = held {
+                if let Some(e) = &mut self.pvp.editor {
+                    e.resize = Some(held);
+                }
+                return;
+            }
+        }
         let Some((id, [x, y, _, _])) = self.widget_under_cursor() else {
             return;
         };
@@ -192,6 +250,14 @@ impl Game<'_> {
     }
     /// The cursor moved: the held widget follows, snapping to edges near it.
     pub(super) fn hud_editor_drag(&mut self) {
+        if let Some((id, anchor, base)) = self.pvp.editor.as_ref().and_then(|e| e.resize) {
+            let (scale, at, size) = resized(anchor, base, self.cursor);
+            let screen = self.gui_size();
+            let place = self.settings.extras.pvp.layout.get_mut(id);
+            place.scale = scale;
+            place.at = Some(pvp_hud::to_fractions(at, size, screen));
+            return;
+        }
         let Some((id, dx, dy)) = self.pvp.editor.as_ref().and_then(|e| e.drag) else {
             return;
         };
@@ -212,7 +278,7 @@ impl Game<'_> {
     }
     pub(super) fn hud_editor_release(&mut self) {
         if let Some(e) = &mut self.pvp.editor
-            && e.drag.take().is_some()
+            && (e.drag.take().is_some() | e.resize.take().is_some())
         {
             e.guides = (None, None);
             self.settings.save(&Self::options_path());
@@ -231,5 +297,27 @@ impl Game<'_> {
             place.scale.saturating_sub(10).max(lo)
         };
         self.settings.save(&Self::options_path());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_corner_resizes_around_the_opposite_one_in_proportion() {
+        let rect = [10.0, 10.0, 40.0, 20.0];
+        // The bottom right corner, held: the top left stays.
+        let (held, anchor) = corner_near(rect, (49.0, 31.0)).unwrap();
+        assert_eq!((held, anchor), ((50.0, 30.0), (10.0, 10.0)));
+        let (scale, at, size) = resized(anchor, (40.0, 20.0), (90.0, 30.0));
+        assert_eq!((scale, at, size), (200, (10.0, 10.0), (80.0, 40.0)));
+        // The top left, dragged in: smaller, its bottom right where it was.
+        let (scale, at, _) = resized((50.0, 30.0), (40.0, 20.0), (30.0, 20.0));
+        assert_eq!((scale, at), (50, (30.0, 20.0)));
+        // Never past the limits.
+        assert_eq!(resized((0.0, 0.0), (40.0, 20.0), (1.0, 1.0)).0, pvp_hud::SCALES.0);
+        assert_eq!(resized((0.0, 0.0), (40.0, 20.0), (900.0, 1.0)).0, pvp_hud::SCALES.1);
+        assert!(corner_near(rect, (30.0, 20.0)).is_none(), "the middle is a move");
     }
 }

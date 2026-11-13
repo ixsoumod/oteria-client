@@ -377,9 +377,11 @@ pub enum WidgetId {
     Clock,
     Reach,
     Speed,
+    /// Oteria's minimap (`game/extras.rs`): placed and sized in the editor as the others.
+    Minimap,
 }
 impl WidgetId {
-    pub const ALL: [WidgetId; 13] = [
+    pub const ALL: [WidgetId; 14] = [
         WidgetId::Armour,
         WidgetId::Effects,
         WidgetId::Held,
@@ -393,6 +395,7 @@ impl WidgetId {
         WidgetId::Clock,
         WidgetId::Reach,
         WidgetId::Speed,
+        WidgetId::Minimap,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -409,6 +412,7 @@ impl WidgetId {
             WidgetId::Clock => "clock",
             WidgetId::Reach => "reach",
             WidgetId::Speed => "speed",
+            WidgetId::Minimap => "minimap",
         }
     }
     pub fn index(self) -> usize {
@@ -433,10 +437,11 @@ impl Default for Place {
         }
     }
 }
-pub const SCALES: (u8, u8) = (50, 200);
+/// The smallest and largest a widget can be made, in percent.
+pub const SCALES: (u8, u8) = (50, 250);
 /// Every widget's place.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Layout(pub [Place; 13]);
+pub struct Layout(pub [Place; 14]);
 impl Layout {
     pub fn get(&self, id: WidgetId) -> Place {
         self.0[id.index()]
@@ -742,9 +747,9 @@ mod tests {
         }
         assert_eq!(back, l);
         // Out of range values are clamped, unknown widgets and bad numbers ignored.
-        back.parse("speed,-3,7,250");
+        back.parse("speed,-3,7,255");
         assert_eq!(back.get(WidgetId::Speed).at, Some((0.0, 1.0)));
-        assert_eq!(back.get(WidgetId::Speed).scale, 200);
+        assert_eq!(back.get(WidgetId::Speed).scale, SCALES.1);
         back.parse("radar,0.5,0.5,100");
         back.parse("clock,NaN,0.5,100");
         assert_eq!(back.get(WidgetId::Clock).at, None);

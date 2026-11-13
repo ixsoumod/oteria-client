@@ -786,6 +786,16 @@ impl Game<'_> {
                     );
                 }
             }
+            if let Some(r) = marks
+                .voice
+                .filter(|_| n == last)
+                .and_then(|name| self.gui.atlas.sprites.get(name).copied())
+            {
+                let width = self.gui.atlas.font.width_text(text);
+                // After the name (and a style's badge), 8 text pixels square.
+                let x = width / 2.0 + if marks.style.is_some() { 12.0 } else { 2.0 };
+                batch.rect_uv(x, y0, 8.0, 8.0, r, text_alpha << 24 | 0xFF_FFFF);
+            }
             if let Some(style) = marks.style.filter(|_| n == last) {
                 let width = self.gui.atlas.font.width_text(text);
                 let x = -width / 2.0;
@@ -947,6 +957,9 @@ pub(super) struct Marks {
     /// (`horizon_client::name_badge`) for the window's own player.
     pub badge: Option<&'static str>,
     pub style: Option<TagStyle>,
+    /// The voice chat's icon after the name (talking, sound off, not connected): a sprite of
+    /// the GUI atlas (`oteria_voice`).
+    pub voice: Option<&'static str>,
     /// How high the cosmetics drawn on their body get above the neck, in model pixels: the tag
     /// goes up over a tall one (`cosmetic_lift`).
     pub top: Option<f32>,

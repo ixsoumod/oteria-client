@@ -170,12 +170,15 @@ impl Game<'_> {
     fn minimap_wanted(&self) -> Option<NativeMinimap> {
         self.native_minimap_now().or_else(|| {
             let e = &self.settings.extras;
+            let m = e.pvp.minimap;
+            let scale = f32::from(e.pvp.layout.get(horizon_client::pvp_hud::WidgetId::Minimap).scale);
             e.minimap.then(|| NativeMinimap {
                 corner: e.minimap_corner,
-                size: f32::from(e.minimap_size).clamp(16.0, 256.0),
-                blocks_per_pixel: e.minimap_zoom.clamp(0.5, 4.0),
-                rotate: e.minimap_rotate,
-                round: e.minimap_round,
+                // Its side at 100% is the map image's; the HUD editor scales it.
+                size: (minimap::SIZE as f32 * 0.75 * scale / 100.0).round(),
+                blocks_per_pixel: horizon_client::pvp::MINIMAP_ZOOMS[usize::from(m.zoom.min(3))],
+                rotate: m.rotate,
+                round: m.round,
             })
         })
     }
@@ -260,6 +263,7 @@ impl Game<'_> {
     /// by the caller). The top left corner gives way to the debug screen.
     pub(super) fn draw_extras(&mut self, batch: &mut HudBatch) {
         let map = self.minimap_shown();
+        let mut map_box = None;
         let visible = |corner| !(self.debug && corner == Corner::TopLeft);
         let mut corners = Corners::new(batch.width, batch.height, self.effect_rows_height());
         let atlas = &self.gui.atlas;
@@ -273,16 +277,34 @@ impl Game<'_> {
             } else {
                 (180.0 + view.yaw, None)
             };
+            // Where the player put it in the HUD editor, else its corner.
+            let screen = (batch.width, batch.height);
+            let at = self
+                .settings
+                .extras
+                .pvp
+                .layout
+                .get(horizon_client::pvp_hud::WidgetId::Minimap)
+                .at
+                .map(|f| horizon_client::pvp_hud::from_fractions(f, (map_size, map_size), screen));
             let look = extras_hud::MinimapLook {
                 corner: map_corner,
+                at,
                 size: map_size,
                 image,
                 arrow,
                 north,
             };
-            extras_hud::draw_minimap(batch, atlas, &mut corners, &look);
+            let rect = extras_hud::draw_minimap(batch, atlas, &mut corners, &look);
+            if self.settings.extras.pvp.minimap.biome {
+                self.draw_biome_under(batch, rect);
+            }
+            map_box = Some(rect);
         }
         self.draw_pvp_hud(batch, &mut corners);
+        if let Some(rect) = map_box {
+            self.pvp.boxes.push((horizon_client::pvp_hud::WidgetId::Minimap, rect));
+        }
         self.draw_voice_hud(batch);
         self.native_hud(batch, &mut corners);
         // The layers crates registered (`horizon_hooks::hud`): none, no canvas.
@@ -291,6 +313,28 @@ impl Game<'_> {
             let shown = Corner::ALL.map(|corner| self.native_corner_shown(corner));
             extras_hud::draw_layers(layers, batch, &self.gui.atlas, &mut corners, shown);
         }
+    }
+    /// The biome the player is in, centred under the minimap (`[x, y, side, side]`).
+    fn draw_biome_under(&self, batch: &mut HudBatch, [x, y, w, h]: [f32; 4]) {
+        let Some(p) = self.player.as_ref() else {
+            return;
+        };
+        let id = self.biome_at([p.position.x, p.position.y, p.position.z]);
+        let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+        let key = format!("biome.{namespace}.{}", path.replace('/', "."));
+        let pretty: String = path
+            .split('_')
+            .map(|w| {
+                let mut c = w.chars();
+                c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let name = horizon_client::lang::get_or(&key, &pretty);
+        let atlas = &self.gui.atlas;
+        let tw = HudBatch::text_width(atlas, &name);
+        let ty = if y + h + 12.0 <= batch.height { y + h + 2.0 } else { y - 10.0 };
+        batch.text(atlas, &name, (x + (w - tw) / 2.0).round(), ty, horizon_client::hud::rgba(255, 255, 255, 255), true);
     }
     /// The height the status effect icons take at the top right
     /// (`Hud.extractEffects`: beneficial at y 1, harmful at y 26).

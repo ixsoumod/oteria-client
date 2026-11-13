@@ -9,7 +9,15 @@ pub const ROCKET: &str = "gui/sprites/oteria_rocket";
 /// The Cosmetics button's t-shirt, 32 texels square.
 pub const SHIRT: &str = "gui/sprites/oteria_shirt";
 
-const ART: [(&str, &[u8]); 3] = [
+/// Elytra Indicator's icon, 16 texels square (from the ElytraIndicator mod, MIT:
+/// `THIRD_PARTY_NOTICES.md`), white and see-through: drawn in the crosshair's colour.
+pub const ELYTRA: &str = "gui/sprites/oteria_elytra";
+
+const ART: [(&str, &[u8]); 4] = [
+    (
+        ELYTRA,
+        include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_elytra.png"),
+    ),
     (
         LOGO,
         include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_logo.png"),
@@ -39,13 +47,14 @@ mod tests {
 
     #[test]
     fn the_art_is_white_on_nothing_at_its_sizes() {
-        let sizes = [(LOGO, 160), (ROCKET, 32), (SHIRT, 32)];
+        let sizes = [(LOGO, 160), (ROCKET, 32), (SHIRT, 32), (ELYTRA, 16)];
         for (name, w, h, px) in images() {
             // The mod menu's icons are 32 texels square too, their small ones 20.
             let small = if name.contains("_small/") { 20 } else { 32 };
             let side = sizes.iter().find(|s| s.0 == name).map_or(small, |s| s.1);
             assert_eq!((w, h), (side, side), "{name}");
             assert_eq!(px[3], 0, "{name}: its corner is clear");
+            // The elytra is drawn see-through (its texels at 155 of 255).
             let drawn: Vec<_> = px.chunks(4).filter(|p| p[3] > 128).collect();
             // Outline icons are thin lines: a twenty-fifth of the square is plenty.
             assert!(drawn.len() > (w * h / 25) as usize, "{name}: drawn");

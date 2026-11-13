@@ -17,6 +17,7 @@
 use super::oteria_boost;
 use super::oteria_mods::{Action, Mods, ProfileOp, TILES};
 use super::oteria_profiles::Profiles;
+use super::oteria_voice_ui::VoiceMenu;
 use crate::game::{Game, Screen};
 use crate::ui_theme::{Face, Ui};
 use horizon_client::hud::HudBatch;
@@ -87,6 +88,8 @@ struct Menu {
     rects: [[f32; 4]; 3],
     /// The mods page, from when it was asked for; `back` when it is fading back to the buttons.
     mods: Option<Mods>,
+    /// The voice chat's menu (V), shown as the mods page is.
+    voice: Option<VoiceMenu>,
     mods_at: Option<Instant>,
     back: Option<Instant>,
 }
@@ -110,6 +113,7 @@ impl Menu {
             profiles: None,
             rects: [[0.0; 4]; 3],
             mods: None,
+            voice: None,
             mods_at: None,
             back: None,
         }
@@ -194,6 +198,17 @@ impl Game<'_> {
     }
 
     /// Opens the menu straight on its mods page (back from the HUD editor).
+    /// Opens the voice chat's menu over the game (V; G: straight on the group).
+    pub(in crate::game) fn open_voice_menu(&mut self, group: bool) {
+        self.open_oteria_menu();
+        MENU.with(|m| {
+            if let Some(menu) = m.borrow_mut().as_mut() {
+                menu.voice = Some(VoiceMenu::new(group));
+                menu.mods_at = Some(Instant::now());
+            }
+        });
+    }
+
     pub(in crate::game) fn open_oteria_mods(&mut self) {
         self.open_oteria_menu();
         MENU.with(|m| {
@@ -299,11 +314,20 @@ impl Game<'_> {
 
     /// Escape: out of the search, then back to the buttons, then the menu closes.
     pub(in crate::game) fn oteria_menu_back(&mut self) {
+        let mut voice_action = None;
         let closes = MENU.with(|m| {
             let mut m = m.borrow_mut();
             let Some(menu) = m.as_mut() else {
                 return true;
             };
+            // The voice menu: a page back, then closed (it was opened from the game).
+            if let Some(voice) = menu.voice.as_mut() {
+                if voice.at_main() {
+                    return true;
+                }
+                voice_action = voice.back();
+                return false;
+            }
             match menu.mods.as_mut() {
                 Some(mods) if menu.back.is_none() => {
                     if !mods.back() {
@@ -314,7 +338,12 @@ impl Game<'_> {
                 _ => true,
             }
         });
+        if let Some(a) = voice_action {
+            self.voice_action(a);
+        }
         if closes {
+            // The microphone test ends with the menu.
+            self.voice_action(super::oteria_voice_ui::VAction::MicTest(false));
             self.close_oteria_menu();
         }
     }
@@ -332,6 +361,54 @@ impl Game<'_> {
                 return None;
             }
             let on_mods = menu.back.is_none() && menu.mods.is_some();
+            // The voice menu takes the events while it shows.
+            if let Some(voice) = menu.voice.as_mut() {
+                return match event {
+                    WindowEvent::MouseWheel { delta, .. } => {
+                        let lines = match delta {
+                            MouseScrollDelta::LineDelta(_, y) => *y,
+                            MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                        };
+                        voice.wheel(lines);
+                        taken = true;
+                        None
+                    }
+                    WindowEvent::KeyboardInput { event: key, .. } if voice.wants_keys() => {
+                        let code = match key.physical_key {
+                            PhysicalKey::Code(code) => Some(code),
+                            _ => None,
+                        };
+                        if code == Some(KeyCode::ShiftRight) {
+                            return None;
+                        }
+                        taken = true;
+                        if key.state != ElementState::Pressed {
+                            return None;
+                        }
+                        if code == Some(KeyCode::Escape) {
+                            return voice.back().map(Action::Voice);
+                        }
+                        let enter = matches!(code, Some(KeyCode::Enter | KeyCode::NumpadEnter));
+                        voice
+                            .type_key(key.text.as_deref(), code == Some(KeyCode::Backspace), enter)
+                            .map(Action::Voice)
+                    }
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } => voice.click(cursor).map(Action::Voice),
+                    WindowEvent::MouseInput {
+                        state: ElementState::Released,
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        voice.release();
+                        None
+                    }
+                    _ => None,
+                };
+            }
             match event {
                 WindowEvent::MouseWheel { delta, .. } if on_mods => {
                     let lines = match delta {
@@ -483,6 +560,7 @@ impl Game<'_> {
                     editor.to_oteria = true;
                 }
             }
+            Action::Voice(a) => self.voice_action(a),
             Action::Close => self.close_oteria_menu(),
         }
         true
@@ -507,7 +585,12 @@ impl Game<'_> {
         let scale = batch.scale;
         let cursor = self.cursor;
         let atlas = &self.gui.atlas;
+        // The voice menu's view of the voice chat, read before the menu is borrowed.
+        let voice_view = MENU
+            .with(|m| m.borrow().as_ref().is_some_and(|menu| menu.voice.is_some()))
+            .then(|| self.voice_view());
         let extras = &self.settings.extras;
+        let mut voice_pending = Vec::new();
         MENU.with(|m| {
             let mut m = m.borrow_mut();
             let Some(menu) = m.as_mut() else {
@@ -521,6 +604,7 @@ impl Game<'_> {
                     let s = now.duration_since(back).as_secs_f32() / PAGE_S;
                     if s >= 1.0 {
                         (menu.mods, menu.mods_at, menu.back) = (None, None, None);
+                        menu.voice = None;
                         0.0
                     } else {
                         1.0 - ease_out(s)
@@ -812,12 +896,21 @@ impl Game<'_> {
             }
             // The mods page, rising into place as it comes.
             if page > 0.0
+                && let (Some(voice), Some(view)) = (menu.voice.as_mut(), voice_view.as_ref())
+            {
+                voice.draw(&mut ui, view, &extras.pvp, shown * page, (1.0 - page) * 18.0, dt, &gui, cursor);
+                voice_pending = voice.take_pending();
+            } else if page > 0.0
                 && let Some(mods) = menu.mods.as_mut()
             {
                 mods.draw(&mut ui, extras, shown * page, (1.0 - page) * 18.0, dt, &gui, cursor, menu.profiles.as_ref());
             }
             ui.finish();
         });
+        // A slider dragged on the voice menu.
+        for a in voice_pending {
+            self.voice_action(a);
+        }
     }
 }
 

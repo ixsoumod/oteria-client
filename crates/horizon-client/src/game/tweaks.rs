@@ -73,8 +73,11 @@ struct Drag {
 impl Game<'_> {
     /// The open screen is one the tweaks run in, with the extra on.
     pub(super) fn tweaks_on(&self) -> bool {
+        // The creative screen's Survival Inventory tab is the inventory too (Mouse Tweaks'
+        // creative handler): its clicks take the creative way (`menu_ops`).
+        let inventory = self.screen == Screen::Inventory || self.creative_inventory_open();
         if !self.settings.extras.mouse_tweaks
-            || self.screen != Screen::Inventory
+            || !inventory
             || self.station.is_some()
             || self.mount_active()
         {
@@ -88,7 +91,7 @@ impl Game<'_> {
     }
     /// One ordinary click on a game slot. False when nothing took it.
     pub(super) fn tweak_click(&mut self, slot: usize, button: i32, input: Input) -> bool {
-        if self.remote.is_some() {
+        if self.remote.is_some() && self.screen != Screen::Creative {
             return self.remote_menu_ops(&[(Some(slot), button, input)]);
         }
         if !self.menu_click(Some(slot), button, input) {
@@ -110,7 +113,7 @@ impl Game<'_> {
             (Some(slot), kind | 1, Input::QuickCraft),
             (None, kind | 2, Input::QuickCraft),
         ];
-        if self.remote.is_some() {
+        if self.remote.is_some() && self.screen != Screen::Creative {
             return self.remote_menu_ops(&ops);
         }
         if !self.menu_ops(&ops) {
@@ -132,9 +135,10 @@ impl Game<'_> {
             return false;
         }
         let held = self.carried.clone();
+        let m = self.settings.extras.pvp.mouse;
         if right {
             // A result slot takes nothing: its press stays vanilla's.
-            if shift || held.is_none() || self.tweak_result(slot) {
+            if !m.rmb || shift || held.is_none() || self.tweak_result(slot) {
                 return false;
             }
             // RMB: the press places at once, then the drag goes on.
@@ -150,7 +154,7 @@ impl Game<'_> {
             self.tweaks.drag = Some(drag);
             return true;
         }
-        if held.is_some() || shift {
+        if (held.is_some() && m.lmb_item) || (held.is_none() && shift && m.lmb_empty) {
             self.tweaks.drag = Some(Drag {
                 right,
                 held,
@@ -234,17 +238,39 @@ impl Game<'_> {
             self.tweaks.wheel = 0.0;
             return false;
         };
-        self.tweaks.wheel += delta;
-        let steps = self.tweaks.wheel.trunc();
-        self.tweaks.wheel -= steps;
+        let m = self.settings.extras.pvp.mouse;
+        let steps = if m.always_one {
+            // One item a step, however big the step.
+            self.tweaks.wheel = 0.0;
+            delta.signum()
+        } else {
+            self.tweaks.wheel += delta;
+            let steps = self.tweaks.wheel.trunc();
+            self.tweaks.wheel -= steps;
+            steps
+        };
+        let push = wheel_pushes(m.direction, steps < 0.0, self.upper_slot(slot));
         for _ in 0..steps.abs() as u32 {
-            if steps < 0.0 {
+            if push {
                 self.tweak_push(slot);
             } else {
                 self.tweak_pull(slot);
             }
         }
         true
+    }
+    /// `slot` is in the upper part of the screen: a container's or the crafting grid's, or the
+    /// main inventory when only the player's is open (the hotbar is under it).
+    fn upper_slot(&self, slot: usize) -> bool {
+        let container = self
+            .slots()
+            .into_iter()
+            .any(|s| (300..500).contains(&s) || (self.craft_size == 3 && (100..109).contains(&s)));
+        match slot {
+            100..109 | 300..500 => true,
+            9..36 => !container,
+            _ => false,
+        }
     }
     /// `slot` is a result slot of the open menu.
     fn tweak_result(&mut self, slot: usize) -> bool {
@@ -335,7 +361,12 @@ impl Game<'_> {
             return;
         }
         let mut source = None;
-        for s in self.other_side(slot) {
+        let mut sides = self.other_side(slot);
+        // Mouse Tweaks' search order: its other side's last slot first, or its first.
+        if self.settings.extras.pvp.mouse.first_to_last {
+            sides.reverse();
+        }
+        for s in sides {
             if let Some(v) = self.slot_view(s)
                 && v.same_item_same_components(&stack)
                 && !self.tweak_result(s)
@@ -353,6 +384,18 @@ impl Game<'_> {
                 self.tweak_put(source, false);
             }
         }
+    }
+}
+
+/// Whether a wheel step (`down` or up) over a slot (`upper` in the screen or not) moves an
+/// item away (else brings one): Mouse Tweaks' four directions (`pvp::WHEEL_DIRECTIONS`).
+fn wheel_pushes(direction: u8, down: bool, upper: bool) -> bool {
+    match direction {
+        0 => down,
+        1 => !down,
+        // Towards the other inventory: down from the top, up from the bottom.
+        2 => down == upper,
+        _ => down != upper,
     }
 }
 

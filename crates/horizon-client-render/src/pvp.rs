@@ -844,7 +844,65 @@ pub struct Pvp {
     pub editor_key: String,
     pub combat: Combat,
     pub voice: Voice,
+    pub mouse: MouseTweaks,
+    pub minimap: Minimap,
 }
+
+/// Oteria's minimap: its shape, the biome under it, whether it turns, and its zoom (its size
+/// and place are the HUD editor's, `Layout`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Minimap {
+    pub round: bool,
+    pub biome: bool,
+    pub rotate: bool,
+    /// Index into `MINIMAP_ZOOMS`.
+    pub zoom: u8,
+}
+impl Default for Minimap {
+    fn default() -> Self {
+        Self { round: false, biome: true, rotate: false, zoom: 1 }
+    }
+}
+/// The minimap's zooms, in blocks per pixel.
+pub const MINIMAP_ZOOMS: [f32; 4] = [0.5, 1.0, 2.0, 4.0];
+
+/// Mouse Tweaks' own options (its `Config`, with its defaults); the switch and the wheel's are
+/// `Extras::mouse_tweaks` and `mouse_tweaks_wheel` (`game/tweaks.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MouseTweaks {
+    /// Right-drag holding a stack: one item into each slot entered.
+    pub rmb: bool,
+    /// Left-drag holding a stack: the same items gathered (Shift: moved).
+    pub lmb_item: bool,
+    /// Shift + left-drag with an empty hand: every slot entered moved.
+    pub lmb_empty: bool,
+    /// The wheel looks for the items to pull from the first slot (else from the last).
+    pub first_to_last: bool,
+    /// What the wheel's directions do (`WHEEL_DIRECTIONS`).
+    pub direction: u8,
+    /// One item a wheel step whatever the step's size (else in proportion to it).
+    pub always_one: bool,
+}
+impl Default for MouseTweaks {
+    fn default() -> Self {
+        Self {
+            rmb: true,
+            lmb_item: true,
+            lmb_empty: true,
+            first_to_last: false,
+            direction: 0,
+            always_one: false,
+        }
+    }
+}
+/// The wheel's directions, as Mouse Tweaks names them: down pushes and up pulls; the other way;
+/// towards the other inventory pushes; away from it pushes.
+pub const WHEEL_DIRECTIONS: [(&str, &str); 4] = [
+    ("horizon.pvp.mouse.normal", "Normal"),
+    ("horizon.pvp.mouse.inverted", "Inverted"),
+    ("horizon.pvp.mouse.aware", "Inventory position aware"),
+    ("horizon.pvp.mouse.aware_inverted", "Inventory position aware, inverted"),
+];
 
 /// Oteria's voice chat (`game/oteria_voice`), on Simple Voice Chat's protocol: players on Fabric
 /// with that mod hear us, and we hear them.
@@ -861,6 +919,22 @@ pub struct Voice {
     pub mic: u8,
     /// Voice activation's level, in dB below full scale: a larger number sends quieter speech.
     pub threshold: u8,
+    /// Our microphone off; the others not heard (Simple Voice Chat's "disabled").
+    pub muted: bool,
+    pub deafened: bool,
+    /// The icons by the players' names and the group's faces hidden.
+    pub hide_icons: bool,
+    /// Background noise taken out of the microphone.
+    pub noise: bool,
+    /// Voices placed where the players are.
+    pub spatial: bool,
+    /// The microphone and the speakers by name; empty: the system's.
+    pub mic_device: String,
+    pub speaker_device: String,
+    /// The key that opens the voice chat's menu (`VOICE_MENU_KEYS`).
+    pub menu_key: String,
+    /// Each player's volume in percent, by UUID (100 is left out).
+    pub volumes: std::collections::BTreeMap<u128, u8>,
 }
 impl Default for Voice {
     fn default() -> Self {
@@ -872,6 +946,15 @@ impl Default for Voice {
             volume: 100,
             mic: 100,
             threshold: 40,
+            muted: false,
+            deafened: false,
+            hide_icons: false,
+            noise: true,
+            spatial: true,
+            mic_device: String::new(),
+            speaker_device: String::new(),
+            menu_key: VOICE_MENU_KEYS[0].into(),
+            volumes: Default::default(),
         }
     }
 }
@@ -883,6 +966,8 @@ pub const VOICE_KEYS: [&str; 5] = [
     "key.keyboard.g",
     "key.keyboard.left.alt",
 ];
+/// The keys that can open the voice chat's menu: V first, as Simple Voice Chat.
+pub const VOICE_MENU_KEYS: [&str; 4] = ["key.keyboard.v", "key.keyboard.j", "key.keyboard.k", "key.keyboard.u"];
 const VOICE_PERCENT: (u8, u8) = (0, 200);
 const VOICE_THRESHOLD: (u8, u8) = (20, 70);
 /// The HUD editor key's name for the controls (`Extras::set_key`).
@@ -900,6 +985,8 @@ impl Default for Pvp {
             editor_key: "key.keyboard.unknown".into(),
             combat: Combat::default(),
             voice: Voice::default(),
+            mouse: MouseTweaks::default(),
+            minimap: Minimap::default(),
         }
     }
 }
@@ -1006,6 +1093,26 @@ impl Pvp {
             "clearWater" => t.clear_water = flag(value, t.clear_water),
             "clearLava" => t.clear_lava = flag(value, t.clear_lava),
             "elytraIndicator" => t.elytra_indicator = flag(value, t.elytra_indicator),
+            "mouseRmb" => self.mouse.rmb = flag(value, self.mouse.rmb),
+            "mapRound" => self.minimap.round = flag(value, self.minimap.round),
+            "mapBiome" => self.minimap.biome = flag(value, self.minimap.biome),
+            "mapRotate" => self.minimap.rotate = flag(value, self.minimap.rotate),
+            "mapZoom" => self.minimap.zoom = num(value, (0, 3), self.minimap.zoom),
+            "mouseLmbItem" => self.mouse.lmb_item = flag(value, self.mouse.lmb_item),
+            "mouseLmbEmpty" => self.mouse.lmb_empty = flag(value, self.mouse.lmb_empty),
+            "mouseWheelOrder" => match value {
+                "first" => self.mouse.first_to_last = true,
+                "last" => self.mouse.first_to_last = false,
+                _ => {}
+            },
+            "mouseWheelDirection" => {
+                self.mouse.direction = num(value, (0, 3), self.mouse.direction)
+            }
+            "mouseScrollScaling" => match value {
+                "one" => self.mouse.always_one = true,
+                "proportional" => self.mouse.always_one = false,
+                _ => {}
+            },
             "voiceChat" => self.voice.enabled = flag(value, self.voice.enabled),
             "voiceActivation" => match value {
                 "voice" => self.voice.activation = true,
@@ -1015,6 +1122,23 @@ impl Pvp {
             "voiceKey" if value.starts_with("key.") => self.voice.key = value.to_owned(),
             "voiceVolume" => self.voice.volume = num(value, VOICE_PERCENT, self.voice.volume),
             "voiceMic" => self.voice.mic = num(value, VOICE_PERCENT, self.voice.mic),
+            "voiceMuted" => self.voice.muted = flag(value, self.voice.muted),
+            "voiceDeafened" => self.voice.deafened = flag(value, self.voice.deafened),
+            "voiceHideIcons" => self.voice.hide_icons = flag(value, self.voice.hide_icons),
+            "voiceNoise" => self.voice.noise = flag(value, self.voice.noise),
+            "voiceSpatial" => self.voice.spatial = flag(value, self.voice.spatial),
+            "voiceMicDevice" => self.voice.mic_device = value.to_owned(),
+            "voiceSpeakerDevice" => self.voice.speaker_device = value.to_owned(),
+            "voiceMenuKey" if value.starts_with("key.") => self.voice.menu_key = value.to_owned(),
+            "voiceVolumes" => {
+                self.voice.volumes = value
+                    .split(',')
+                    .filter_map(|e| {
+                        let (id, pct) = e.split_once('=')?;
+                        Some((u128::from_str_radix(id, 16).ok()?, pct.parse::<u8>().ok()?.min(200)))
+                    })
+                    .collect();
+            }
             "voiceThreshold" => {
                 self.voice.threshold = num(value, VOICE_THRESHOLD, self.voice.threshold)
             }
@@ -1164,6 +1288,23 @@ impl Pvp {
             c.indicator, c.sounds, c.rules
         );
         let _ = writeln!(out, "elytraIndicator:{}", self.tweaks.elytra_indicator);
+        let mm = &self.minimap;
+        let _ = write!(
+            out,
+            "mapRound:{}\nmapBiome:{}\nmapRotate:{}\nmapZoom:{}\n",
+            mm.round, mm.biome, mm.rotate, mm.zoom
+        );
+        let m = &self.mouse;
+        let _ = write!(
+            out,
+            "mouseRmb:{}\nmouseLmbItem:{}\nmouseLmbEmpty:{}\nmouseWheelOrder:{}\nmouseWheelDirection:{}\nmouseScrollScaling:{}\n",
+            m.rmb,
+            m.lmb_item,
+            m.lmb_empty,
+            if m.first_to_last { "first" } else { "last" },
+            m.direction,
+            if m.always_one { "one" } else { "proportional" },
+        );
         let v = &self.voice;
         let _ = write!(
             out,
@@ -1174,6 +1315,20 @@ impl Pvp {
             v.volume,
             v.mic,
             v.threshold,
+        );
+        let volumes: Vec<String> = v.volumes.iter().map(|(id, pct)| format!("{id:x}={pct}")).collect();
+        let _ = write!(
+            out,
+            "voiceMuted:{}\nvoiceDeafened:{}\nvoiceHideIcons:{}\nvoiceNoise:{}\nvoiceSpatial:{}\nvoiceMicDevice:{}\nvoiceSpeakerDevice:{}\nvoiceMenuKey:{}\nvoiceVolumes:{}\n",
+            v.muted,
+            v.deafened,
+            v.hide_icons,
+            v.noise,
+            v.spatial,
+            v.mic_device,
+            v.speaker_device,
+            v.menu_key,
+            volumes.join(","),
         );
     }
 }
@@ -1327,6 +1482,29 @@ opts! {
     VoiceKey, "voice_key", "Push-to-talk key", "The key to hold to talk.";
     VoiceVolume, "voice_volume", "Voices", "How loud the other players are.";
     VoiceMic, "voice_mic", "Microphone", "How loud you are to the others.";
+    MapShape, "map_shape", "Shape", "A square map, or a round one.";
+    MapBiome, "map_biome", "Biome name", "The name of the biome you are in, under the map.";
+    MapRotate, "map_rotate", "Turn with you",
+        "The map turns so that where you look is up, with N on its rim. Off: north is always up.";
+    MapZoom, "map_zoom", "Zoom", "How many blocks each pixel of the map shows.";
+    MouseRmb, "mouse_rmb", "RMB tweak",
+        "Holding a stack, right-drag over slots: one item goes into each slot you pass over.";
+    MouseLmbItem, "mouse_lmb_item", "LMB tweak with item",
+        "Holding a stack, left-drag over slots: the same items are gathered into your hand. With Shift they are moved to the other inventory.";
+    MouseLmbEmpty, "mouse_lmb_empty", "LMB tweak without item",
+        "With an empty hand, hold Shift and left-drag over slots: each stack you pass over moves to the other inventory, as a Shift click.";
+    MouseWheelOrder, "mouse_wheel_order", "Wheel search order",
+        "Where the wheel looks first for the items it pulls into a slot.";
+    MouseWheelDirection, "mouse_wheel_direction", "Wheel scroll direction",
+        "Normal: down moves one item to the other inventory, up brings one back. Inverted: the other way. Position aware: scrolling towards the other inventory moves items there.";
+    MouseScrollScaling, "mouse_scroll_scaling", "Scroll item scaling",
+        "Proportional: a big wheel step moves more items. Always one: each step moves exactly one item.";
+    VoiceMenuKey, "voice_menu_key", "Menu key",
+        "Opens the voice chat's menu in game: microphone, sound, group and settings.";
+    VoiceNoise, "voice_noise", "Noise suppression",
+        "Takes the steady background noise (a fan, a hum) out of your microphone.";
+    VoiceSpatial, "voice_spatial", "3D audio",
+        "Voices come from where the players are, left or right. Off: everyone in the middle.";
     VoiceThreshold, "voice_threshold", "Voice activation level",
         "With Voice: how quiet your speech can be and still be sent. A higher number sends quieter sounds.";
 }
@@ -1410,8 +1588,18 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
     rows.extend([ChatTimestamps, ChatCompact, ChatCopy, ChatSearch].map(Ok));
     rows.push(Err("horizon.pvp.header.combat"));
     rows.extend([CombatFeel, CombatIndicator, CombatSounds, CombatRules].map(Ok));
+    rows.push(Err("horizon.pvp.header.map"));
+    rows.extend([MapShape, MapBiome, MapRotate, MapZoom].map(Ok));
+    rows.push(Err("horizon.pvp.header.mouse"));
+    rows.extend(
+        [MouseRmb, MouseLmbItem, MouseLmbEmpty, MouseWheelOrder, MouseWheelDirection, MouseScrollScaling]
+            .map(Ok),
+    );
     rows.push(Err("horizon.pvp.header.voice"));
-    rows.extend([Voice, VoiceActivation, VoiceKey, VoiceVolume, VoiceMic, VoiceThreshold].map(Ok));
+    rows.extend(
+        [Voice, VoiceMenuKey, VoiceActivation, VoiceKey, VoiceVolume, VoiceMic, VoiceThreshold, VoiceNoise, VoiceSpatial]
+            .map(Ok),
+    );
     rows
 }
 impl Opt {
@@ -1437,7 +1625,11 @@ impl Opt {
             ChatTimestamps | ChatCompact | ChatCopy | ChatSearch => None,
             CombatFeel | CombatIndicator | CombatSounds | CombatRules => None,
             ElytraIndicator | Voice => None,
-            VoiceActivation | VoiceKey | VoiceVolume | VoiceMic | VoiceThreshold => Some(Voice),
+            MapShape | MapBiome | MapRotate | MapZoom => None,
+            MouseRmb | MouseLmbItem | MouseLmbEmpty | MouseWheelOrder | MouseWheelDirection
+            | MouseScrollScaling => None,
+            VoiceActivation | VoiceKey | VoiceVolume | VoiceMic | VoiceThreshold | VoiceMenuKey
+            | VoiceNoise | VoiceSpatial => Some(Voice),
             HudPingCorner => Some(HudPing),
             HudCoordsCorner => Some(HudCoords),
             HudServerCorner => Some(HudServer),
@@ -1483,7 +1675,14 @@ impl Opt {
             Opt::CombatSounds => p.combat.sounds,
             Opt::CombatRules => p.combat.rules,
             Opt::ElytraIndicator => p.tweaks.elytra_indicator,
+            Opt::MouseRmb => p.mouse.rmb,
+            Opt::MapBiome => p.minimap.biome,
+            Opt::MapRotate => p.minimap.rotate,
+            Opt::MouseLmbItem => p.mouse.lmb_item,
+            Opt::MouseLmbEmpty => p.mouse.lmb_empty,
             Opt::Voice => p.voice.enabled,
+            Opt::VoiceNoise => p.voice.noise,
+            Opt::VoiceSpatial => p.voice.spatial,
             _ => return None,
         })
     }
@@ -1549,6 +1748,27 @@ impl Opt {
                 false => crate::lang::get_or("horizon.pvp.voice.ptt", "Push to talk"),
             },
             Opt::VoiceKey => crate::keybinds::display_name(&p.voice.key).plain(),
+            Opt::VoiceMenuKey => crate::keybinds::display_name(&p.voice.menu_key).plain(),
+            Opt::MapShape => match p.minimap.round {
+                true => crate::lang::get_or("horizon.pvp.map.round", "Round"),
+                false => crate::lang::get_or("horizon.pvp.map.square", "Square"),
+            },
+            Opt::MapZoom => {
+                let z = MINIMAP_ZOOMS[usize::from(p.minimap.zoom.min(3))];
+                format!("{z} {}", crate::lang::get_or("horizon.pvp.map.blocks", "blocks/px"))
+            }
+            Opt::MouseWheelOrder => match p.mouse.first_to_last {
+                true => crate::lang::get_or("horizon.pvp.mouse.first", "First to last"),
+                false => crate::lang::get_or("horizon.pvp.mouse.last", "Last to first"),
+            },
+            Opt::MouseWheelDirection => {
+                let (key, english) = WHEEL_DIRECTIONS[usize::from(p.mouse.direction.min(3))];
+                crate::lang::get_or(key, english)
+            }
+            Opt::MouseScrollScaling => match p.mouse.always_one {
+                true => crate::lang::get_or("horizon.pvp.mouse.one", "Always exactly one item"),
+                false => crate::lang::get_or("horizon.pvp.mouse.proportional", "Proportional"),
+            },
             Opt::VoiceVolume => format!("{}%", p.voice.volume),
             Opt::VoiceMic => format!("{}%", p.voice.mic),
             Opt::VoiceThreshold => format!("-{} dB", p.voice.threshold),
@@ -1637,7 +1857,29 @@ impl Opt {
             Opt::ClearWater => t.clear_water = !t.clear_water,
             Opt::ClearLava => t.clear_lava = !t.clear_lava,
             Opt::ElytraIndicator => t.elytra_indicator = !t.elytra_indicator,
+            Opt::MouseRmb => p.mouse.rmb = !p.mouse.rmb,
+            Opt::MapShape => p.minimap.round = !p.minimap.round,
+            Opt::MapBiome => p.minimap.biome = !p.minimap.biome,
+            Opt::MapRotate => p.minimap.rotate = !p.minimap.rotate,
+            Opt::MapZoom => {
+                p.minimap.zoom = if back { (p.minimap.zoom + 3) % 4 } else { (p.minimap.zoom + 1) % 4 }
+            }
+            Opt::MouseLmbItem => p.mouse.lmb_item = !p.mouse.lmb_item,
+            Opt::MouseLmbEmpty => p.mouse.lmb_empty = !p.mouse.lmb_empty,
+            Opt::MouseWheelOrder => p.mouse.first_to_last = !p.mouse.first_to_last,
+            Opt::MouseWheelDirection => {
+                p.mouse.direction = if back { (p.mouse.direction + 3) % 4 } else { (p.mouse.direction + 1) % 4 }
+            }
+            Opt::MouseScrollScaling => p.mouse.always_one = !p.mouse.always_one,
             Opt::Voice => p.voice.enabled = !p.voice.enabled,
+            Opt::VoiceNoise => p.voice.noise = !p.voice.noise,
+            Opt::VoiceSpatial => p.voice.spatial = !p.voice.spatial,
+            Opt::VoiceMenuKey => {
+                let v = &mut p.voice;
+                let i = VOICE_MENU_KEYS.iter().position(|k| *k == v.menu_key).unwrap_or(0);
+                let n = VOICE_MENU_KEYS.len();
+                v.menu_key = VOICE_MENU_KEYS[if back { (i + n - 1) % n } else { (i + 1) % n }].into();
+            }
             Opt::VoiceActivation => p.voice.activation = !p.voice.activation,
             Opt::VoiceKey => {
                 let v = &mut p.voice;
