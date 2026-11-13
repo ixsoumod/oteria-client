@@ -116,8 +116,12 @@ mod cosmetics;
 /// Oteria's menu on Right Shift (`Screen::OteriaMenu`).
 mod oteria_menu;
 mod oteria_boost;
+/// The Cosmetics page of Oteria's menu.
+mod oteria_cosmetics;
 /// The Host page of Oteria's menu: sharing the world being played.
 mod oteria_host;
+/// Oteria's butterfly knife: swords drawn as it, and its inspect.
+mod oteria_knife;
 mod oteria_mods;
 mod oteria_profiles;
 /// Oteria's voice chat, on Simple Voice Chat's protocol.

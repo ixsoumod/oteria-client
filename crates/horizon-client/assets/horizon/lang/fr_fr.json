@@ -1243,5 +1243,14 @@
   "oteria.host.difficulty.peaceful": "Paisible",
   "oteria.host.difficulty.easy": "Facile",
   "oteria.host.difficulty.normal": "Normale",
-  "oteria.host.difficulty.hard": "Difficile"
+  "oteria.host.difficulty.hard": "Difficile",
+  "oteria.cosmetics.title": "Cosmétiques",
+  "oteria.cosmetics.free": "Gratuits pour tous les joueurs Oteria.",
+  "oteria.cosmetics.knife": "Couteau papillon Oteria",
+  "oteria.cosmetics.knife.kind": "Skin d'épée",
+  "oteria.cosmetics.knife.about": "Tes épées deviennent le couteau papillon Oteria dans ta main.",
+  "oteria.cosmetics.knife.inspect": "Appuie sur %s pour l'inspecter.",
+  "oteria.cosmetics.equip": "Équiper",
+  "oteria.cosmetics.remove": "Retirer",
+  "oteria.cosmetics.soon": "D'autres cosmétiques arrivent. Les autres verront les tiens quand les serveurs Oteria seront en ligne."
 }

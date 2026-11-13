@@ -425,6 +425,12 @@ impl Game<'_> {
             };
             let mut m = to_world
                 * horizon_client::first_person::item_pose(left, inverse_height, attack, pose);
+            // Oteria's butterfly knife in place of a sword in the main hand.
+            if hand == Hand::Main && self.knife_shown(&stack.item) {
+                runs.push((out.len() as u32, item_id));
+                self.draw_knife(m, left, packed, &mut out);
+                continue;
+            }
             // PvP & HUD's shield size (100% is vanilla's), toward the hand holding it.
             let shield_size = self.settings.extras.pvp.tweaks.shield_size;
             if shield_size != 100 && &*stack.item == "minecraft:shield" {

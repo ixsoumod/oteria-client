@@ -846,6 +846,21 @@ pub struct Pvp {
     pub voice: Voice,
     pub mouse: MouseTweaks,
     pub minimap: Minimap,
+    pub skins: Skins,
+}
+
+/// Oteria's cosmetics this client draws for its own player (the Cosmetics page).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Skins {
+    /// Swords in the main hand drawn as Oteria's butterfly knife (`game/oteria_knife.rs`).
+    pub knife: bool,
+    /// The key that plays the knife's inspect.
+    pub inspect_key: String,
+}
+impl Default for Skins {
+    fn default() -> Self {
+        Self { knife: false, inspect_key: "key.keyboard.y".into() }
+    }
 }
 
 /// Oteria's minimap: its shape, the biome under it, whether it turns, and its zoom (its size
@@ -987,6 +1002,7 @@ impl Default for Pvp {
             voice: Voice::default(),
             mouse: MouseTweaks::default(),
             minimap: Minimap::default(),
+            skins: Skins::default(),
         }
     }
 }
@@ -1094,6 +1110,8 @@ impl Pvp {
             "clearLava" => t.clear_lava = flag(value, t.clear_lava),
             "elytraIndicator" => t.elytra_indicator = flag(value, t.elytra_indicator),
             "mouseRmb" => self.mouse.rmb = flag(value, self.mouse.rmb),
+            "skinKnife" => self.skins.knife = flag(value, self.skins.knife),
+            "knifeInspectKey" if value.starts_with("key.") => self.skins.inspect_key = value.to_owned(),
             "mapRound" => self.minimap.round = flag(value, self.minimap.round),
             "mapBiome" => self.minimap.biome = flag(value, self.minimap.biome),
             "mapRotate" => self.minimap.rotate = flag(value, self.minimap.rotate),
@@ -1288,6 +1306,11 @@ impl Pvp {
             c.indicator, c.sounds, c.rules
         );
         let _ = writeln!(out, "elytraIndicator:{}", self.tweaks.elytra_indicator);
+        let _ = write!(
+            out,
+            "skinKnife:{}\nknifeInspectKey:{}\n",
+            self.skins.knife, self.skins.inspect_key
+        );
         let mm = &self.minimap;
         let _ = write!(
             out,

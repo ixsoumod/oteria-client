@@ -13,7 +13,21 @@ pub const SHIRT: &str = "gui/sprites/oteria_shirt";
 /// `THIRD_PARTY_NOTICES.md`), white and see-through: drawn in the crosshair's colour.
 pub const ELYTRA: &str = "gui/sprites/oteria_elytra";
 
-const ART: [(&str, &[u8]); 4] = [
+/// Oteria's butterfly knife (`game/oteria_knife.rs`): its 64x64 texture, read by the hand
+/// renderer, and the Cosmetics page's 192x96 picture of it
+/// (`branding/cosmetics/make_balisong.py`).
+pub const KNIFE: &str = "gui/sprites/oteria_balisong";
+pub const KNIFE_PREVIEW: &str = "gui/sprites/oteria_balisong_preview";
+
+const ART: [(&str, &[u8]); 6] = [
+    (
+        KNIFE,
+        include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_balisong.png"),
+    ),
+    (
+        KNIFE_PREVIEW,
+        include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_balisong_preview.png"),
+    ),
     (
         ELYTRA,
         include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_elytra.png"),
@@ -49,6 +63,11 @@ mod tests {
     fn the_art_is_white_on_nothing_at_its_sizes() {
         let sizes = [(LOGO, 160), (ROCKET, 32), (SHIRT, 32), (ELYTRA, 16)];
         for (name, w, h, px) in images() {
+            // The knife's texture and picture are in colour, at their own sizes.
+            if name == KNIFE || name == KNIFE_PREVIEW {
+                assert_eq!((w, h), if name == KNIFE { (64, 64) } else { (192, 96) }, "{name}");
+                continue;
+            }
             // The mod menu's icons are 32 texels square too, their small ones 20.
             let small = if name.contains("_small/") { 20 } else { 32 };
             let side = sizes.iter().find(|s| s.0 == name).map_or(small, |s| s.1);

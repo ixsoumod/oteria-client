@@ -17,6 +17,7 @@
 use super::oteria_boost;
 use super::oteria_mods::{Action, Mods, ProfileOp, TILES};
 use super::oteria_profiles::Profiles;
+use super::oteria_cosmetics::{CosmeticsAction, CosmeticsMenu, CosmeticsView};
 use super::oteria_host::{HostAction, HostMenu, HostView};
 use super::oteria_voice_ui::VoiceMenu;
 use crate::game::{Game, Screen};
@@ -93,6 +94,8 @@ struct Menu {
     voice: Option<VoiceMenu>,
     /// The Host page, from the button at the bottom right.
     host: Option<HostMenu>,
+    /// The Cosmetics page, from the t-shirt.
+    cosmetics: Option<CosmeticsMenu>,
     /// Where the Host button was drawn (GUI pixels), and its hover light.
     host_rect: [f32; 4],
     host_hover: f32,
@@ -121,6 +124,7 @@ impl Menu {
             mods: None,
             voice: None,
             host: None,
+            cosmetics: None,
             host_rect: [0.0; 4],
             host_hover: 0.0,
             mods_at: None,
@@ -367,8 +371,8 @@ impl Game<'_> {
             let Some(menu) = m.as_mut() else {
                 return true;
             };
-            // The Host page: back to the buttons.
-            if menu.host.is_some() {
+            // The Host and Cosmetics pages: back to the buttons.
+            if menu.host.is_some() || menu.cosmetics.is_some() {
                 if menu.back.is_none() {
                     menu.back = Some(Instant::now());
                 }
@@ -415,6 +419,19 @@ impl Game<'_> {
                 return None;
             }
             let on_mods = menu.back.is_none() && menu.mods.is_some();
+            // The Cosmetics page takes the clicks while it shows.
+            if menu.back.is_none()
+                && let Some(page) = menu.cosmetics.as_mut()
+            {
+                return match event {
+                    WindowEvent::MouseInput {
+                        state: ElementState::Pressed,
+                        button: MouseButton::Left,
+                        ..
+                    } => page.click(cursor).map(Action::Cosmetics),
+                    _ => None,
+                };
+            }
             // The Host page takes the clicks while it shows.
             if menu.back.is_none()
                 && let Some(host) = menu.host.as_mut()
@@ -558,7 +575,11 @@ impl Game<'_> {
                             menu.mods_at = Some(Instant::now());
                             menu.back = None;
                         }
-                        Button::Cosmetics => {}
+                        Button::Cosmetics => {
+                            menu.cosmetics = Some(CosmeticsMenu::default());
+                            menu.mods_at = Some(Instant::now());
+                            menu.back = None;
+                        }
                     }
                     None
                 }
@@ -636,6 +657,12 @@ impl Game<'_> {
             }
             Action::Voice(a) => self.voice_action(a),
             Action::Host(a) => self.host_action(a),
+            Action::Cosmetics(CosmeticsAction::ToggleKnife) => {
+                self.audio.play_button_click();
+                let skins = &mut self.settings.extras.pvp.skins;
+                skins.knife = !skins.knife;
+                self.settings.save(&Self::options_path());
+            }
             Action::Close => self.close_oteria_menu(),
         }
         true
@@ -669,6 +696,11 @@ impl Game<'_> {
         let voice_view = MENU
             .with(|m| m.borrow().as_ref().is_some_and(|menu| menu.voice.is_some()))
             .then(|| self.voice_view());
+        let skins = &self.settings.extras.pvp.skins;
+        let cosmetics_view = CosmeticsView {
+            knife: skins.knife,
+            inspect_key: horizon_client::keybinds::display_name(&skins.inspect_key).plain(),
+        };
         let extras = &self.settings.extras;
         let mut voice_pending = Vec::new();
         MENU.with(|m| {
@@ -686,6 +718,7 @@ impl Game<'_> {
                         (menu.mods, menu.mods_at, menu.back) = (None, None, None);
                         menu.voice = None;
                         menu.host = None;
+                        menu.cosmetics = None;
                         0.0
                     } else {
                         1.0 - ease_out(s)
@@ -1003,6 +1036,10 @@ impl Game<'_> {
                 horizon_client::widgets::widget_cursor(over, true);
             }
             if page > 0.0
+                && let Some(cosmetics) = menu.cosmetics.as_mut()
+            {
+                cosmetics.draw(&mut ui, &cosmetics_view, shown * page, (1.0 - page) * 18.0, dt, &gui);
+            } else if page > 0.0
                 && let (Some(host), Some(view)) = (menu.host.as_mut(), host_view.as_ref())
             {
                 host.draw(&mut ui, view, shown * page, (1.0 - page) * 18.0, &gui);

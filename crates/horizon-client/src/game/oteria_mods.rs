@@ -232,6 +232,8 @@ pub(super) enum Action {
     Voice(super::oteria_voice_ui::VAction),
     /// The Host page (`oteria_host`).
     Host(super::oteria_host::HostAction),
+    /// The Cosmetics page (`oteria_cosmetics`).
+    Cosmetics(super::oteria_cosmetics::CosmeticsAction),
     Close,
     EditHud,
 }

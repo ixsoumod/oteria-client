@@ -1,0 +1,180 @@
+{
+ "format": 1,
+ "id": "oteria_balisong",
+ "slot": "back",
+ "bone": "right_arm",
+ "attach": {
+  "offset": [
+   -1,
+   10,
+   -1
+  ],
+  "rotation": [
+   0,
+   0,
+   0
+  ],
+  "scale": 0.5
+ },
+ "texture": {
+  "png": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABgElEQVR4nO3WsUrDQBjA8e9KBxcdJBQHcRCRootCxw5SBR30DVy7+AKuBSdfQJCsPoKDghaHDg4dnERERMRBpLj4AJUETmJMk3iXSGz+v6H0rul31+++3p0SEen1b4dSIM3Gkgq2R80v/JwJ5QW/uLzyG539PT9g5/DIKCEb62uiY/1WeGzdTloc2ySoqAEGg/fUARxnOvZz01j6h3nzqy/Of/Xf3T9KsO1MTVgloOq9mK5alhUwShZlnlgB9UBGbYRXx4btygJIRek3jeZ2oe4CYf3eaeye4O4OY+ffPlGR369Iyam5hRU/c7WZ2UwDv72+SB5xw5WQtPJJlaB0AqI8P9z4DwefSdsXxyau7suKipr0pHtuFOyjvSnd7pm0Wlvf+nWfTdw/TUCRqyC3BNT+6R4AS2pc7gGmKlJySp+jx087pdwDquEJZ30C5BU38wQE6fN6WeTHwHF9ae8BJnFz/wscXK+W8x7glnwPAAAAAAAAAAAAAAAAAAAAkHH1CdgSBWooKYrgAAAAAElFTkSuQmCC"
+ },
+ "parts": [
+  {
+   "name": "blade",
+   "pivot": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "cubes": [
+    {
+     "origin": [
+      -18,
+      -2,
+      -0.5
+     ],
+     "size": [
+      18,
+      4,
+      1
+     ],
+     "uv": [
+      0,
+      0
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      -21,
+      -1,
+      -0.5
+     ],
+     "size": [
+      3,
+      2,
+      1
+     ],
+     "uv": [
+      40,
+      0
+     ],
+     "inflate": 0,
+     "mirror": false
+    }
+   ],
+   "children": []
+  },
+  {
+   "name": "handle_safe",
+   "pivot": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "cubes": [
+    {
+     "origin": [
+      0,
+      -2.5,
+      -2.5
+     ],
+     "size": [
+      20,
+      5,
+      2
+     ],
+     "uv": [
+      0,
+      8
+     ],
+     "inflate": 0,
+     "mirror": false
+    }
+   ],
+   "children": []
+  },
+  {
+   "name": "handle_latch",
+   "pivot": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "cubes": [
+    {
+     "origin": [
+      0,
+      -2.5,
+      0.5
+     ],
+     "size": [
+      20,
+      5,
+      2
+     ],
+     "uv": [
+      0,
+      16
+     ],
+     "inflate": 0,
+     "mirror": false
+    }
+   ],
+   "children": [
+    {
+     "name": "latch",
+     "pivot": [
+      20,
+      0,
+      1.5
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "cubes": [
+      {
+       "origin": [
+        -1,
+        1.5,
+        -1
+       ],
+       "size": [
+        4,
+        1,
+        2
+       ],
+       "uv": [
+        48,
+        8
+       ],
+       "inflate": 0,
+       "mirror": false
+      }
+     ],
+     "children": []
+    }
+   ]
+  }
+ ],
+ "animations": []
+}

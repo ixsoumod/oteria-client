@@ -59,6 +59,7 @@ impl Game<'_> {
         }
         self.update_minimap();
         self.voice_frame();
+        self.knife_frame();
         // For mods (`render.frame-stats`, `native_frame_rate`).
         let now = self.extras_now();
         self.extras.fps.record(now, elapsed.as_secs_f32() * 1000.0);

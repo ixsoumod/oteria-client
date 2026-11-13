@@ -33,6 +33,7 @@ impl Game<'_> {
             || horizon_client::keybinds::key_name(key)
                 .is_some_and(|name| self.hud_editor_key_press(name))
             || horizon_client::keybinds::key_name(raw).is_some_and(|name| self.voice_key_press(name))
+            || horizon_client::keybinds::key_name(raw).is_some_and(|name| self.knife_key_press(name))
         {
             return Ok(());
         }
