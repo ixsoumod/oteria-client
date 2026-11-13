@@ -427,8 +427,12 @@ impl Game<'_> {
                 * horizon_client::first_person::item_pose(left, inverse_height, attack, pose);
             // Oteria's butterfly knife in place of a sword in the main hand.
             if hand == Hand::Main && self.knife_shown(&stack.item) {
-                runs.push((out.len() as u32, item_id));
-                self.draw_knife(m, left, packed, &mut out);
+                // The arm (no item id), then the knife in its fist.
+                let arm_start = out.len() as u32;
+                let knife_start =
+                    self.draw_knife(to_world, left, inverse_height, attack, packed, &mut out);
+                runs.push((arm_start, 0));
+                runs.push((knife_start as u32, item_id));
                 continue;
             }
             // PvP & HUD's shield size (100% is vanilla's), toward the hand holding it.
