@@ -18,7 +18,38 @@ use std::sync::Arc;
 
 /// Registers the hooks of the Horizon parts still in this crate (cosmetics: spec #14091 step 5
 /// moves them out). Before the hooks are sealed.
+/// Oteria's application on Discord's developer portal ("Oteria Client"): what "Playing ..."
+/// names on the player's profile, with its logo uploaded as the `oteria` asset. Public: it only
+/// names the game.
+const OTERIA_DISCORD_APP_ID: &str = "1570866994696429609";
+
+/// Discord Rich Presence for Oteria: its application, its logo, in French.
+const OTERIA_PRESENCE: horizon_discord::Brand = horizon_discord::Brand {
+    app_id: OTERIA_DISCORD_APP_ID,
+    image: "oteria",
+    name: "Oteria Client",
+    menus: "Dans les menus",
+    singleplayer: "En solo",
+    multiplayer: "En multijoueur",
+    hosting: "Héberge un monde",
+    overworld: "Dans l'Overworld",
+    nether: "Dans le Nether",
+    end: "Dans l'End",
+};
+
 pub(crate) fn register() {
+    // "Playing Oteria Client" on Discord, with its switch in the settings (on by default).
+    horizon_discord::brand(OTERIA_PRESENCE);
+    let presence = [
+        horizon_hooks::register(&horizon_discord::HOOKS),
+        horizon_hooks::settings::register(&horizon_discord::SETTING),
+        horizon_hooks::pages::register(&horizon_discord::SECTION),
+    ];
+    for result in presence {
+        if let Err(e) = result {
+            log::warn!("Oteria: the Discord presence did not register: {e}");
+        }
+    }
     // Oteria's executable joins invite codes as horizon-official's does (Play with Friends).
     #[cfg(feature = "friends")]
     if let Err(e) = horizon_hooks::register(&horizon_friends::game::HOOKS) {

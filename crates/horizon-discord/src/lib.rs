@@ -29,6 +29,45 @@ use horizon_platform::settings::Store;
 /// The "Horizon" application on Discord's developer portal (public: it names the game). Its
 /// Rich Presence assets: `horizon`, the logo.
 pub const DISCORD_APP_ID: &str = "1563857609738690560";
+/// Who the presence speaks for: the Discord application (its name is what "Playing ..."
+/// shows), its logo's asset, and the words shown. A fork sets its own with [`brand`] before
+/// the game starts; Horizon's otherwise.
+#[derive(Clone, Copy, Debug)]
+pub struct Brand {
+    pub app_id: &'static str,
+    /// The Rich Presence asset of the logo, and the text over it.
+    pub image: &'static str,
+    pub name: &'static str,
+    pub menus: &'static str,
+    pub singleplayer: &'static str,
+    pub multiplayer: &'static str,
+    pub hosting: &'static str,
+    pub overworld: &'static str,
+    pub nether: &'static str,
+    pub end: &'static str,
+}
+/// Horizon's own.
+pub const HORIZON: Brand = Brand {
+    app_id: DISCORD_APP_ID,
+    image: "horizon",
+    name: "Horizon",
+    menus: "In the menus",
+    singleplayer: "Singleplayer",
+    multiplayer: "Multiplayer",
+    hosting: "Hosting a world",
+    overworld: "In the Overworld",
+    nether: "In the Nether",
+    end: "In the End",
+};
+static BRAND: OnceLock<Brand> = OnceLock::new();
+/// Sets who the presence speaks for; only before it starts (later calls are ignored).
+pub fn brand(brand: Brand) {
+    let _ = BRAND.set(brand);
+}
+fn current() -> &'static Brand {
+    BRAND.get().unwrap_or(&HORIZON)
+}
+
 /// Whether the application has the game-mode images (`survival`, `creative`, `adventure`,
 /// `spectator`) beside the logo; it doesn't yet.
 const MODE_IMAGES: bool = false;
@@ -358,10 +397,11 @@ fn run() {
 
 /// The activity Discord shows for `status`; `None` clears it.
 fn activity(status: Status, since: Option<u64>) -> Option<Value> {
-    let mut assets = json!({"large_image": "horizon", "large_text": "Horizon"});
+    let b = current();
+    let mut assets = json!({"large_image": b.image, "large_text": b.name});
     let (details, state, party) = match status {
         Status::Off => return None,
-        Status::Menus => ("In the menus", None, None),
+        Status::Menus => (b.menus, None, None),
         Status::World {
             play,
             dimension,
@@ -378,14 +418,14 @@ fn activity(status: Status, since: Option<u64>) -> Option<Value> {
                 assets["small_text"] = text.into();
             }
             let place = match dimension {
-                Dimension::Overworld => "In the Overworld",
-                Dimension::Nether => "In the Nether",
-                Dimension::End => "In the End",
+                Dimension::Overworld => b.overworld,
+                Dimension::Nether => b.nether,
+                Dimension::End => b.end,
             };
             let (details, party) = match play {
-                Play::Singleplayer => ("Singleplayer", None),
-                Play::Multiplayer => ("Multiplayer", None),
-                Play::Hosting { players, max } => ("Hosting a world", Some((players, max))),
+                Play::Singleplayer => (b.singleplayer, None),
+                Play::Multiplayer => (b.multiplayer, None),
+                Play::Hosting { players, max } => (b.hosting, Some((players, max))),
             };
             (details, Some(place), party)
         }
@@ -480,7 +520,7 @@ impl Client {
         })
     }
     fn handshake(&mut self) -> io::Result<()> {
-        let hello = json!({"v": 1, "client_id": DISCORD_APP_ID});
+        let hello = json!({"v": 1, "client_id": current().app_id});
         self.pipe.write_all(&encode(HANDSHAKE, &hello))?;
         self.reply(|frame| frame["evt"] == "READY")
     }

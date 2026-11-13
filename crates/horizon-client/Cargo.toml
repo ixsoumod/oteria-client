@@ -65,6 +65,8 @@ naga = { version = "30.0.1", features = ["wgsl-in", "hlsl-out"] }
 miniz_oxide = "0.8"
 ab_glyph = "0.2.32"
 log = "0.4"
+# "Playing Oteria Client" on Discord (game/player_hooks.rs registers it).
+horizon-discord = { path = "../horizon-discord" }
 # Oteria's voice chat (game/oteria_voice), on Simple Voice Chat's protocol: Opus in pure Rust,
 # its AES-GCM packets, and the microphone and voices through cpal (with `audio`).
 opus-pure = "0.2"
