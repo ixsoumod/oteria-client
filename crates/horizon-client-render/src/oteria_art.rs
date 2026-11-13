@@ -18,6 +18,25 @@ pub const ELYTRA: &str = "gui/sprites/oteria_elytra";
 /// (`branding/cosmetics/make_balisong.py`).
 pub const KNIFE: &str = "gui/sprites/oteria_balisong";
 pub const KNIFE_PREVIEW: &str = "gui/sprites/oteria_balisong_preview";
+/// A knife converted on this computer into `private/cosmetics/` (not in git: models licensed to
+/// whoever downloaded them, `branding/cosmetics/convert_glb_balisong.py`): its texture, when the
+/// game starts in the repository and finds it.
+pub const KNIFE_PRIVATE: &str = "gui/sprites/oteria_balisong_private";
+pub const KNIFE_PRIVATE_FILE: &str = "private/cosmetics/balisong_leopham";
+
+/// The converted knife's file with `extension`, when there is one: under the folder the game
+/// runs in, beside the executable, or in the repository the executable was built in (two folders
+/// up from `target/<profile>/`), as `oteria.cmd` runs it.
+pub fn knife_private_path(extension: &str) -> Option<std::path::PathBuf> {
+    let file = format!("{KNIFE_PRIVATE_FILE}.{extension}");
+    let exe = std::env::current_exe().ok();
+    let dirs = [
+        std::env::current_dir().ok(),
+        exe.as_ref().and_then(|e| e.parent()).map(|d| d.to_path_buf()),
+        exe.as_ref().and_then(|e| e.ancestors().nth(3)).map(|d| d.to_path_buf()),
+    ];
+    dirs.into_iter().flatten().map(|d| d.join(&file)).find(|p| p.is_file())
+}
 
 const ART: [(&str, &[u8]); 6] = [
     (
@@ -49,10 +68,17 @@ const ART: [(&str, &[u8]); 6] = [
 /// Each `(sprite, width, height, RGBA texels)`, for the atlas: this art, then the mod menu's
 /// icons (`crate::oteria_icons`).
 pub fn images() -> impl Iterator<Item = (String, u32, u32, Vec<u8>)> {
-    ART.iter().chain(crate::oteria_icons::ALL.iter()).map(|&(name, png)| {
-        let (w, h, pixels) = crate::pad_glyph::decode(png).expect("Oteria's menu art is PNG");
-        (name.to_owned(), w, h, pixels)
-    })
+    let private = knife_private_path("png")
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|png| crate::pad_glyph::decode(&png))
+        .map(|(w, h, pixels)| (KNIFE_PRIVATE.to_owned(), w, h, pixels));
+    ART.iter()
+        .chain(crate::oteria_icons::ALL.iter())
+        .map(|&(name, png)| {
+            let (w, h, pixels) = crate::pad_glyph::decode(png).expect("Oteria's menu art is PNG");
+            (name.to_owned(), w, h, pixels)
+        })
+        .chain(private)
 }
 
 #[cfg(test)]

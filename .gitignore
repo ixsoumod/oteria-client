@@ -35,3 +35,6 @@
 
 # Release-only compiled original exporter bundle.
 /exporters/
+
+# Models licensed to whoever downloaded them, converted locally (branding/cosmetics): never published.
+/private/

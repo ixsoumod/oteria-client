@@ -13,18 +13,22 @@ use std::f32::consts::PI;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-/// The model, as the item file has it (the hand renderer's own parts).
-fn model() -> Option<&'static Part> {
-    static MODEL: OnceLock<Option<Part>> = OnceLock::new();
+/// The model and its texture's sprite: a knife converted on this computer
+/// (`oteria_art::KNIFE_PRIVATE_FILE`, never in git) when there is one, else Oteria's own.
+fn model() -> Option<&'static (Part, &'static str)> {
+    static MODEL: OnceLock<Option<(Part, &'static str)>> = OnceLock::new();
     MODEL
         .get_or_init(|| {
+            if let Some(part) = private_model() {
+                return Some((part, horizon_client::oteria_art::KNIFE_PRIVATE));
+            }
             let bytes = include_bytes!("../../assets/horizon/cosmetics/oteria_balisong.json");
             match horizon_cosmetics::Item::parse(bytes) {
                 Ok(item) => {
                     // The file's attachment (its place on a player's arm) is not the hand's.
                     let mut root = convert(&item.root);
                     root.pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-                    Some(root)
+                    Some((root, horizon_client::oteria_art::KNIFE))
                 }
                 Err(e) => {
                     log::warn!("Oteria: the butterfly knife's model doesn't read: {e}");
@@ -34,6 +38,54 @@ fn model() -> Option<&'static Part> {
         })
         .as_ref()
 }
+/// A converted knife (`branding/cosmetics/convert_glb_balisong.py`): parts with a pivot and
+/// triangles of (x, y, z, u, v) from it, in Oteria's knife's model space.
+fn private_model() -> Option<Part> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        parts: Vec<Piece>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Piece {
+        name: String,
+        pivot: [f32; 3],
+        triangles: Vec<[[f32; 5]; 3]>,
+    }
+    let path = horizon_client::oteria_art::knife_private_path("json")?;
+    let path = path.display().to_string();
+    let text = std::fs::read_to_string(&path).ok()?;
+    let file: File = match serde_json::from_str(&text) {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("Oteria: {path} doesn't read: {e}");
+            return None;
+        }
+    };
+    let polygon = |t: &[[f32; 5]; 3]| {
+        let v = |i: usize| glam::Vec3::new(t[i][0], t[i][1], t[i][2]);
+        let n = (v(1) - v(0)).cross(v(2) - v(0)).normalize_or_zero();
+        // A triangle as a quad whose last corner is its third.
+        Polygon { normal: n.to_array(), vertices: [t[0], t[1], t[2], t[2]], cull_back: false }
+    };
+    let children = file
+        .parts
+        .iter()
+        .map(|p| Part {
+            name: p.name.clone(),
+            pose: [p.pivot[0], p.pivot[1], p.pivot[2], 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            polygons: p.triangles.iter().map(polygon).collect(),
+            children: Vec::new(),
+        })
+        .collect();
+    log::info!("Oteria: the butterfly knife is the one in {path}");
+    Some(Part {
+        name: "knife".into(),
+        pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        polygons: Vec::new(),
+        children,
+    })
+}
+
 fn convert(p: &horizon_cosmetics::Part) -> Part {
     Part {
         name: p.name.clone(),
@@ -158,10 +210,10 @@ impl Game<'_> {
     /// The knife in the hand at `m` (the held item's pose, `item_pose`), as a sword's model would
     /// sit there, posed by the inspect when one plays.
     pub(super) fn draw_knife(&self, m: glam::Mat4, left: bool, light: u32, out: &mut Vec<Vertex>) {
-        let Some(part) = model() else {
+        let Some((part, sprite)) = model() else {
             return;
         };
-        let Some(r) = self.gui.atlas.sprites.get(horizon_client::oteria_art::KNIFE).copied() else {
+        let Some(r) = self.gui.atlas.sprites.get(*sprite).copied() else {
             return;
         };
         let pose = INSPECT
@@ -208,7 +260,7 @@ mod tests {
 
     #[test]
     fn the_model_reads_and_has_its_moving_parts() {
-        let part = model().expect("the knife's model reads");
+        let (part, _) = model().expect("the knife's model reads");
         let names: Vec<&str> = part.children.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["blade", "handle_safe", "handle_latch"]);
     }
