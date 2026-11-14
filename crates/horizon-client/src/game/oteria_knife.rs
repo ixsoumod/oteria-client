@@ -1,6 +1,8 @@
 //! Oteria's butterfly knife (a cosmetic, `docs/oteria/ROADMAP.md`): with it on (the Cosmetics
 //! page), every sword in the player's main hand is drawn in first person as Oteria's balisong
-//! (`branding/cosmetics/make_balisong.py`), in the player's own arm, which shows as it holds it.
+//! (`branding/cosmetics/make_balisong.py`), in the player's own arm, which shows as it holds it
+//! and moves with every throw. Taken in hand, it opens as a real one does (a flick, a rollover
+//! shut, a second flick open).
 //!
 //! The knife moves as a real balisong does: the hand holds one handle (the safe one); the blade
 //! turns on that handle's pin, half a turn from shut to open; the other handle (the bite one)
@@ -19,28 +21,54 @@ use std::f32::consts::PI;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-/// The model and its texture's sprite: a knife converted on this computer
-/// (`oteria_art::KNIFE_PRIVATE_FILE`, never in git) when there is one, else Oteria's own.
-fn model() -> Option<&'static (Part, &'static str)> {
-    static MODEL: OnceLock<Option<(Part, &'static str)>> = OnceLock::new();
+/// The knife drawn: its model, its texture's sprite, where the fist closes on the held handle
+/// (x, model units) and its length (blade tip to handle end).
+struct Knife {
+    part: Part,
+    sprite: &'static str,
+    /// Where the fist closes on the held handle (x, model units).
+    grip: f32,
+    length: f32,
+}
+
+/// Oteria's own knife; with `OTERIA_KNIFE=private`, a knife converted on this computer
+/// (`oteria_art::KNIFE_PRIVATE_FILE`, never in git) when there is one.
+fn model() -> Option<&'static Knife> {
+    static MODEL: OnceLock<Option<Knife>> = OnceLock::new();
     MODEL
         .get_or_init(|| {
-            if let Some(part) = private_model() {
-                return Some((part, horizon_client::oteria_art::KNIFE_PRIVATE));
-            }
-            let bytes = include_bytes!("../../assets/horizon/cosmetics/oteria_balisong.json");
-            match horizon_cosmetics::Item::parse(bytes) {
-                Ok(item) => {
-                    // The file's attachment (its place on a player's arm) is not the hand's.
-                    let mut root = convert(&item.root);
-                    root.pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-                    Some((root, horizon_client::oteria_art::KNIFE))
+            let private = std::env::var("OTERIA_KNIFE").is_ok_and(|v| v == "private");
+            let (part, sprite) = match private.then(private_model).flatten() {
+                Some(part) => (part, horizon_client::oteria_art::KNIFE_PRIVATE),
+                None => {
+                    let bytes = include_bytes!("../../assets/horizon/cosmetics/oteria_balisong.json");
+                    match horizon_cosmetics::Item::parse(bytes) {
+                        Ok(item) => {
+                            // The file's attachment (its place on a player's arm) is not the hand's.
+                            let mut root = convert(&item.root);
+                            root.pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+                            (root, horizon_client::oteria_art::KNIFE)
+                        }
+                        Err(e) => {
+                            log::warn!("Oteria: the butterfly knife's model doesn't read: {e}");
+                            return None;
+                        }
+                    }
                 }
-                Err(e) => {
-                    log::warn!("Oteria: the butterfly knife's model doesn't read: {e}");
-                    None
-                }
+            };
+            // Its extent along x, open: each part's corners from its pivot.
+            let extent = |names: &[&str]| {
+                let xs = part.children.iter().filter(|p| names.contains(&p.name.as_str())).flat_map(|p| {
+                    p.polygons.iter().flat_map(move |poly| poly.vertices.iter().map(move |v| v[0] + p.pose[0]))
+                });
+                xs.fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)))
+            };
+            let (lo, hi) = extent(&["blade", "handle_safe", "handle_latch"]);
+            let (handle_lo, handle_hi) = extent(&["handle_safe"]);
+            if lo >= hi {
+                return None;
             }
+            Some(Knife { part, sprite, grip: handle_lo + 0.3 * (handle_hi - handle_lo), length: hi - lo })
         })
         .as_ref()
 }
@@ -105,100 +133,211 @@ fn convert(p: &horizon_cosmetics::Part) -> Part {
     }
 }
 
-/// How long the inspect lasts (s), and what it plays when: (time, sound event, volume, pitch).
-const INSPECT_S: f32 = 3.0;
-const SWISH: &str = "minecraft:entity.player.attack.sweep";
-const CLICK: &str = "minecraft:block.tripwire.click_on";
-const SOUNDS: [(f32, &str, f32, f32); 13] = [
-    (0.26, SWISH, 0.15, 1.9),
-    (0.46, CLICK, 0.6, 1.8),
-    (0.70, "minecraft:block.iron_trapdoor.close", 0.3, 2.0),
-    (0.92, SWISH, 0.16, 2.0),
-    (1.11, CLICK, 0.6, 1.6),
-    (1.18, SWISH, 0.2, 1.5),
-    (1.70, "minecraft:block.chain.step", 0.55, 1.7),
-    (1.78, SWISH, 0.15, 2.0),
-    (1.96, CLICK, 0.7, 1.9),
-    (2.06, SWISH, 0.15, 1.8),
-    (2.26, "minecraft:block.iron_trapdoor.close", 0.3, 2.0),
-    (2.38, SWISH, 0.16, 2.0),
-    (2.60, CLICK, 0.7, 1.8),
-];
-
-#[derive(Default)]
-struct Inspect {
-    started: Option<Instant>,
-    /// The sounds already played.
-    played: usize,
+/// How a value gets from one key to the next.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Ease {
+    /// Slow at both ends.
+    Smooth,
+    /// Speeding up (a part let go, falling round its pin).
+    In,
+    /// Slowing down.
+    Out,
+    /// Steady.
+    Line,
+    /// Thrown from rest round its pin: it speeds up, hits its stop and bounces off it a little.
+    Swing,
+    /// Already moving, it hits its stop and bounces off it a little.
+    Hit,
 }
-thread_local! {
-    static INSPECT: RefCell<Inspect> = RefCell::new(Inspect::default());
-}
-
-/// `t` from 0 to 1, slow at both ends.
-fn smooth(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-/// How far `t` is through `from..to` (0 to 1, eased).
-fn span(t: f32, from: f32, to: f32) -> f32 {
-    smooth((t - from) / (to - from))
-}
-/// A part thrown round its pin through `from..to`: it speeds up as a swinging weight does, hits
-/// its stop before the end and bounces off it a little.
-fn swing(t: f32, from: f32, to: f32) -> f32 {
-    let u = ((t - from) / (to - from)).clamp(0.0, 1.0);
-    if u < 0.8 {
-        (u / 0.8).powi(2)
-    } else {
-        1.0 - 0.06 * ((u - 0.8) / 0.2 * PI).sin()
+fn ease(e: Ease, u: f32) -> f32 {
+    let u = u.clamp(0.0, 1.0);
+    let bounce = |u: f32| 1.0 - 0.06 * ((u - 0.8) / 0.2 * PI).sin();
+    match e {
+        Ease::Smooth => u * u * (3.0 - 2.0 * u),
+        Ease::In => u * u,
+        Ease::Out => 1.0 - (1.0 - u) * (1.0 - u),
+        Ease::Line => u,
+        Ease::Swing if u < 0.8 => (u / 0.8).powi(2),
+        Ease::Hit if u < 0.8 => u / 0.8,
+        Ease::Swing | Ease::Hit => bounce(u),
     }
 }
+/// A channel: keys of (time s, value, how it gets there from the key before).
+type Track = &'static [(f32, f32, Ease)];
+fn track(t: f32, keys: Track) -> f32 {
+    let Some(first) = keys.first() else {
+        return 0.0;
+    };
+    if t <= first.0 {
+        return first.1;
+    }
+    for w in keys.windows(2) {
+        let ((t0, v0, _), (t1, v1, e)) = (w[0], w[1]);
+        if t < t1 {
+            return v0 + (v1 - v0) * ease(e, (t - t0) / (t1 - t0));
+        }
+    }
+    keys[keys.len() - 1].1
+}
 
-/// The knife at `t` seconds into the inspect. `blade` and `bite` are how open each joint is (1:
-/// as held open, 0: folded): the blade on the held handle's pin, the bite handle on the blade's.
-/// `spin` turns the whole knife about its pins' axis (radians; the aerial), `toss` lifts it out
-/// of the hand (blocks), `wrist` tips it with the flicks (radians), and `up` is how far the
-/// hand has brought it up to be looked at (0 to 1).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// The knife and the arm at one moment. The joints are angles about the pins' axis (radians):
+/// `blade`, the blade's on the held handle's pin (0: open, ±π: shut between the handles), and
+/// `latch`, the bite handle's, on its pin that the blade carries (0: lying by the held handle,
+/// ±π: lying along the open blade, the knife a straight stick). Whole turns are the same pose.
+/// `spin` turns the whole knife about the pins' axis (an aerial), `toss` lifts it out of the
+/// fist along the arm (blocks), `wrist` tips it in the fist (radians). The arm: `up`, how far it
+/// has brought the knife up to be looked at (0 to 1, the grip between its two sets); `shift`,
+/// where it has moved (blocks: right, up, toward the eye); `tilt`, `pitch` and `roll`, how it
+/// has turned (radians: in the screen's plane, up and down, about its own length).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub(super) struct Pose {
     pub blade: f32,
-    pub bite: f32,
+    pub latch: f32,
     pub spin: f32,
     pub toss: f32,
     pub wrist: f32,
     pub up: f32,
-}
-impl Default for Pose {
-    fn default() -> Self {
-        Self { blade: 1.0, bite: 1.0, spin: 0.0, toss: 0.0, wrist: 0.0, up: 0.0 }
-    }
-}
-pub(super) fn inspect_pose(t: f32) -> Pose {
-    let up = span(t, 0.0, 0.25) * (1.0 - span(t, 2.7, INSPECT_S));
-    // Basic close: the bite handle swings over onto the blade, then both fold into the hand.
-    // Flick out: the blade, in the bite handle, swings back out. Aerial (below). Flick open: the
-    // bite handle comes round to the hand. Then a fast close and open, the joints overlapping.
-    let bite = 1.0 - swing(t, 0.25, 0.50) + swing(t, 1.75, 2.00) - swing(t, 2.05, 2.22)
-        + swing(t, 2.45, 2.65);
-    let blade = 1.0 - swing(t, 0.50, 0.74) + swing(t, 0.90, 1.15) - swing(t, 2.12, 2.30)
-        + swing(t, 2.36, 2.56);
-    // The aerial: thrown up turning once about its pins, caught as it comes down.
-    let air = ((t - 1.18) / (1.70 - 1.18)).clamp(0.0, 1.0);
-    let spin = -2.0 * PI * air;
-    let toss = 0.22 * 4.0 * air * (1.0 - air);
-    // The wrist cocks back before each flick and follows through.
-    let flick = |at: f32| (span(t, at - 0.10, at) - span(t, at, at + 0.22)) * 0.35;
-    let wrist = flick(0.25) - flick(0.50) + flick(0.90) + flick(1.18) - flick(1.75) + flick(2.05)
-        - flick(2.36);
-    Pose { blade, bite, spin, toss, wrist, up }
+    pub shift: [f32; 3],
+    pub tilt: f32,
+    pub pitch: f32,
+    pub roll: f32,
 }
 
-/// How the knife sits against the fist's palm side, in the arm's own space (model pixels from the arm part's
-/// pivot, y toward the hand; degrees; the knife's size): at rest, and brought up for the
-/// inspect. `private/knife_pose.txt` (14 numbers, the two sets) overrides it while tuning.
-const GRIP_REST: [f32; 7] = [-1.0, 11.0, -2.2, 0.0, 10.0, -45.0, 0.45];
-const GRIP_SHOWN: [f32; 7] = [-1.0, 11.0, -2.2, 0.0, 0.0, -30.0, 0.5];
+/// An animation: its length, its channels and its sounds (time, event, volume, pitch).
+pub(super) struct Anim {
+    pub length: f32,
+    blade: Track,
+    latch: Track,
+    spin: Track,
+    toss: Track,
+    wrist: Track,
+    up: Track,
+    shift: [Track; 3],
+    tilt: Track,
+    pitch: Track,
+    roll: Track,
+    sounds: &'static [(f32, &'static str, f32, f32)],
+}
+impl Anim {
+    pub(super) fn pose(&self, t: f32) -> Pose {
+        Pose {
+            blade: track(t, self.blade),
+            latch: track(t, self.latch),
+            spin: track(t, self.spin),
+            toss: track(t, self.toss),
+            wrist: track(t, self.wrist),
+            up: track(t, self.up),
+            shift: self.shift.map(|k| track(t, k)),
+            tilt: track(t, self.tilt),
+            pitch: track(t, self.pitch),
+            roll: track(t, self.roll),
+        }
+    }
+}
+
+const SWISH: &str = "minecraft:entity.player.attack.sweep";
+const CLICK: &str = "minecraft:block.tripwire.click_on";
+const SHUT: &str = "minecraft:block.iron_trapdoor.close";
+const CATCH: &str = "minecraft:block.chain.step";
+use Ease::{Hit, In, Line, Out, Smooth, Swing};
+const P: f32 = PI;
+
+/// Taking it in hand (from a real balisong's opening, watched frame by frame): the arm comes up
+/// with the knife shut, the palm turns, and a flick throws the bite handle and the blade out
+/// together, over the top and round into the fist shut again (a rollover); the hand dips, lifts
+/// and flicks again: the blade swings up, the bite handle goes on round over the top and down
+/// the other side into the palm while the arm swings across with it; open, the arm comes back.
+pub(super) static DRAW: Anim = Anim {
+    length: 1.2,
+    blade: &[(0.0, P, Line), (0.20, P, Line), (0.33, 0.0, In), (0.50, -P, Hit), (0.56, -P, Line), (0.72, -2.0 * P, Swing)],
+    latch: &[(0.0, 0.0, Line), (0.22, 0.0, Line), (0.36, -P, In), (0.52, -2.0 * P, Hit), (0.58, -2.0 * P, Line), (0.74, -3.0 * P, In), (0.93, -4.0 * P, Hit)],
+    spin: &[],
+    toss: &[],
+    wrist: &[(0.0, 0.0, Line), (0.18, 0.30, Smooth), (0.30, -0.40, Out), (0.45, 0.0, Smooth), (0.56, 0.30, Smooth), (0.68, -0.40, Out), (0.92, 0.0, Smooth)],
+    up: &[(0.0, 0.0, Line), (0.14, 0.7, Out), (0.85, 0.7, Line), (1.2, 0.0, Smooth)],
+    shift: [
+        &[(0.0, 0.05, Line), (0.14, -0.10, Out), (0.20, -0.08, Smooth), (0.33, -0.16, Out), (0.50, -0.07, Smooth), (0.60, -0.10, Smooth), (0.86, -0.22, Smooth), (0.96, -0.20, Smooth), (1.2, 0.0, Smooth)],
+        &[(0.0, -0.50, Line), (0.14, 0.12, Out), (0.30, 0.14, Smooth), (0.50, 0.08, Smooth), (0.62, 0.16, Out), (0.86, 0.06, Smooth), (1.2, 0.0, Smooth)],
+        &[],
+    ],
+    tilt: &[(0.0, 0.7, Line), (0.14, 0.5, Out), (0.20, 0.4, Smooth), (0.33, 0.8, Out), (0.50, 0.4, Smooth), (0.58, 0.35, Smooth), (0.72, 0.7, Out), (0.88, 0.85, Smooth), (1.0, 0.55, Smooth), (1.2, 0.0, Smooth)],
+    pitch: &[(0.0, -0.6, Line), (0.14, 0.0, Out), (0.52, 0.15, Smooth), (0.62, -0.20, Out), (0.90, 0.10, Smooth), (1.2, 0.0, Smooth)],
+    roll: &[(0.0, 0.0, Line), (0.10, 0.1, Smooth), (0.18, 0.25, Smooth), (0.35, 0.05, Smooth), (0.50, 0.1, Smooth), (0.85, -0.1, Smooth), (1.2, 0.0, Smooth)],
+    sounds: &[
+        (0.24, SWISH, 0.15, 1.9),
+        (0.48, CLICK, 0.6, 1.7),
+        (0.60, SWISH, 0.16, 2.0),
+        (0.78, SWISH, 0.12, 1.6),
+        (0.92, CLICK, 0.7, 1.9),
+        (0.95, CATCH, 0.3, 1.8),
+    ],
+};
+
+/// The inspect (the inspect key): brought up and turned to be seen, then real tricks. A basic
+/// close (the bite handle swings over onto the blade, then both fold into the fist), a flick out
+/// to a straight stick, an aerial (the arm throws it up, it turns once and is caught, the arm
+/// giving with it), the flick that opens it, then a fast close and open; it goes back down.
+/// Each throw is the arm's: it cocks back, snaps through and follows on.
+pub(super) static INSPECT: Anim = Anim {
+    length: 3.0,
+    blade: &[(0.0, 0.0, Line), (0.50, 0.0, Line), (0.72, P, Swing), (0.90, P, Line), (1.12, 2.0 * P, Swing), (2.20, 2.0 * P, Line), (2.36, 3.0 * P, Swing), (2.42, 3.0 * P, Line), (2.56, 4.0 * P, Swing)],
+    latch: &[(0.0, 0.0, Line), (0.25, 0.0, Line), (0.45, -P, Swing), (0.50, -P, Line), (0.72, 0.0, Swing), (0.90, 0.0, Line), (1.12, P, Swing), (1.75, P, Line), (2.00, 2.0 * P, Swing), (2.05, 2.0 * P, Line), (2.20, P, Swing), (2.36, 2.0 * P, Swing), (2.42, 2.0 * P, Line), (2.56, 3.0 * P, Swing), (2.58, 3.0 * P, Line), (2.72, 4.0 * P, Swing)],
+    spin: &[(1.18, 0.0, Line), (1.70, -2.0 * P, Line)],
+    toss: &[(1.18, 0.0, Line), (1.44, 0.24, Out), (1.70, 0.0, In)],
+    wrist: &[(0.0, 0.0, Line), (0.18, 0.0, Line), (0.25, 0.25, Smooth), (0.40, -0.25, Out), (0.50, 0.15, Smooth), (0.62, -0.30, Out), (0.82, 0.25, Smooth), (0.98, -0.35, Out), (1.12, 0.0, Smooth), (1.70, 0.0, Line), (1.75, 0.25, Smooth), (1.90, -0.30, Out), (2.05, 0.20, Smooth), (2.16, -0.25, Out), (2.36, 0.25, Smooth), (2.50, -0.25, Out), (2.65, 0.15, Smooth), (2.80, 0.0, Smooth)],
+    up: &[(0.0, 0.0, Line), (0.25, 1.0, Smooth), (2.75, 1.0, Line), (3.0, 0.0, Smooth)],
+    shift: [
+        &[(0.0, 0.0, Line), (0.25, -0.18, Smooth), (0.40, -0.21, Out), (0.62, -0.15, Out), (0.90, -0.20, Smooth), (1.05, -0.16, Out), (1.85, -0.18, Smooth), (2.15, -0.21, Out), (2.45, -0.15, Out), (2.75, -0.18, Smooth), (3.0, 0.0, Smooth)],
+        &[(0.0, 0.0, Line), (0.25, 0.14, Smooth), (1.08, 0.11, Smooth), (1.20, 0.22, Out), (1.40, 0.16, Smooth), (1.72, 0.09, Out), (1.90, 0.14, Smooth), (2.75, 0.14, Line), (3.0, 0.0, Smooth)],
+        &[(1.08, 0.0, Line), (1.20, -0.05, Out), (1.72, 0.03, Out), (1.90, 0.0, Smooth)],
+    ],
+    tilt: &[(0.0, 0.0, Line), (0.22, 0.10, Smooth), (0.40, -0.25, Out), (0.55, 0.15, Smooth), (0.70, -0.20, Out), (0.88, 0.20, Smooth), (1.05, -0.20, Out), (1.75, 0.15, Smooth), (1.95, -0.20, Out), (2.10, 0.15, Smooth), (2.30, -0.20, Out), (2.45, 0.15, Smooth), (2.65, -0.10, Out), (3.0, 0.0, Smooth)],
+    pitch: &[(0.0, 0.0, Line), (0.25, 0.10, Smooth), (1.08, 0.20, Smooth), (1.20, -0.30, Out), (1.45, -0.10, Smooth), (1.72, 0.20, Out), (1.90, 0.10, Smooth), (2.75, 0.10, Line), (3.0, 0.0, Smooth)],
+    roll: &[(0.0, 0.0, Line), (0.25, 0.35, Smooth), (0.90, 0.20, Smooth), (1.75, 0.25, Smooth), (2.20, -0.25, Smooth), (2.75, 0.30, Smooth), (3.0, 0.0, Smooth)],
+    sounds: &[
+        (0.27, SWISH, 0.15, 1.9),
+        (0.43, CLICK, 0.6, 1.8),
+        (0.69, SHUT, 0.3, 2.0),
+        (0.92, SWISH, 0.16, 2.0),
+        (1.10, CLICK, 0.6, 1.6),
+        (1.18, SWISH, 0.2, 1.5),
+        (1.70, CATCH, 0.55, 1.7),
+        (1.78, SWISH, 0.15, 2.0),
+        (1.98, CLICK, 0.7, 1.9),
+        (2.07, SWISH, 0.15, 1.8),
+        (2.33, SHUT, 0.3, 2.0),
+        (2.44, SWISH, 0.16, 2.0),
+        (2.70, CLICK, 0.7, 1.8),
+    ],
+};
+
+/// The animation playing, if any: which, since when, and the sounds already played.
+struct Playing {
+    anim: &'static Anim,
+    started: Instant,
+    played: usize,
+}
+#[derive(Default)]
+struct State {
+    playing: Option<Playing>,
+    /// The slot and the item last shown as the knife: another one, and it is taken in hand.
+    held: Option<(usize, String)>,
+}
+thread_local! {
+    static STATE: RefCell<State> = RefCell::new(State::default());
+}
+fn play(anim: &'static Anim) {
+    STATE.with(|s| s.borrow_mut().playing = Some(Playing { anim, started: Instant::now(), played: 0 }));
+}
+
+/// How the knife sits against the fist's palm side, in the arm's own space (model pixels from
+/// the arm part's pivot, y toward the hand; degrees; the knife's size, for a knife as long as
+/// `LENGTH`): at rest, and brought up. `private/knife_pose.txt` (14 numbers, the two sets)
+/// overrides it while tuning.
+const GRIP_REST: [f32; 7] = [-1.0, 11.0, -2.2, 0.0, 10.0, -45.0, 0.36];
+const GRIP_SHOWN: [f32; 7] = [-1.0, 11.0, -2.2, 0.0, 0.0, -30.0, 0.4];
+/// The knife's length (blade tip to handle end, in its model units) the grip's size is for.
+const LENGTH: f32 = 41.0;
 fn grips() -> ([f32; 7], [f32; 7]) {
     let tuned = std::fs::read_to_string("private/knife_pose.txt").ok().and_then(|text| {
         let v: Vec<f32> = text.split(|c: char| c == ',' || c.is_whitespace()).filter_map(|n| n.parse().ok()).collect();
@@ -213,38 +352,46 @@ impl Game<'_> {
         self.settings.extras.pvp.skins.knife && item.ends_with("_sword") && model().is_some()
     }
 
+    /// The selected slot and its item, when it shows as the knife.
+    fn knife_held(&self) -> Option<(usize, String)> {
+        let item = self.inventory.get(self.selected).and_then(|s| s.as_ref()).map(|s| s.item.to_string())?;
+        self.knife_shown(&item).then_some((self.selected, item))
+    }
+
     /// The inspect key, in play with a sword shown as the knife. True when taken.
     pub(super) fn knife_key_press(&mut self, name: &str) -> bool {
         if self.screen != Screen::Playing || name != self.settings.extras.pvp.skins.inspect_key {
             return false;
         }
-        let held = self.inventory.get(self.selected).and_then(|s| s.as_ref()).map(|s| s.item.clone());
-        if !held.is_some_and(|item| self.knife_shown(&item)) {
+        if self.knife_held().is_none() {
             return false;
         }
-        INSPECT.with(|i| *i.borrow_mut() = Inspect { started: Some(Instant::now()), played: 0 });
+        play(&INSPECT);
         true
     }
 
-    /// Once a frame: the inspect's sounds as it reaches them; it stops when the knife goes.
+    /// Once a frame: the opening when the knife comes into the hand, and the playing
+    /// animation's sounds as it reaches them; it stops when the knife goes.
     pub(super) fn knife_frame(&mut self) {
-        let held = self.inventory.get(self.selected).and_then(|s| s.as_ref()).map(|s| s.item.clone());
-        let shown = held.is_some_and(|item| self.knife_shown(&item));
-        let due: Vec<(&str, f32, f32)> = INSPECT.with(|i| {
-            let mut i = i.borrow_mut();
-            let Some(start) = i.started else {
+        let held = self.knife_held();
+        let due: Vec<(&str, f32, f32)> = STATE.with(|s| {
+            let mut s = s.borrow_mut();
+            if held != s.held {
+                s.held = held.clone();
+                s.playing = held.is_some().then(|| Playing { anim: &DRAW, started: Instant::now(), played: 0 });
+            }
+            let Some(p) = s.playing.as_mut() else {
                 return Vec::new();
             };
-            let t = start.elapsed().as_secs_f32();
-            if !shown || t >= INSPECT_S {
-                *i = Inspect::default();
-                return Vec::new();
-            }
+            let t = p.started.elapsed().as_secs_f32();
             let mut due = Vec::new();
-            while i.played < SOUNDS.len() && SOUNDS[i.played].0 <= t {
-                let (_, event, volume, pitch) = SOUNDS[i.played];
+            while p.played < p.anim.sounds.len() && p.anim.sounds[p.played].0 <= t {
+                let (_, event, volume, pitch) = p.anim.sounds[p.played];
                 due.push((event, volume, pitch));
-                i.played += 1;
+                p.played += 1;
+            }
+            if t >= p.anim.length {
+                s.playing = None;
             }
             due
         });
@@ -267,42 +414,65 @@ impl Game<'_> {
         out: &mut Vec<Vertex>,
     ) -> usize {
         use glam::{EulerRot, Mat4, Quat, Vec3};
-        let pose = INSPECT
-            .with(|i| i.borrow().started.map(|s| inspect_pose(s.elapsed().as_secs_f32())))
+        // While tuning, `private/knife_t.txt` ("draw 0.3", "inspect 1.2") holds one moment.
+        let frozen = std::fs::read_to_string("private/knife_t.txt").ok().and_then(|text| {
+            let (kind, t) = text.trim().split_once(' ')?;
+            let anim = if kind == "draw" { &DRAW } else { &INSPECT };
+            Some((anim.pose(t.parse().ok()?), kind == "draw"))
+        });
+        let (pose, drawing) = frozen
+            .or_else(|| STATE.with(|s| {
+                let s = s.borrow();
+                let p = s.playing.as_ref()?;
+                Some((p.anim.pose(p.started.elapsed().as_secs_f32()), std::ptr::eq(p.anim, &DRAW)))
+            }))
             .unwrap_or_default();
+        // The opening brings the arm up itself, in place of the game's own lowered hand.
+        let inverse_height = if drawing { 0.0 } else { inverse_height };
         let side = if left { -1.0 } else { 1.0 };
-        // The hand comes up and in for the inspect.
-        let lift = Mat4::from_translation(Vec3::new(-0.20 * pose.up * side, 0.16 * pose.up, 0.0));
-        let arm = to_world * lift * horizon_client::first_person::player_arm_pose(left, inverse_height, attack);
-        if !self.own_invisible() {
-            self.first_person_arm(left, arm, light, out);
-        }
-        let start = out.len();
-        let Some((part, sprite)) = model() else {
-            return start;
-        };
-        let Some(r) = self.gui.atlas.sprites.get(*sprite).copied() else {
-            return start;
-        };
-        // The arm part's own space, as `first_person_arm` poses it: its pivot, turned outwards.
+        // The arm moves and turns about where the hand is, in the view's own axes (mirrored for
+        // the left hand).
+        let [sx, sy, sz] = pose.shift;
+        let at = Vec3::new(0.64 * side, -0.6, -0.72);
+        let moved = Mat4::from_translation(Vec3::new(sx * side, sy, sz) + at)
+            * Mat4::from_rotation_z(pose.tilt * side)
+            * Mat4::from_rotation_x(pose.pitch)
+            * Mat4::from_translation(-at);
         let slim = self.player_model.as_ref().is_some_and(|m| m.slim);
         let pivot = self.res.player_arm(slim, left).as_ref().map_or([-5.0 * side, 2.0, 0.0], |a| {
             [a.pose[0], a.pose[1], a.pose[2]]
         });
-        let hand = arm
-            * Mat4::from_translation(Vec3::from(pivot) / 16.0)
-            * Mat4::from_rotation_z(0.1 * side);
+        let pivot = Vec3::from(pivot) / 16.0;
+        // The forearm rolls about its own length (y, in the arm part's space).
+        let arm = to_world
+            * moved
+            * horizon_client::first_person::player_arm_pose(left, inverse_height, attack)
+            * Mat4::from_translation(pivot)
+            * Mat4::from_rotation_y(pose.roll * side)
+            * Mat4::from_translation(-pivot);
+        if !self.own_invisible() {
+            self.first_person_arm(left, arm, light, out);
+        }
+        let start = out.len();
+        let Some(knife) = model() else {
+            return start;
+        };
+        let Some(r) = self.gui.atlas.sprites.get(knife.sprite).copied() else {
+            return start;
+        };
+        let part = &knife.part;
+        // The arm part's own space, as `first_person_arm` poses it: its pivot, turned outwards.
+        let hand = arm * Mat4::from_translation(pivot) * Mat4::from_rotation_z(0.1 * side);
         let (rest, shown) = grips();
         let g: [f32; 7] = std::array::from_fn(|k| rest[k] + (shown[k] - rest[k]) * pose.up);
-        // The knife's model: pixels at twice the detail, the blade toward -x, the pins along z,
-        // the tang between them at the origin; the fist closes on the safe handle's middle.
         let pin = |name: &str| {
             part.children.iter().find(|p| p.name == name).map_or(Vec3::ZERO, |p| Vec3::new(p.pose[0], p.pose[1], p.pose[2]))
         };
         let (safe_pin, bite_pin) = (pin("handle_safe"), pin("handle_latch"));
-        let grip = safe_pin + Vec3::new(10.0, 0.0, 0.0);
+        // The fist closes on the held handle near its pin, the rest of it out of the fist.
+        let grip = Vec3::new(knife.grip, safe_pin.y, safe_pin.z);
         let base = hand
-            // The aerial: out of the hand, on along the arm.
+            // The aerial: out of the fist, on along the arm.
             * Mat4::from_translation(Vec3::new(0.0, pose.toss, 0.0))
             * Mat4::from_translation(Vec3::new(g[0] * side, g[1], g[2]) / 16.0)
             * Mat4::from_quat(Quat::from_euler(
@@ -313,14 +483,11 @@ impl Game<'_> {
             ))
             // The wrist's flicks, and the aerial's turn about the pins' axis.
             * Mat4::from_rotation_z(pose.wrist)
-            * Mat4::from_scale(Vec3::splat(g[6]))
-            * Mat4::from_translation(grip / 16.0)
+            * Mat4::from_scale(Vec3::splat(g[6] * LENGTH / knife.length))
             * Mat4::from_rotation_z(pose.spin)
             * Mat4::from_translation(-grip / 16.0);
         // The joints: the blade turns on the held handle's pin; the bite handle turns on its own
         // pin, which the blade carries round.
-        let blade_turn = PI * (1.0 - pose.blade);
-        let bite_turn = -PI * (1.0 - pose.bite);
         let about = |centre: Vec3, angle: f32, point: Vec3| {
             centre + Mat4::from_rotation_z(angle).transform_vector3(point - centre)
         };
@@ -328,12 +495,12 @@ impl Game<'_> {
             let mut q = p.pose;
             match p.name.as_str() {
                 "blade" => {
-                    let at = about(safe_pin, blade_turn, Vec3::new(q[0], q[1], q[2]));
-                    (q[0], q[1], q[5]) = (at.x, at.y, blade_turn);
+                    let at = about(safe_pin, pose.blade, Vec3::new(q[0], q[1], q[2]));
+                    (q[0], q[1], q[5]) = (at.x, at.y, pose.blade);
                 }
                 "handle_latch" => {
-                    let at = about(safe_pin, blade_turn, bite_pin);
-                    (q[0], q[1], q[5]) = (at.x, at.y, blade_turn + bite_turn);
+                    let at = about(safe_pin, pose.blade, bite_pin);
+                    (q[0], q[1], q[5]) = (at.x, at.y, pose.latch);
                 }
                 _ => {}
             }
@@ -350,32 +517,49 @@ mod tests {
 
     #[test]
     fn the_model_reads_and_has_its_moving_parts() {
-        let (part, _) = model().expect("the knife's model reads");
-        let names: Vec<&str> = part.children.iter().map(|p| p.name.as_str()).collect();
+        let knife = model().expect("the knife's model reads");
+        let names: Vec<&str> = knife.part.children.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["blade", "handle_safe", "handle_latch"]);
+        assert!(knife.length > 20.0 && knife.grip > 0.0, "{} {}", knife.length, knife.grip);
+    }
+
+    /// Whole turns are the same pose.
+    fn same_angle(a: f32, b: f32) -> bool {
+        let d = (a - b).rem_euclid(2.0 * PI);
+        d < 1e-3 || 2.0 * PI - d < 1e-3
     }
 
     #[test]
-    fn the_inspect_is_made_of_a_balisongs_own_moves() {
-        // It starts and ends open, in the hand, at rest.
-        assert_eq!(inspect_pose(0.0), Pose::default());
-        let end = inspect_pose(INSPECT_S);
-        assert!((end.blade - 1.0).abs() < 1e-4 && (end.bite - 1.0).abs() < 1e-4);
-        assert!(end.up.abs() < 1e-4 && end.toss.abs() < 1e-4 && end.wrist.abs() < 1e-4);
-        assert!((end.spin / (2.0 * PI)).fract().abs() < 1e-4, "a whole turn in the air");
-        // The joints never pass their stops (but for the small bounce off them).
-        for k in 0..=300 {
-            let p = inspect_pose(k as f32 * 0.01);
-            assert!((-0.07..=1.07).contains(&p.blade) && (-0.07..=1.07).contains(&p.bite), "{k}");
-            // The blade only moves while it is inside the bite handle, as a real one's must: the
-            // bite handle can't lie by the held handle with the blade folded in.
-            assert!(p.bite <= p.blade + 0.75, "{k}: {p:?}");
+    fn the_animations_start_and_end_as_a_balisong_does() {
+        // The opening starts shut, low; the inspect starts open. Both end open, at rest.
+        let draw = DRAW.pose(0.0);
+        assert!(same_angle(draw.blade, PI) && same_angle(draw.latch, 0.0) && draw.shift[1] < -0.3);
+        let inspect = INSPECT.pose(0.0);
+        assert!(same_angle(inspect.blade, 0.0) && same_angle(inspect.latch, 0.0));
+        for anim in [&DRAW, &INSPECT] {
+            let end = anim.pose(anim.length);
+            assert!(same_angle(end.blade, 0.0) && same_angle(end.latch, 0.0), "{end:?}");
+            assert!(same_angle(end.spin, 0.0));
+            let still = [end.toss, end.wrist, end.up, end.tilt, end.pitch, end.roll];
+            assert!(still.iter().chain(&end.shift).all(|v| v.abs() < 1e-4), "{end:?}");
+            assert!(anim.sounds.windows(2).all(|w| w[0].0 <= w[1].0), "the sounds in order");
+            assert!(anim.sounds.last().is_some_and(|s| s.0 < anim.length));
         }
-        // Shut after the basic close; a straight stick in the air (blade out, in the bite handle).
-        let shut = inspect_pose(0.82);
-        assert!(shut.blade.abs() < 1e-3 && shut.bite.abs() < 1e-3);
-        let air = inspect_pose(1.45);
-        assert!((air.blade - 1.0).abs() < 1e-3 && air.bite.abs() < 1e-3 && air.toss > 0.2);
-        assert!(SOUNDS.windows(2).all(|w| w[0].0 <= w[1].0), "the sounds in order");
+        // The rollover: shut again halfway through the opening.
+        let shut = DRAW.pose(0.53);
+        assert!(same_angle(shut.blade, PI) && same_angle(shut.latch, 0.0), "{shut:?}");
+        // The inspect's aerial: a straight stick, out of the fist.
+        let air = INSPECT.pose(1.44);
+        assert!(same_angle(air.blade, 0.0) && same_angle(air.latch, PI) && air.toss > 0.2, "{air:?}");
+    }
+
+    #[test]
+    fn a_track_holds_its_ends_and_lands_on_its_keys() {
+        let keys: Track = &[(1.0, 2.0, Line), (2.0, 4.0, Swing), (3.0, 0.0, Smooth)];
+        assert_eq!(track(0.0, keys), 2.0);
+        assert_eq!(track(2.0, keys), 4.0);
+        assert!((track(1.5, keys) - 2.0).abs() > 0.1);
+        assert_eq!(track(9.0, keys), 0.0);
+        assert_eq!(track(5.0, &[]), 0.0);
     }
 }

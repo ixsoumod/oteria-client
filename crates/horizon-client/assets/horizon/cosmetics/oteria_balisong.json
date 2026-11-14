@@ -17,7 +17,7 @@
   "scale": 0.5
  },
  "texture": {
-  "png": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABgElEQVR4nO3WsUrDQBjA8e9KBxcdJBQHcRCRootCxw5SBR30DVy7+AKuBSdfQJCsPoKDghaHDg4dnERERMRBpLj4AJUETmJMk3iXSGz+v6H0rul31+++3p0SEen1b4dSIM3Gkgq2R80v/JwJ5QW/uLzyG539PT9g5/DIKCEb62uiY/1WeGzdTloc2ySoqAEGg/fUARxnOvZz01j6h3nzqy/Of/Xf3T9KsO1MTVgloOq9mK5alhUwShZlnlgB9UBGbYRXx4btygJIRek3jeZ2oe4CYf3eaeye4O4OY+ffPlGR369Iyam5hRU/c7WZ2UwDv72+SB5xw5WQtPJJlaB0AqI8P9z4DwefSdsXxyau7suKipr0pHtuFOyjvSnd7pm0Wlvf+nWfTdw/TUCRqyC3BNT+6R4AS2pc7gGmKlJySp+jx087pdwDquEJZ30C5BU38wQE6fN6WeTHwHF9ae8BJnFz/wscXK+W8x7glnwPAAAAAAAAAAAAAAAAAAAAkHH1CdgSBWooKYrgAAAAAElFTkSuQmCC"
+  "png": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABeElEQVR4nO3Wv0uCQRjA8Tt5hwhcyn6QQ5ukrUFz0NAS2dAWNVTQJNHWX1A0SVNQDkFbQ0ZrUENL4JpGW0FFZC1CNARvvBf3du9byiumr+D3A3I/nnu8e5/3EKUQQvRntm1Rh4ut9XqWi1S3Jc19dL6eL75/evbX860gR8+f7UpuUw0+eoYCJfXNLoqX44NAa7veHlUbXdpwc8z8asVsVREsc+AcbHo4+ufC07uK8K/VauXo4poPO3f1+usWhMUyB0fjvVUXLgz+xJwHqLXWzJnKffevJwZkyoiZ/TBJ3RkZm6zrd6DZbgpnnpsRiyc85ys/3Hri/vP78/fmbU985VCqeER0OEtXtvx0L9qJ/43nT/KqTc+kVXtZKKr48mpGjfd3d4Q51vFSNul+R3Kt5I6deCmbFJb/KrUbfyEaYRZD92UzNgqiXQofEZ0uFk/Y5tt3+s6fI+cTdL6R/LBFwj4AAAAAAAAAAAAAAAAAAAAAAAAAAIh/9AV29JRoCSZZogAAAABJRU5ErkJggg=="
  },
  "parts": [
   {
@@ -35,13 +35,13 @@
    "cubes": [
     {
      "origin": [
-      -18,
-      -2,
+      -11,
+      -1.5,
       -0.5
      ],
      "size": [
-      18,
-      4,
+      12,
+      3,
       1
      ],
      "uv": [
@@ -53,17 +53,35 @@
     },
     {
      "origin": [
-      -21,
-      -1,
+      -13,
+      -1.5,
       -0.5
      ],
      "size": [
-      3,
+      2,
       2,
       1
      ],
      "uv": [
-      40,
+      26,
+      0
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      -15,
+      -1.5,
+      -0.5
+     ],
+     "size": [
+      2,
+      1,
+      1
+     ],
+     "uv": [
+      32,
       0
      ],
      "inflate": 0,
@@ -87,13 +105,85 @@
    "cubes": [
     {
      "origin": [
-      0,
-      -2.5,
+      -1,
+      -2,
       -2.5
      ],
      "size": [
-      20,
-      5,
+      18,
+      1,
+      2
+     ],
+     "uv": [
+      0,
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      -1,
+      1,
+      -2.5
+     ],
+     "size": [
+      18,
+      1,
+      2
+     ],
+     "uv": [
+      0,
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      -1,
+      -1,
+      -2.5
+     ],
+     "size": [
+      2,
+      2,
+      2
+     ],
+     "uv": [
+      40,
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      15,
+      -1,
+      -2.5
+     ],
+     "size": [
+      2,
+      2,
+      2
+     ],
+     "uv": [
+      48,
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      1,
+      -1,
+      -2.5
+     ],
+     "size": [
+      14,
+      2,
       2
      ],
      "uv": [
@@ -121,59 +211,96 @@
    "cubes": [
     {
      "origin": [
-      0,
-      -2.5,
+      -1,
+      -2,
       0.5
      ],
      "size": [
-      20,
-      5,
+      18,
+      1,
       2
      ],
      "uv": [
       0,
-      16
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      -1,
+      1,
+      0.5
+     ],
+     "size": [
+      18,
+      1,
+      2
+     ],
+     "uv": [
+      0,
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      -1,
+      -1,
+      0.5
+     ],
+     "size": [
+      2,
+      2,
+      2
+     ],
+     "uv": [
+      40,
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      15,
+      -1,
+      0.5
+     ],
+     "size": [
+      2,
+      2,
+      2
+     ],
+     "uv": [
+      56,
+      4
+     ],
+     "inflate": 0,
+     "mirror": false
+    },
+    {
+     "origin": [
+      1,
+      -1,
+      0.5
+     ],
+     "size": [
+      14,
+      2,
+      2
+     ],
+     "uv": [
+      0,
+      8
      ],
      "inflate": 0,
      "mirror": false
     }
    ],
-   "children": [
-    {
-     "name": "latch",
-     "pivot": [
-      20,
-      0,
-      1.5
-     ],
-     "rotation": [
-      0,
-      0,
-      0
-     ],
-     "cubes": [
-      {
-       "origin": [
-        -1,
-        1.5,
-        -1
-       ],
-       "size": [
-        4,
-        1,
-        2
-       ],
-       "uv": [
-        48,
-        8
-       ],
-       "inflate": 0,
-       "mirror": false
-      }
-     ],
-     "children": []
-    }
-   ]
+   "children": []
   }
  ],
  "animations": []
