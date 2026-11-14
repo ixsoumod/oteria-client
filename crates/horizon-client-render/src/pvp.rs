@@ -847,7 +847,21 @@ pub struct Pvp {
     pub mouse: MouseTweaks,
     pub minimap: Minimap,
     pub skins: Skins,
+    pub sky: Sky,
 }
+
+/// Oteria's sky mode: a sky pack (OptiFine's custom sky format) from the player's resourcepacks
+/// folder, put on top of their packs while it is on (`game/oteria_sky.rs`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sky {
+    pub enabled: bool,
+    /// The pack's id (`file/<name>`); empty: the first one found.
+    pub pack: String,
+}
+
+/// The sky packs found in the resourcepacks folder (id, title), which `Opt::SkyPack` steps
+/// through: the game fills it when it looks (`game/oteria_sky.rs`).
+pub static SKY_PACKS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
 
 /// Oteria's cosmetics this client draws for its own player (the Cosmetics page).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -859,7 +873,7 @@ pub struct Skins {
 }
 impl Default for Skins {
     fn default() -> Self {
-        Self { knife: false, inspect_key: "key.keyboard.y".into() }
+        Self { knife: false, inspect_key: "key.keyboard.grave.accent".into() }
     }
 }
 
@@ -1003,6 +1017,7 @@ impl Default for Pvp {
             mouse: MouseTweaks::default(),
             minimap: Minimap::default(),
             skins: Skins::default(),
+            sky: Sky::default(),
         }
     }
 }
@@ -1112,6 +1127,8 @@ impl Pvp {
             "mouseRmb" => self.mouse.rmb = flag(value, self.mouse.rmb),
             "skinKnife" => self.skins.knife = flag(value, self.skins.knife),
             "knifeInspectKey" if value.starts_with("key.") => self.skins.inspect_key = value.to_owned(),
+            "skyMode" => self.sky.enabled = flag(value, self.sky.enabled),
+            "skyPack" => self.sky.pack = value.to_owned(),
             "mapRound" => self.minimap.round = flag(value, self.minimap.round),
             "mapBiome" => self.minimap.biome = flag(value, self.minimap.biome),
             "mapRotate" => self.minimap.rotate = flag(value, self.minimap.rotate),
@@ -1311,6 +1328,7 @@ impl Pvp {
             "skinKnife:{}\nknifeInspectKey:{}\n",
             self.skins.knife, self.skins.inspect_key
         );
+        let _ = write!(out, "skyMode:{}\nskyPack:{}\n", self.sky.enabled, self.sky.pack);
         let mm = &self.minimap;
         let _ = write!(
             out,
@@ -1528,6 +1546,10 @@ opts! {
         "Takes the steady background noise (a fan, a hum) out of your microphone.";
     VoiceSpatial, "voice_spatial", "3D audio",
         "Voices come from where the players are, left or right. Off: everyone in the middle.";
+    Sky, "sky", "Sky mode",
+        "Draws a sky pack from your resourcepacks folder (OptiFine's custom sky format: nebulae, stars, a skybox) in place of the plain sky.";
+    SkyPack, "sky_pack", "Sky",
+        "Which sky pack, among those in your resourcepacks folder.";
     VoiceThreshold, "voice_threshold", "Voice activation level",
         "With Voice: how quiet your speech can be and still be sent. A higher number sends quieter sounds.";
 }
@@ -1613,6 +1635,8 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
     rows.extend([CombatFeel, CombatIndicator, CombatSounds, CombatRules].map(Ok));
     rows.push(Err("horizon.pvp.header.map"));
     rows.extend([MapShape, MapBiome, MapRotate, MapZoom].map(Ok));
+    rows.push(Err("horizon.pvp.header.sky"));
+    rows.extend([Sky, SkyPack].map(Ok));
     rows.push(Err("horizon.pvp.header.mouse"));
     rows.extend(
         [MouseRmb, MouseLmbItem, MouseLmbEmpty, MouseWheelOrder, MouseWheelDirection, MouseScrollScaling]
@@ -1649,6 +1673,8 @@ impl Opt {
             CombatFeel | CombatIndicator | CombatSounds | CombatRules => None,
             ElytraIndicator | Voice => None,
             MapShape | MapBiome | MapRotate | MapZoom => None,
+            Sky => None,
+            SkyPack => Some(Sky),
             MouseRmb | MouseLmbItem | MouseLmbEmpty | MouseWheelOrder | MouseWheelDirection
             | MouseScrollScaling => None,
             VoiceActivation | VoiceKey | VoiceVolume | VoiceMic | VoiceThreshold | VoiceMenuKey
@@ -1704,6 +1730,7 @@ impl Opt {
             Opt::MouseLmbItem => p.mouse.lmb_item,
             Opt::MouseLmbEmpty => p.mouse.lmb_empty,
             Opt::Voice => p.voice.enabled,
+            Opt::Sky => p.sky.enabled,
             Opt::VoiceNoise => p.voice.noise,
             Opt::VoiceSpatial => p.voice.spatial,
             _ => return None,
@@ -1772,6 +1799,13 @@ impl Opt {
             },
             Opt::VoiceKey => crate::keybinds::display_name(&p.voice.key).plain(),
             Opt::VoiceMenuKey => crate::keybinds::display_name(&p.voice.menu_key).plain(),
+            Opt::SkyPack => {
+                let packs = SKY_PACKS.lock().map(|l| l.clone()).unwrap_or_default();
+                match packs.iter().find(|(id, _)| *id == p.sky.pack).or(packs.first()) {
+                    Some((_, title)) => title.clone(),
+                    None => crate::lang::get_or("horizon.pvp.sky.none", "None found"),
+                }
+            }
             Opt::MapShape => match p.minimap.round {
                 true => crate::lang::get_or("horizon.pvp.map.round", "Round"),
                 false => crate::lang::get_or("horizon.pvp.map.square", "Square"),
@@ -1881,6 +1915,16 @@ impl Opt {
             Opt::ClearLava => t.clear_lava = !t.clear_lava,
             Opt::ElytraIndicator => t.elytra_indicator = !t.elytra_indicator,
             Opt::MouseRmb => p.mouse.rmb = !p.mouse.rmb,
+            Opt::Sky => p.sky.enabled = !p.sky.enabled,
+            Opt::SkyPack => {
+                let ids: Vec<String> =
+                    SKY_PACKS.lock().map(|l| l.iter().map(|(id, _)| id.clone()).collect()).unwrap_or_default();
+                if !ids.is_empty() {
+                    let i = ids.iter().position(|id| *id == p.sky.pack).unwrap_or(0);
+                    let k = step(&(0..ids.len()).collect::<Vec<_>>(), i, back);
+                    p.sky.pack = ids[k].clone();
+                }
+            }
             Opt::MapShape => p.minimap.round = !p.minimap.round,
             Opt::MapBiome => p.minimap.biome = !p.minimap.biome,
             Opt::MapRotate => p.minimap.rotate = !p.minimap.rotate,

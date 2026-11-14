@@ -45,6 +45,35 @@ struct Vertex {
     cell: [f32; 4],
 }
 
+/// A layer's texture and its mipmaps, one after the other (the level count, the texels). Each
+/// level halves the one above with a 2x2 box; it stops before a face of the 3x2 grid would have
+/// an odd side, so no level blends one face into the next.
+fn mipmaps(width: u32, height: u32, rgba: &[u8]) -> (u32, std::borrow::Cow<'_, [u8]>) {
+    let even = |w: u32, h: u32| w % 6 == 0 && h % 4 == 0 && w >= 48 && h >= 32;
+    if !even(width, height) {
+        return (1, std::borrow::Cow::Borrowed(rgba));
+    }
+    let mut data = rgba.to_vec();
+    let (mut w, mut h, mut start, mut levels) = (width as usize, height as usize, 0usize, 1u32);
+    while even(w as u32, h as u32) {
+        let (nw, nh) = (w / 2, h / 2);
+        let mut next = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                for c in 0..4 {
+                    let at = |dx: usize, dy: usize| u32::from(data[start + ((2 * y + dy) * w + 2 * x + dx) * 4 + c]);
+                    next[(y * nw + x) * 4 + c] = ((at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) + 2) / 4) as u8;
+                }
+            }
+        }
+        start = data.len();
+        data.extend_from_slice(&next);
+        (w, h) = (nw, nh);
+        levels += 1;
+    }
+    (levels, std::borrow::Cow::Owned(data))
+}
+
 pub(super) struct CustomSky {
     pipelines: Vec<wgpu::RenderPipeline>,
     written_gain: Option<f32>,
@@ -298,6 +327,10 @@ impl CustomSky {
             label: Some("Custom sky"),
             min_filter: wgpu::FilterMode::Linear,
             mag_filter: wgpu::FilterMode::Linear,
+            // Mipmapped and anisotropic: a skybox finer than the screen stays smooth instead of
+            // shimmering, at every angle.
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
@@ -347,6 +380,7 @@ impl CustomSky {
                     );
                     (1, 1, &[0u8; 4][..])
                 };
+                let (levels, data) = mipmaps(width, height, rgba);
                 let texture = device.create_texture_with_data(
                     queue,
                     &wgpu::TextureDescriptor {
@@ -356,7 +390,7 @@ impl CustomSky {
                             height,
                             depth_or_array_layers: 1,
                         },
-                        mip_level_count: 1,
+                        mip_level_count: levels,
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: wgpu::TextureFormat::Rgba8Unorm,
@@ -364,7 +398,7 @@ impl CustomSky {
                         view_formats: &[],
                     },
                     wgpu::util::TextureDataOrder::LayerMajor,
-                    rgba,
+                    &data,
                 );
                 let view = texture.create_view(&Default::default());
                 device.create_bind_group(&wgpu::BindGroupDescriptor {

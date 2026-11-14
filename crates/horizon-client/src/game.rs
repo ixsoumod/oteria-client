@@ -124,6 +124,7 @@ mod oteria_host;
 mod oteria_knife;
 mod oteria_mods;
 mod oteria_profiles;
+mod oteria_sky;
 /// Oteria's voice chat, on Simple Voice Chat's protocol.
 mod oteria_voice;
 /// The voice chat's menu, in Oteria's menu.

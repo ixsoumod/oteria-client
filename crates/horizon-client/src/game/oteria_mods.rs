@@ -115,7 +115,7 @@ macro_rules! hud {
 }
 
 /// Every tile, in the grid's order.
-pub(super) static TILES: [Tile; 28] = [
+pub(super) static TILES: [Tile; 29] = [
     tile!("oteria.mod.fps", "FPS", icon::GAUGE, Hud, hud!(HudFpsCorner), e => e.pvp.hud.fps),
     tile!("oteria.mod.cps", "CPS", icon::MOUSE, Hud, hud!(HudCpsCorner), e => e.pvp.hud.cps),
     tile!("oteria.mod.keystrokes", "Keystrokes", icon::KEYBOARD, Hud, hud!(HudKeysCorner), e => e.pvp.hud.keys),
@@ -163,6 +163,8 @@ pub(super) static TILES: [Tile; 28] = [
     tile!("oteria.mod.lights", "Dynamic Lights", icon::BULB, Visual, &[], e => e.dynamic_lights),
     tile!("oteria.mod.water", "Clear Water", icon::RIPPLE, Visual,
         &[Item::Pvp(Opt::ClearLava)], e => e.pvp.tweaks.clear_water),
+    tile!("oteria.mod.sky", "Sky Mode", icon::MOON_STARS, Visual,
+        &[Item::Pvp(Opt::SkyPack)], e => e.pvp.sky.enabled),
     tile!("oteria.mod.particles", "No Block Particles", icon::SPARKLES, Visual, &[], e => e.hide_block_particles),
     tile!("oteria.mod.minimap", "Minimap", icon::MAP, Utility,
         &[
@@ -1251,6 +1253,9 @@ mod tests {
 
     #[test]
     fn every_setting_steps_and_shows_a_value() {
+        // Two sky packs for the Sky option to step through, as a resourcepacks folder could hold.
+        *horizon_client::pvp::SKY_PACKS.lock().unwrap() =
+            vec![("file/a.zip".into(), "a".into()), ("file/b.zip".into(), "b".into())];
         for tile in &TILES {
             for item in tile.settings {
                 let mut e = Extras::default();

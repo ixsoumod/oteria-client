@@ -193,6 +193,8 @@ impl Game<'_> {
         let first = lang::get_or("oteria.profiles.default", "Default");
         let profiles = Profiles::load(&dir, &first, &self.extras_text());
         let boost = oteria_boost::is_on(&dir);
+        // The Sky mode's packs, as the resourcepacks folder has them now.
+        self.sky_packs_refresh();
         MENU.with(|m| {
             *m.borrow_mut() = Some(Menu {
                 profiles: Some(profiles),

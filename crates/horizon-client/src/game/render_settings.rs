@@ -173,6 +173,7 @@ impl Game<'_> {
             std::sync::atomic::Ordering::Relaxed,
         );
         self.apply_ui_settings();
+        self.sky_mode_changed();
     }
     /// The sprite layers a shader pack draws in the translucent pass: every section is meshed
     /// again when they change.
