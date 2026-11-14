@@ -206,6 +206,9 @@ pub(super) struct Pose {
 /// An animation: its length, its channels and its sounds (time, event, volume, pitch).
 pub(super) struct Anim {
     pub length: f32,
+    /// A stretch played over and over while the key that started it is held (from, to): the
+    /// pose is the same at both ends.
+    repeat: Option<(f32, f32)>,
     blade: Track,
     latch: Track,
     spin: Track,
@@ -249,6 +252,7 @@ const P: f32 = PI;
 /// the other side into the palm while the arm swings across with it; open, the arm comes back.
 pub(super) static DRAW: Anim = Anim {
     length: 1.2,
+    repeat: None,
     blade: &[(0.0, P, Line), (0.20, P, Line), (0.33, 0.0, In), (0.50, -P, Hit), (0.56, -P, Line), (0.72, -2.0 * P, Swing)],
     latch: &[(0.0, 0.0, Line), (0.22, 0.0, Line), (0.36, -P, In), (0.52, -2.0 * P, Hit), (0.58, -2.0 * P, Line), (0.74, -3.0 * P, In), (0.93, -4.0 * P, Hit)],
     spin: &[],
@@ -280,6 +284,7 @@ pub(super) static DRAW: Anim = Anim {
 /// Each throw is the arm's: it cocks back, snaps through and follows on.
 pub(super) static INSPECT: Anim = Anim {
     length: 3.0,
+    repeat: Some((1.12, 1.70)),
     blade: &[(0.0, 0.0, Line), (0.50, 0.0, Line), (0.72, P, Swing), (0.90, P, Line), (1.12, 2.0 * P, Swing), (2.20, 2.0 * P, Line), (2.36, 3.0 * P, Swing), (2.42, 3.0 * P, Line), (2.56, 4.0 * P, Swing)],
     latch: &[(0.0, 0.0, Line), (0.25, 0.0, Line), (0.45, -P, Swing), (0.50, -P, Line), (0.72, 0.0, Swing), (0.90, 0.0, Line), (1.12, P, Swing), (1.75, P, Line), (2.00, 2.0 * P, Swing), (2.05, 2.0 * P, Line), (2.20, P, Swing), (2.36, 2.0 * P, Swing), (2.42, 2.0 * P, Line), (2.56, 3.0 * P, Swing), (2.58, 3.0 * P, Line), (2.72, 4.0 * P, Swing)],
     spin: &[(1.18, 0.0, Line), (1.70, -2.0 * P, Line)],
@@ -287,13 +292,13 @@ pub(super) static INSPECT: Anim = Anim {
     wrist: &[(0.0, 0.0, Line), (0.18, 0.0, Line), (0.25, 0.25, Smooth), (0.40, -0.25, Out), (0.50, 0.15, Smooth), (0.62, -0.30, Out), (0.82, 0.25, Smooth), (0.98, -0.35, Out), (1.12, 0.0, Smooth), (1.70, 0.0, Line), (1.75, 0.25, Smooth), (1.90, -0.30, Out), (2.05, 0.20, Smooth), (2.16, -0.25, Out), (2.36, 0.25, Smooth), (2.50, -0.25, Out), (2.65, 0.15, Smooth), (2.80, 0.0, Smooth)],
     up: &[(0.0, 0.0, Line), (0.25, 1.0, Smooth), (2.75, 1.0, Line), (3.0, 0.0, Smooth)],
     shift: [
-        &[(0.0, 0.0, Line), (0.25, -0.18, Smooth), (0.40, -0.21, Out), (0.62, -0.15, Out), (0.90, -0.20, Smooth), (1.05, -0.16, Out), (1.85, -0.18, Smooth), (2.15, -0.21, Out), (2.45, -0.15, Out), (2.75, -0.18, Smooth), (3.0, 0.0, Smooth)],
-        &[(0.0, 0.0, Line), (0.25, 0.14, Smooth), (1.08, 0.11, Smooth), (1.20, 0.22, Out), (1.40, 0.16, Smooth), (1.72, 0.09, Out), (1.90, 0.14, Smooth), (2.75, 0.14, Line), (3.0, 0.0, Smooth)],
-        &[(1.08, 0.0, Line), (1.20, -0.05, Out), (1.72, 0.03, Out), (1.90, 0.0, Smooth)],
+        &[(0.0, 0.0, Line), (0.25, -0.18, Smooth), (0.40, -0.21, Out), (0.62, -0.15, Out), (0.90, -0.20, Smooth), (1.05, -0.16, Out), (1.12, -0.17, Smooth), (1.70, -0.17, Line), (1.85, -0.18, Smooth), (2.15, -0.21, Out), (2.45, -0.15, Out), (2.75, -0.18, Smooth), (3.0, 0.0, Smooth)],
+        &[(0.0, 0.0, Line), (0.25, 0.14, Smooth), (1.12, 0.11, Smooth), (1.20, 0.22, Out), (1.40, 0.16, Smooth), (1.64, 0.08, Out), (1.70, 0.11, Smooth), (1.90, 0.14, Smooth), (2.75, 0.14, Line), (3.0, 0.0, Smooth)],
+        &[(1.12, 0.0, Line), (1.20, -0.05, Out), (1.64, 0.03, Out), (1.70, 0.0, Smooth)],
     ],
-    tilt: &[(0.0, 0.0, Line), (0.22, 0.10, Smooth), (0.40, -0.25, Out), (0.55, 0.15, Smooth), (0.70, -0.20, Out), (0.88, 0.20, Smooth), (1.05, -0.20, Out), (1.75, 0.15, Smooth), (1.95, -0.20, Out), (2.10, 0.15, Smooth), (2.30, -0.20, Out), (2.45, 0.15, Smooth), (2.65, -0.10, Out), (3.0, 0.0, Smooth)],
-    pitch: &[(0.0, 0.0, Line), (0.25, 0.10, Smooth), (1.08, 0.20, Smooth), (1.20, -0.30, Out), (1.45, -0.10, Smooth), (1.72, 0.20, Out), (1.90, 0.10, Smooth), (2.75, 0.10, Line), (3.0, 0.0, Smooth)],
-    roll: &[(0.0, 0.0, Line), (0.25, 0.35, Smooth), (0.90, 0.20, Smooth), (1.75, 0.25, Smooth), (2.20, -0.25, Smooth), (2.75, 0.30, Smooth), (3.0, 0.0, Smooth)],
+    tilt: &[(0.0, 0.0, Line), (0.22, 0.10, Smooth), (0.40, -0.25, Out), (0.55, 0.15, Smooth), (0.70, -0.20, Out), (0.88, 0.20, Smooth), (1.05, -0.20, Out), (1.12, -0.05, Smooth), (1.70, -0.05, Line), (1.78, 0.15, Smooth), (1.95, -0.20, Out), (2.10, 0.15, Smooth), (2.30, -0.20, Out), (2.45, 0.15, Smooth), (2.65, -0.10, Out), (3.0, 0.0, Smooth)],
+    pitch: &[(0.0, 0.0, Line), (0.25, 0.10, Smooth), (1.12, 0.15, Smooth), (1.20, -0.30, Out), (1.45, -0.10, Smooth), (1.64, 0.20, Out), (1.70, 0.15, Smooth), (1.90, 0.10, Smooth), (2.75, 0.10, Line), (3.0, 0.0, Smooth)],
+    roll: &[(0.0, 0.0, Line), (0.25, 0.35, Smooth), (0.90, 0.20, Smooth), (1.12, 0.22, Smooth), (1.70, 0.22, Line), (1.78, 0.25, Smooth), (2.20, -0.25, Smooth), (2.75, 0.30, Smooth), (3.0, 0.0, Smooth)],
     sounds: &[
         (0.27, SWISH, 0.15, 1.9),
         (0.43, CLICK, 0.6, 1.8),
@@ -301,7 +306,7 @@ pub(super) static INSPECT: Anim = Anim {
         (0.92, SWISH, 0.16, 2.0),
         (1.10, CLICK, 0.6, 1.6),
         (1.18, SWISH, 0.2, 1.5),
-        (1.70, CATCH, 0.55, 1.7),
+        (1.69, CATCH, 0.55, 1.7),
         (1.78, SWISH, 0.15, 2.0),
         (1.98, CLICK, 0.7, 1.9),
         (2.07, SWISH, 0.15, 1.8),
@@ -316,6 +321,31 @@ struct Playing {
     anim: &'static Anim,
     started: Instant,
     played: usize,
+    /// Whether the key that started it is still held (its `repeat` plays on meanwhile).
+    holding: bool,
+    /// The time spent repeating, once the key is let go (s).
+    skipped: f32,
+    /// Where it was last frame (a smaller time: it went round again).
+    last: f32,
+}
+impl Playing {
+    fn new(anim: &'static Anim, holding: bool) -> Self {
+        Self { anim, started: Instant::now(), played: 0, holding, skipped: 0.0, last: 0.0 }
+    }
+    /// Where it is in the animation now.
+    fn time(&self) -> f32 {
+        let t = self.started.elapsed().as_secs_f32() - self.skipped;
+        match self.anim.repeat {
+            Some((from, to)) if self.holding && t > to => from + (t - from) % (to - from),
+            _ => t,
+        }
+    }
+    /// The key is let go: the stretch being repeated plays to its end, then the rest.
+    fn let_go(&mut self) {
+        let now = self.time();
+        self.holding = false;
+        self.skipped = self.started.elapsed().as_secs_f32() - now;
+    }
 }
 #[derive(Default)]
 struct State {
@@ -326,8 +356,8 @@ struct State {
 thread_local! {
     static STATE: RefCell<State> = RefCell::new(State::default());
 }
-fn play(anim: &'static Anim) {
-    STATE.with(|s| s.borrow_mut().playing = Some(Playing { anim, started: Instant::now(), played: 0 }));
+fn play(anim: &'static Anim, holding: bool) {
+    STATE.with(|s| s.borrow_mut().playing = Some(Playing::new(anim, holding)));
 }
 
 /// How the knife sits against the fist's palm side, in the arm's own space (model pixels from
@@ -366,24 +396,40 @@ impl Game<'_> {
         if self.knife_held().is_none() {
             return false;
         }
-        play(&INSPECT);
+        // The key repeating while held doesn't start it again.
+        let holding = STATE.with(|s| s.borrow().playing.as_ref().is_some_and(|p| p.holding));
+        if !holding {
+            play(&INSPECT, true);
+        }
         true
     }
 
-    /// Once a frame: the opening when the knife comes into the hand, and the playing
-    /// animation's sounds as it reaches them; it stops when the knife goes.
+    /// Once a frame: the opening when the knife comes into the hand, the inspect's aerial
+    /// over and over while its key is held, and the playing animation's sounds as it reaches
+    /// them; it stops when the knife goes.
     pub(super) fn knife_frame(&mut self) {
         let held = self.knife_held();
+        let key_down = horizon_client::keybinds::key_code(&self.settings.extras.pvp.skins.inspect_key)
+            .is_some_and(|k| self.physical_keys.contains(&k));
         let due: Vec<(&str, f32, f32)> = STATE.with(|s| {
             let mut s = s.borrow_mut();
             if held != s.held {
                 s.held = held.clone();
-                s.playing = held.is_some().then(|| Playing { anim: &DRAW, started: Instant::now(), played: 0 });
+                s.playing = held.is_some().then(|| Playing::new(&DRAW, false));
             }
             let Some(p) = s.playing.as_mut() else {
                 return Vec::new();
             };
-            let t = p.started.elapsed().as_secs_f32();
+            if p.holding && !key_down {
+                p.let_go();
+            }
+            let t = p.time();
+            if t < p.last {
+                // Round again: the repeated stretch's sounds again.
+                let from = p.anim.repeat.map_or(0.0, |r| r.0);
+                p.played = p.anim.sounds.iter().take_while(|s| s.0 < from).count();
+            }
+            p.last = t;
             let mut due = Vec::new();
             while p.played < p.anim.sounds.len() && p.anim.sounds[p.played].0 <= t {
                 let (_, event, volume, pitch) = p.anim.sounds[p.played];
@@ -424,7 +470,7 @@ impl Game<'_> {
             .or_else(|| STATE.with(|s| {
                 let s = s.borrow();
                 let p = s.playing.as_ref()?;
-                Some((p.anim.pose(p.started.elapsed().as_secs_f32()), std::ptr::eq(p.anim, &DRAW)))
+                Some((p.anim.pose(p.time()), std::ptr::eq(p.anim, &DRAW)))
             }))
             .unwrap_or_default();
         // The opening brings the arm up itself, in place of the game's own lowered hand.
@@ -551,6 +597,18 @@ mod tests {
         // The inspect's aerial: a straight stick, out of the fist.
         let air = INSPECT.pose(1.44);
         assert!(same_angle(air.blade, 0.0) && same_angle(air.latch, PI) && air.toss > 0.2, "{air:?}");
+    }
+
+    #[test]
+    fn the_aerial_repeats_without_a_jump() {
+        let (from, to) = INSPECT.repeat.expect("the inspect repeats its aerial");
+        let (a, b) = (INSPECT.pose(from), INSPECT.pose(to));
+        assert!(same_angle(a.blade, b.blade) && same_angle(a.latch, b.latch) && same_angle(a.spin, b.spin));
+        let near = |x: f32, y: f32| (x - y).abs() < 1e-3;
+        assert!(near(a.toss, b.toss) && near(a.wrist, b.wrist) && near(a.up, b.up), "{a:?} {b:?}");
+        assert!(near(a.tilt, b.tilt) && near(a.pitch, b.pitch) && near(a.roll, b.roll), "{a:?} {b:?}");
+        assert!((0..3).all(|k| near(a.shift[k], b.shift[k])), "{a:?} {b:?}");
+        assert!(DRAW.repeat.is_none());
     }
 
     #[test]
