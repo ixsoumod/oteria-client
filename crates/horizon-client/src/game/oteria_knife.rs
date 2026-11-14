@@ -7,7 +7,7 @@
 //! The knife moves as a real balisong does: the hand holds one handle (the safe one); the blade
 //! turns on that handle's pin, half a turn from shut to open; the other handle (the bite one)
 //! turns on the blade's other pin, half a turn from lying on the blade to lying by the held
-//! handle. Y plays an inspect made of real tricks: a basic close (the bite handle swings over
+//! handle. The inspect key (² by default) plays real tricks: a basic close (the bite handle swings over
 //! onto the blade, then both fold into the hand), a flick out, an aerial (the knife leaves the
 //! hand, turns once in the air and is caught), the flick that opens it, then a fast close and
 //! open, to metal clicks made of the game's own sounds. Only the picture changes: the sword is
