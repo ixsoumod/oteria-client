@@ -1406,6 +1406,8 @@ enum Act {
     PvpPreset,
     /// PvP & HUD's Edit HUD button.
     HudEditor,
+    /// Controls' Keyboard button: Oteria's keyboard of key bindings.
+    Keyboard,
     /// The installed native mod's settings page.
     ModSettings(usize),
     /// A native mod's key (mod, key) waits for a key; a button of its page.
@@ -1425,6 +1427,8 @@ enum Act {
     AccessibilityHelp,
     /// Credits & Attribution's Credits button (WinScreen without the poem).
     Credits,
+    /// Super Secret Settings... (1.8's button, Oteria's `pvp::Secret`): another effect at random.
+    SuperSecret,
     CopyAgentDetails,
     /// AI Agent: start or stop the repro recording.
     ToggleRecording,
@@ -1571,8 +1575,12 @@ pub enum Event {
     NativeButton(usize, usize),
     /// Roll the credits (`CreditsAndAttributionScreen.openCreditsScreen`).
     Credits,
+    /// Super Secret Settings...: another screen effect at random, and a random sound.
+    SuperSecret,
     /// PvP & HUD's Edit HUD: open the HUD editor over the game.
     HudEditor,
+    /// Controls' Keyboard: Oteria's keyboard of key bindings, over the game.
+    Keyboard,
     /// Copy how an agent connects (the AI Agent page).
     CopyAgentDetails,
     /// The AI Agent page's recording button: start or stop.
@@ -2070,7 +2078,7 @@ impl OptionsUi {
             shell.blur_search();
         }
     }
-    /// A switch of `horizon-extras.txt` as the Extras page draws it: "Caption: On".
+    /// A switch of `oteria-extras.txt` as the Extras page draws it: "Caption: On".
     fn extra_button(&self, s: &Settings, item: crate::extras::Item) -> Widget {
         let label = Text::option_name_value(
             Text::literal(item.caption_text()),
@@ -2746,6 +2754,13 @@ impl OptionsUi {
                         Act::Push(Page::KeyBinds),
                     )),
                 )];
+                // Oteria's keyboard of key bindings, in a world (it opens over the game).
+                if self.in_world {
+                    rows.push(Row::Buttons(
+                        button(0.0, 0.0, 310.0, tr("oteria.keyboard.open"), Act::Keyboard),
+                        None,
+                    ));
+                }
                 let controls = vanilla_control_options();
                 rows.extend(pairs(&controls));
                 // Horizon's controller page, after vanilla's rows.
@@ -2950,8 +2965,19 @@ impl OptionsUi {
                     ("options.credits_and_attribution", Some(Page::Credits)),
                 ];
                 let entries: &[(&str, Option<Page>)] = &entries;
-                let rows = entries.len().div_ceil(2) as f32;
-                let gy = (61.0 + 30.0f32).min(h - 33.0 - rows * 24.0);
+                // Super Secret Settings... on a row of its own over Music & Sounds, as 1.8 had it.
+                let rows = entries.len().div_ceil(2) as f32 + 1.0;
+                let top_row = (61.0 + 30.0f32).min(h - 33.0 - rows * 24.0);
+                let secret = button(
+                    cx + 4.0,
+                    top_row,
+                    150.0,
+                    tr("oteria.secret.button"),
+                    Act::SuperSecret,
+                );
+                // The effect draws over a world: from the title screen it waits for one.
+                out.push(if self.in_world { secret } else { inactive(secret) });
+                let gy = top_row + 24.0;
                 for (i, (key, page)) in entries.iter().enumerate() {
                     // A last button alone on its row sits in the middle.
                     let alone = i + 1 == entries.len() && entries.len() % 2 == 1;
@@ -4140,8 +4166,10 @@ impl OptionsUi {
                             events.push(Event::Changed);
                         }
                         Act::HudEditor => events.push(Event::HudEditor),
+                        Act::Keyboard => events.push(Event::Keyboard),
                         Act::AccessibilityHelp => events.push(Event::AccessibilityHelp),
                         Act::Credits => events.push(Event::Credits),
+                        Act::SuperSecret => events.push(Event::SuperSecret),
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         Act::ToggleRecording => events.push(Event::ToggleRecording),
                         Act::ExportRepro => events.push(Event::ExportRepro),
@@ -5037,8 +5065,10 @@ impl OptionsUi {
                             events.push(Event::Changed);
                         }
                         Act::HudEditor => events.push(Event::HudEditor),
+                        Act::Keyboard => events.push(Event::Keyboard),
                         Act::AccessibilityHelp => events.push(Event::AccessibilityHelp),
                         Act::Credits => events.push(Event::Credits),
+                        Act::SuperSecret => events.push(Event::SuperSecret),
                         Act::CopyAgentDetails => events.push(Event::CopyAgentDetails),
                         Act::ToggleRecording => events.push(Event::ToggleRecording),
                         Act::ExportRepro => events.push(Event::ExportRepro),

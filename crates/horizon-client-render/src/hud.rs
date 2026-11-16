@@ -2051,9 +2051,20 @@ impl HudBatch {
                 [uv(cx0, cy0), uv(cx1, cy0), uv(cx1, cy1), uv(cx0, cy1)],
                 tl.color,
             );
+            // Each corner's colour, as its UV: a gradient stays one once cut.
+            let colour = |x: f32, y: f32| {
+                let (s, r) = (t(x, x_lo, x_hi), t(y, y_lo, y_hi));
+                let ch = |c: u32, k: u32| ((c >> k) & 0xFF) as f32;
+                [0, 8, 16, 24].into_iter().fold(0u32, |out, k| {
+                    let top = ch(tl.color, k) + (ch(tr.color, k) - ch(tl.color, k)) * s;
+                    let bottom = ch(bl.color, k) + (ch(br.color, k) - ch(bl.color, k)) * s;
+                    out | ((top + (bottom - top) * r).round().clamp(0.0, 255.0) as u32) << k
+                })
+            };
             let end = self.vertices.len();
             for v in &mut self.vertices[end - 6..] {
                 v.text = tl.text;
+                v.color = colour(v.pos[0], v.pos[1]);
             }
         }
         moved.push(self.vertices.len() as u32);

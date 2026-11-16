@@ -57,6 +57,11 @@ fn static_entity_shader() -> String {
 mod crumbling_tests;
 mod entity_batch;
 mod entity_outline;
+mod motion_blur;
+pub use motion_blur::blur_share;
+mod oteria_secret;
+mod oteria_environment;
+pub use oteria_environment::EnvironmentFrame;
 mod fluid;
 #[cfg(test)]
 mod inter_stage_tests;
@@ -856,7 +861,7 @@ pub struct Frame<'a> {
     /// Block edits and chunk membership that can change the shader pack's shadow map.
     pub shadow_scene_revision: (u64, u64),
     /// Opt-in reuse of the shader pack's last shadow map when the key still matches
-    /// (`horizon-graphics.txt` `shadowCache`; off by default).
+    /// (`oteria-graphics.txt` `shadowCache`; off by default).
     pub shadow_cache: bool,
     /// Render distance in blocks (fog end).
     pub distance: f32,
@@ -1236,6 +1241,11 @@ pub struct Renderer {
     custom_sky_draws: Vec<crate::custom_sky::Draw>,
     /// The glowing entities' outline (`LevelRenderer.entityOutlineTarget`).
     entity_outline: entity_outline::EntityOutline,
+    /// Oteria's motion blur, after the post effects.
+    motion_blur: motion_blur::MotionBlur,
+    oteria_secret: oteria_secret::Secret,
+    /// Oteria's environment, over the drawn world before the hand.
+    oteria_environment: oteria_environment::Environment,
     panorama: panorama::Panorama,
     /// `RenderPipelines.WORLD_BORDER` and its buffers.
     border_pipeline: wgpu::RenderPipeline,
@@ -5008,6 +5018,9 @@ impl Renderer {
         let section_uploads = upload::Uploads::with_chunk(&device, SECTION_UPLOAD_CHUNK);
         let stars = stars::Stars::new(&device, frame_format);
         let custom_sky = custom_sky::CustomSky::new(&device, frame_format);
+        let motion_blur = motion_blur::MotionBlur::new(&device);
+        let oteria_secret = oteria_secret::Secret::new(&device);
+        let oteria_environment = oteria_environment::Environment::new(&device);
         let entity_outline = entity_outline::EntityOutline::new(
             &device,
             (&entity_shader, &entity_layout, &entity_vertex),
@@ -5144,6 +5157,9 @@ impl Renderer {
             custom_sky,
             custom_sky_draws: Vec::new(),
             entity_outline,
+            motion_blur,
+            oteria_secret,
+            oteria_environment,
             panorama,
             border_pipeline,
             border_group,
@@ -7132,6 +7148,18 @@ impl Renderer {
             self.frame_gen.stop();
         }
         self.frame_gen.on = on;
+    }
+    /// Super Secret Settings' effect for the next frames (`pvp::SECRET_EFFECTS`, 0: off).
+    pub fn set_secret_effect(&mut self, effect: u8) {
+        self.oteria_secret.effect = u32::from(effect);
+    }
+    /// Oteria's motion blur: the history's share in the next frame (0: off), `blur_share`'s.
+    pub fn set_motion_blur(&mut self, amount: f32) {
+        self.motion_blur.amount = if amount.is_finite() { amount.clamp(0.0, 0.98) } else { 0.0 };
+    }
+    /// Oteria's environment for the next frame (`None`: off).
+    pub fn set_environment(&mut self, frame: Option<EnvironmentFrame>) {
+        self.oteria_environment.frame = frame;
     }
     /// `upscale`: output pixels per rendered pixel, for TAA to rebuild (1: native).
     /// `sharpness`: how much TAA's upscaled picture is sharpened, 0..=1.
@@ -10054,6 +10082,7 @@ impl Renderer {
             || (taa && self.world_post.taa)
             || oit_on
             || native_render::render_needs().world_depth
+            || (!frame.title && self.oteria_environment.active())
             || fg;
         // The pack's program reads the vertices this frame's draws bind.
         let pack_draws_terrain = pack_terrain && flat_frame == self.pack_terrain_flat;
@@ -10122,6 +10151,8 @@ impl Renderer {
             && self.hdr.is_none()
             // Frame generation draws the hand over the real and the made frame after the world.
             && fg_frames.is_none()
+            // Oteria's environment reads the world's depth before the hand draws.
+            && !(!frame.title && self.oteria_environment.active())
             && !native_render::world_drawn_hooked();
         if oit_on {
             let size = self
@@ -11797,6 +11828,22 @@ impl Renderer {
                 Some((_, depth)) => (depth, self.world_post.size().unwrap_or(size)),
                 None => (&self.depth, size),
             };
+            // Oteria's environment over the world, before the hand and the tone curve; a
+            // shader pack draws its own world.
+            if !pack_post && !native_post {
+                self.oteria_environment.apply(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &view_target,
+                    self.output.frame.format,
+                    depth,
+                    depth_size,
+                    jittered,
+                    frame.camera,
+                    self.own_timing.as_mut(),
+                );
+            }
             native_render::native_world_drawn(&mut native_render::WorldDrawn {
                 device: &self.device,
                 queue: &self.queue,
@@ -12257,6 +12304,30 @@ impl Renderer {
                 // The scaled world pass drew its own depth buffer.
                 overlay.world_depth.then_some(&self.depth),
                 &frame.post_effects,
+                timing.as_mut(),
+            );
+        }
+        // Oteria's motion blur, on the world with its post effects, before the tone curve.
+        if frame.title {
+            self.motion_blur.amount = 0.0;
+        }
+        self.motion_blur.apply(
+            &self.device,
+            encoder,
+            target_texture,
+            view_target,
+            [self.config.width, self.config.height],
+            timing.as_mut(),
+        );
+        // Super Secret Settings, on the world only.
+        if !frame.title {
+            self.oteria_secret.apply(
+                &self.device,
+                &self.queue,
+                encoder,
+                target_texture,
+                view_target,
+                [self.config.width, self.config.height],
                 timing.as_mut(),
             );
         }

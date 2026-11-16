@@ -23,19 +23,89 @@ pub const KNIFE_PREVIEW: &str = "gui/sprites/oteria_balisong_preview";
 /// game starts in the repository and finds it.
 pub const KNIFE_PRIVATE: &str = "gui/sprites/oteria_balisong_private";
 pub const KNIFE_PRIVATE_FILE: &str = "private/cosmetics/balisong_leopham";
+/// Knives rigged with their arms and animated (Bedrock geometry and animations, as gun packs
+/// ship them: `game/oteria_knife_rig.rs`), each copied on this computer into
+/// `private/cosmetics/` (not in git, like the knife above): `<name>_rig.geo.json`,
+/// `<name>_rig.animation.json`, its texture `<name>_rig.png` and its picture for the Cosmetics
+/// page `<name>_rig.icon.png`. The one chosen there, when it is there, is the knife drawn.
+pub const KNIFE_RIGS: [&str; 6] = ["butterfly", "karambit", "skeleton", "stiletto", "talon", "push"];
+/// Oteria's own wearables (`game/oteria_wear.rs`), drawn on the player in every view: a cape
+/// that hangs and flies as cloth, wings, and an aura. Each comes in styles: an id, its English
+/// name, and its two colours (`0xRRGGBB`): the main one and its light.
+#[derive(Debug, PartialEq, Eq)]
+pub struct WearStyle {
+    pub id: &'static str,
+    pub english: &'static str,
+    pub main: u32,
+    pub light: u32,
+}
+const fn style(id: &'static str, english: &'static str, main: u32, light: u32) -> WearStyle {
+    WearStyle { id, english, main, light }
+}
+pub const CAPES: [WearStyle; 4] = [
+    style("oteria", "Oteria cape", 0x5B_2BB5, 0xC9_A2FF),
+    style("crimson", "Crimson cape", 0x8E_1328, 0xFF_7A86),
+    style("midnight", "Midnight cape", 0x14_2240, 0x6F_C4FF),
+    style("gold", "Royal cape", 0x7A_4A06, 0xFF_D866),
+];
+pub const WINGS: [WearStyle; 3] = [
+    style("dragon", "Dragon wings", 0x3A_1466, 0xB0_6CFF),
+    style("angel", "Angel wings", 0xC8_D4E8, 0xFF_FFFF),
+    style("demon", "Demon wings", 0x2A_0A0E, 0xE0_2A3A),
+];
+pub const AURAS: [WearStyle; 3] = [
+    style("violet", "Violet aura", 0x8A_3CFF, 0xE2_C6FF),
+    style("frost", "Frost aura", 0x2F_9BFF, 0xD6_F3FF),
+    style("ember", "Ember aura", 0xFF_5A1F, 0xFF_E08A),
+];
+/// The style of `id` in `all`.
+pub fn wear_style(all: &'static [WearStyle], id: &str) -> Option<&'static WearStyle> {
+    all.iter().find(|s| s.id == id)
+}
+
+/// A rigged knife's texture's sprite.
+pub fn knife_rig_sprite(name: &str) -> String {
+    format!("gui/sprites/oteria_knife_rig/{name}")
+}
+/// A rigged knife's picture's sprite.
+pub fn knife_rig_icon(name: &str) -> String {
+    format!("gui/sprites/oteria_knife_rig/{name}_icon")
+}
 
 /// The converted knife's file with `extension`, when there is one: under the folder the game
 /// runs in, beside the executable, or in the repository the executable was built in (two folders
 /// up from `target/<profile>/`), as `oteria.cmd` runs it.
 pub fn knife_private_path(extension: &str) -> Option<std::path::PathBuf> {
-    let file = format!("{KNIFE_PRIVATE_FILE}.{extension}");
+    private_path(&format!("{KNIFE_PRIVATE_FILE}.{extension}"))
+}
+/// A rigged knife's file with `extension` (`geo.json`, `animation.json`, `png`, `icon.png`),
+/// looked for as `knife_private_path` looks.
+pub fn knife_rig_path(name: &str, extension: &str) -> Option<std::path::PathBuf> {
+    private_path(&format!("private/cosmetics/{name}_rig.{extension}"))
+}
+/// The rigged knives' files built into this executable (`build.rs`), when the computer it was
+/// built on had them in `private/cosmetics/`.
+static BUILT_IN_RIGS: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/knife_rigs.rs"));
+/// A rigged knife's file with `extension`: the copy on disk (`knife_rig_path`) when there is
+/// one, so a knife can be changed without a rebuild, else the one built in.
+pub fn knife_rig_bytes(name: &str, extension: &str) -> Option<std::borrow::Cow<'static, [u8]>> {
+    if let Some(bytes) = knife_rig_path(name, extension).and_then(|p| std::fs::read(p).ok()) {
+        return Some(std::borrow::Cow::Owned(bytes));
+    }
+    let file = format!("{name}_rig.{extension}");
+    BUILT_IN_RIGS
+        .iter()
+        .find(|(f, _)| *f == file)
+        .map(|(_, bytes)| std::borrow::Cow::Borrowed(*bytes))
+}
+fn private_path(file: &str) -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok();
     let dirs = [
         std::env::current_dir().ok(),
         exe.as_ref().and_then(|e| e.parent()).map(|d| d.to_path_buf()),
         exe.as_ref().and_then(|e| e.ancestors().nth(3)).map(|d| d.to_path_buf()),
     ];
-    dirs.into_iter().flatten().map(|d| d.join(&file)).find(|p| p.is_file())
+    dirs.into_iter().flatten().map(|d| d.join(file)).find(|p| p.is_file())
 }
 
 const ART: [(&str, &[u8]); 6] = [
@@ -72,6 +142,14 @@ pub fn images() -> impl Iterator<Item = (String, u32, u32, Vec<u8>)> {
         .and_then(|p| std::fs::read(p).ok())
         .and_then(|png| crate::pad_glyph::decode(&png))
         .map(|(w, h, pixels)| (KNIFE_PRIVATE.to_owned(), w, h, pixels));
+    let rig = KNIFE_RIGS.iter().flat_map(|&knife| {
+        [(knife_rig_sprite(knife), "png"), (knife_rig_icon(knife), "icon.png")]
+    });
+    let rig = rig.filter_map(|(sprite, ext)| {
+        let png = knife_rig_bytes(sprite.rsplit('/').next()?.trim_end_matches("_icon"), ext)?;
+        let (w, h, pixels) = crate::pad_glyph::decode(&png)?;
+        Some((sprite, w, h, pixels))
+    });
     ART.iter()
         .chain(crate::oteria_icons::ALL.iter())
         .map(|&(name, png)| {
@@ -79,6 +157,7 @@ pub fn images() -> impl Iterator<Item = (String, u32, u32, Vec<u8>)> {
             (name.to_owned(), w, h, pixels)
         })
         .chain(private)
+        .chain(rig)
 }
 
 #[cfg(test)]
@@ -89,6 +168,10 @@ mod tests {
     fn the_art_is_white_on_nothing_at_its_sizes() {
         let sizes = [(LOGO, 160), (ROCKET, 32), (SHIRT, 32), (ELYTRA, 16)];
         for (name, w, h, px) in images() {
+            // Knives copied on this computer are whatever they are.
+            if name == KNIFE_PRIVATE || name.starts_with("gui/sprites/oteria_knife_rig/") {
+                continue;
+            }
             // The knife's texture and picture are in colour, at their own sizes.
             if name == KNIFE || name == KNIFE_PREVIEW {
                 assert_eq!((w, h), if name == KNIFE { (64, 64) } else { (192, 96) }, "{name}");

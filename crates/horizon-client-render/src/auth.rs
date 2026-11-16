@@ -545,6 +545,41 @@ pub fn own_textures(session: &AuthSession) -> Option<crate::skins::Textures> {
     Some(crate::skins::services_profile_textures(&profile))
 }
 
+/// Puts `png` on the signed-in account as its skin (`POST /minecraft/profile/skins`, the
+/// launcher's skin upload): every player then sees it. `slim` for the slim arms. Blocks.
+pub fn upload_skin(session: &AuthSession, png: &[u8], slim: bool) -> Result<(), crate::skins::SkinError> {
+    let boundary = "----oteria-skin-boundary-7d1f";
+    let variant = if slim { "slim" } else { "classic" };
+    let mut body = Vec::with_capacity(png.len() + 512);
+    let head = [
+        format!("--{boundary}"),
+        "Content-Disposition: form-data; name=\"variant\"".to_owned(),
+        String::new(),
+        variant.to_owned(),
+        format!("--{boundary}"),
+        "Content-Disposition: form-data; name=\"file\"; filename=\"skin.png\"".to_owned(),
+        "Content-Type: image/png".to_owned(),
+        String::new(),
+        String::new(),
+    ]
+    .join("\r\n");
+    body.extend_from_slice(head.as_bytes());
+    body.extend_from_slice(png);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    match agent()
+        .post(&format!("{MINECRAFT_PROFILE}/skins"))
+        .set("Authorization", &format!("Bearer {}", session.access_token))
+        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+        .send_bytes(&body)
+    {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(401, _)) => Err("oteria.skin.error.signed_out"),
+        Err(ureq::Error::Status(429, _)) => Err("oteria.skin.error.too_many"),
+        Err(ureq::Error::Status(400, _)) => Err("oteria.skin.error.refused"),
+        Err(_) => Err("oteria.skin.error.offline"),
+    }
+}
+
 /// What the session service says about a player joining this server
 /// (MinecraftServicesSessionService.hasJoinedServer).
 #[derive(Clone, Debug, PartialEq)]

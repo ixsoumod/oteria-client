@@ -2338,10 +2338,10 @@ fn split_sessions(
     }
 }
 
-/// Whether the game's Splitscreen setting is on (`horizon-extras.txt`, `splitscreen:true`): only
+/// Whether the game's Splitscreen setting is on (`oteria-extras.txt`, `splitscreen:true`): only
 /// then do the other accounts' sessions go to it.
 fn splitscreen_on(game_home: &Path) -> bool {
-    std::fs::read_to_string(game_home.join("horizon-extras.txt"))
+    std::fs::read_to_string(game_home.join("oteria-extras.txt"))
         .is_ok_and(|text| text.lines().any(|l| l.trim() == "splitscreen:true"))
 }
 

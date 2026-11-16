@@ -112,7 +112,7 @@ impl Game<'_> {
     pub(super) fn is_anchor(&self, state: BlockStateId) -> bool {
         &*self.res.facts().get(state).name == "minecraft:respawn_anchor"
     }
-    fn anchor_charges(&self, state: BlockStateId) -> i32 {
+    pub(super) fn anchor_charges(&self, state: BlockStateId) -> i32 {
         self.pack
             .assets
             .registry
@@ -121,7 +121,7 @@ impl Game<'_> {
             .and_then(|c| c.parse().ok())
             .unwrap_or(0)
     }
-    fn anchor_with_charges(&self, state: BlockStateId, charges: i32) -> Option<BlockStateId> {
+    pub(super) fn anchor_with_charges(&self, state: BlockStateId, charges: i32) -> Option<BlockStateId> {
         let mut s = self.pack.assets.registry.state(state)?.clone();
         s.properties.insert("charges".into(), charges.to_string());
         self.pack.assets.registry.resolve(&s).ok()

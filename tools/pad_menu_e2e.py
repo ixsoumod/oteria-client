@@ -1640,7 +1640,7 @@ def ring_on(game, rect):
 
 
 def extras_saved(game):
-    path = game.game_home / 'horizon-extras.txt'
+    path = game.game_home / 'oteria-extras.txt'
     return path.read_text() if path.exists() else ''
 
 
@@ -1698,7 +1698,7 @@ def extras_shell(args, name):
         game.pad('south')
         label = game.focused_label()
         check(label and label.endswith('On'), f'A left {AUTO_RECONNECT} as {label}')
-        check('autoReconnect:true' in extras_saved(game), 'the toggle was not saved to horizon-extras.txt')
+        check('autoReconnect:true' in extras_saved(game), 'the toggle was not saved to oteria-extras.txt')
         check('Apply' not in declared(game), f'Extras has no Undo, yet a change declared {declared(game)}')
         shot(game, 'extras-toggled')
 
@@ -1716,7 +1716,7 @@ GRAPHICS_PAGES = ('General', 'Quality', 'Performance', 'Shaders', 'Advanced', 'H
 
 
 def graphics_saved(game):
-    path = game.game_home / 'horizon-graphics.txt'
+    path = game.game_home / 'oteria-graphics.txt'
     return path.read_text() if path.exists() else ''
 
 
@@ -1747,7 +1747,7 @@ def graphics_shell(args, name):
         game.pad('south')
         label = game.focused_label() or ''
         check(label.endswith('Off'), f'A left {FOG} as {label}')
-        check('fog:false' in graphics_saved(game), 'Fog off was not saved to horizon-graphics.txt')
+        check('fog:false' in graphics_saved(game), 'Fog off was not saved to oteria-graphics.txt')
         check(declared(game).get('Apply') is True, f'Undo did not appear: {declared(game)}')
         game.pad('west')
         check(label_of(game, FOG) and label_of(game, FOG)['label'].endswith('On'), f'X did not undo: {labels(game)}')

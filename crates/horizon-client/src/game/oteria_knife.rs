@@ -12,7 +12,11 @@
 //! hand, turns once in the air and is caught), the flick that opens it, then a fast close and
 //! open, to metal clicks made of the game's own sounds. Only the picture changes: the sword is
 //! the sword for the game and the server, and nothing is sent.
+//!
+//! With a rigged knife copied on this computer (`oteria_knife_rig.rs`), that one is drawn in
+//! its place, with its own animations.
 
+use super::oteria_knife_rig::{Rig, rig};
 use super::{Game, Screen};
 use horizon_client::mesher::Vertex;
 use horizon_client::mobs::{Part, Polygon};
@@ -41,7 +45,8 @@ fn model() -> Option<&'static Knife> {
             let (part, sprite) = match private.then(private_model).flatten() {
                 Some(part) => (part, horizon_client::oteria_art::KNIFE_PRIVATE),
                 None => {
-                    let bytes = include_bytes!("../../assets/horizon/cosmetics/oteria_balisong.json");
+                    let bytes =
+                        include_bytes!("../../assets/horizon/cosmetics/oteria_balisong.json");
                     match horizon_cosmetics::Item::parse(bytes) {
                         Ok(item) => {
                             // The file's attachment (its place on a player's arm) is not the hand's.
@@ -58,9 +63,15 @@ fn model() -> Option<&'static Knife> {
             };
             // Its extent along x, open: each part's corners from its pivot.
             let extent = |names: &[&str]| {
-                let xs = part.children.iter().filter(|p| names.contains(&p.name.as_str())).flat_map(|p| {
-                    p.polygons.iter().flat_map(move |poly| poly.vertices.iter().map(move |v| v[0] + p.pose[0]))
-                });
+                let xs = part
+                    .children
+                    .iter()
+                    .filter(|p| names.contains(&p.name.as_str()))
+                    .flat_map(|p| {
+                        p.polygons.iter().flat_map(move |poly| {
+                            poly.vertices.iter().map(move |v| v[0] + p.pose[0])
+                        })
+                    });
                 xs.fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)))
             };
             let (lo, hi) = extent(&["blade", "handle_safe", "handle_latch"]);
@@ -68,7 +79,12 @@ fn model() -> Option<&'static Knife> {
             if lo >= hi {
                 return None;
             }
-            Some(Knife { part, sprite, grip: handle_lo + 0.3 * (handle_hi - handle_lo), length: hi - lo })
+            Some(Knife {
+                part,
+                sprite,
+                grip: handle_lo + 0.3 * (handle_hi - handle_lo),
+                length: hi - lo,
+            })
         })
         .as_ref()
 }
@@ -99,14 +115,20 @@ fn private_model() -> Option<Part> {
         let v = |i: usize| glam::Vec3::new(t[i][0], t[i][1], t[i][2]);
         let n = (v(1) - v(0)).cross(v(2) - v(0)).normalize_or_zero();
         // A triangle as a quad whose last corner is its third.
-        Polygon { normal: n.to_array(), vertices: [t[0], t[1], t[2], t[2]], cull_back: false }
+        Polygon {
+            normal: n.to_array(),
+            vertices: [t[0], t[1], t[2], t[2]],
+            cull_back: false,
+        }
     };
     let children = file
         .parts
         .iter()
         .map(|p| Part {
             name: p.name.clone(),
-            pose: [p.pivot[0], p.pivot[1], p.pivot[2], 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            pose: [
+                p.pivot[0], p.pivot[1], p.pivot[2], 0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+            ],
             polygons: p.triangles.iter().map(polygon).collect(),
             children: Vec::new(),
         })
@@ -127,7 +149,11 @@ fn convert(p: &horizon_cosmetics::Part) -> Part {
         polygons: p
             .faces
             .iter()
-            .map(|f| Polygon { normal: f.normal, vertices: f.vertices, cull_back: false })
+            .map(|f| Polygon {
+                normal: f.normal,
+                vertices: f.vertices,
+                cull_back: false,
+            })
             .collect(),
         children: p.children.iter().map(convert).collect(),
     }
@@ -253,20 +279,92 @@ const P: f32 = PI;
 pub(super) static DRAW: Anim = Anim {
     length: 1.2,
     repeat: None,
-    blade: &[(0.0, P, Line), (0.20, P, Line), (0.33, 0.0, In), (0.50, -P, Hit), (0.56, -P, Line), (0.72, -2.0 * P, Swing)],
-    latch: &[(0.0, 0.0, Line), (0.22, 0.0, Line), (0.36, -P, In), (0.52, -2.0 * P, Hit), (0.58, -2.0 * P, Line), (0.74, -3.0 * P, In), (0.93, -4.0 * P, Hit)],
+    blade: &[
+        (0.0, P, Line),
+        (0.20, P, Line),
+        (0.33, 0.0, In),
+        (0.50, -P, Hit),
+        (0.56, -P, Line),
+        (0.72, -2.0 * P, Swing),
+    ],
+    latch: &[
+        (0.0, 0.0, Line),
+        (0.22, 0.0, Line),
+        (0.36, -P, In),
+        (0.52, -2.0 * P, Hit),
+        (0.58, -2.0 * P, Line),
+        (0.74, -3.0 * P, In),
+        (0.93, -4.0 * P, Hit),
+    ],
     spin: &[],
     toss: &[],
-    wrist: &[(0.0, 0.0, Line), (0.18, 0.30, Smooth), (0.30, -0.40, Out), (0.45, 0.0, Smooth), (0.56, 0.30, Smooth), (0.68, -0.40, Out), (0.92, 0.0, Smooth)],
-    up: &[(0.0, 0.0, Line), (0.14, 0.7, Out), (0.85, 0.7, Line), (1.2, 0.0, Smooth)],
+    wrist: &[
+        (0.0, 0.0, Line),
+        (0.18, 0.30, Smooth),
+        (0.30, -0.40, Out),
+        (0.45, 0.0, Smooth),
+        (0.56, 0.30, Smooth),
+        (0.68, -0.40, Out),
+        (0.92, 0.0, Smooth),
+    ],
+    up: &[
+        (0.0, 0.0, Line),
+        (0.14, 0.7, Out),
+        (0.85, 0.7, Line),
+        (1.2, 0.0, Smooth),
+    ],
     shift: [
-        &[(0.0, 0.05, Line), (0.14, -0.10, Out), (0.20, -0.08, Smooth), (0.33, -0.16, Out), (0.50, -0.07, Smooth), (0.60, -0.10, Smooth), (0.86, -0.22, Smooth), (0.96, -0.20, Smooth), (1.2, 0.0, Smooth)],
-        &[(0.0, -0.50, Line), (0.14, 0.12, Out), (0.30, 0.14, Smooth), (0.50, 0.08, Smooth), (0.62, 0.16, Out), (0.86, 0.06, Smooth), (1.2, 0.0, Smooth)],
+        &[
+            (0.0, 0.05, Line),
+            (0.14, -0.10, Out),
+            (0.20, -0.08, Smooth),
+            (0.33, -0.16, Out),
+            (0.50, -0.07, Smooth),
+            (0.60, -0.10, Smooth),
+            (0.86, -0.22, Smooth),
+            (0.96, -0.20, Smooth),
+            (1.2, 0.0, Smooth),
+        ],
+        &[
+            (0.0, -0.50, Line),
+            (0.14, 0.12, Out),
+            (0.30, 0.14, Smooth),
+            (0.50, 0.08, Smooth),
+            (0.62, 0.16, Out),
+            (0.86, 0.06, Smooth),
+            (1.2, 0.0, Smooth),
+        ],
         &[],
     ],
-    tilt: &[(0.0, 0.7, Line), (0.14, 0.5, Out), (0.20, 0.4, Smooth), (0.33, 0.8, Out), (0.50, 0.4, Smooth), (0.58, 0.35, Smooth), (0.72, 0.7, Out), (0.88, 0.85, Smooth), (1.0, 0.55, Smooth), (1.2, 0.0, Smooth)],
-    pitch: &[(0.0, -0.6, Line), (0.14, 0.0, Out), (0.52, 0.15, Smooth), (0.62, -0.20, Out), (0.90, 0.10, Smooth), (1.2, 0.0, Smooth)],
-    roll: &[(0.0, 0.0, Line), (0.10, 0.1, Smooth), (0.18, 0.25, Smooth), (0.35, 0.05, Smooth), (0.50, 0.1, Smooth), (0.85, -0.1, Smooth), (1.2, 0.0, Smooth)],
+    tilt: &[
+        (0.0, 0.7, Line),
+        (0.14, 0.5, Out),
+        (0.20, 0.4, Smooth),
+        (0.33, 0.8, Out),
+        (0.50, 0.4, Smooth),
+        (0.58, 0.35, Smooth),
+        (0.72, 0.7, Out),
+        (0.88, 0.85, Smooth),
+        (1.0, 0.55, Smooth),
+        (1.2, 0.0, Smooth),
+    ],
+    pitch: &[
+        (0.0, -0.6, Line),
+        (0.14, 0.0, Out),
+        (0.52, 0.15, Smooth),
+        (0.62, -0.20, Out),
+        (0.90, 0.10, Smooth),
+        (1.2, 0.0, Smooth),
+    ],
+    roll: &[
+        (0.0, 0.0, Line),
+        (0.10, 0.1, Smooth),
+        (0.18, 0.25, Smooth),
+        (0.35, 0.05, Smooth),
+        (0.50, 0.1, Smooth),
+        (0.85, -0.1, Smooth),
+        (1.2, 0.0, Smooth),
+    ],
     sounds: &[
         (0.24, SWISH, 0.15, 1.9),
         (0.48, CLICK, 0.6, 1.7),
@@ -285,20 +383,139 @@ pub(super) static DRAW: Anim = Anim {
 pub(super) static INSPECT: Anim = Anim {
     length: 3.0,
     repeat: Some((1.12, 1.70)),
-    blade: &[(0.0, 0.0, Line), (0.50, 0.0, Line), (0.72, P, Swing), (0.90, P, Line), (1.12, 2.0 * P, Swing), (2.20, 2.0 * P, Line), (2.36, 3.0 * P, Swing), (2.42, 3.0 * P, Line), (2.56, 4.0 * P, Swing)],
-    latch: &[(0.0, 0.0, Line), (0.25, 0.0, Line), (0.45, -P, Swing), (0.50, -P, Line), (0.72, 0.0, Swing), (0.90, 0.0, Line), (1.12, P, Swing), (1.75, P, Line), (2.00, 2.0 * P, Swing), (2.05, 2.0 * P, Line), (2.20, P, Swing), (2.36, 2.0 * P, Swing), (2.42, 2.0 * P, Line), (2.56, 3.0 * P, Swing), (2.58, 3.0 * P, Line), (2.72, 4.0 * P, Swing)],
+    blade: &[
+        (0.0, 0.0, Line),
+        (0.50, 0.0, Line),
+        (0.72, P, Swing),
+        (0.90, P, Line),
+        (1.12, 2.0 * P, Swing),
+        (2.20, 2.0 * P, Line),
+        (2.36, 3.0 * P, Swing),
+        (2.42, 3.0 * P, Line),
+        (2.56, 4.0 * P, Swing),
+    ],
+    latch: &[
+        (0.0, 0.0, Line),
+        (0.25, 0.0, Line),
+        (0.45, -P, Swing),
+        (0.50, -P, Line),
+        (0.72, 0.0, Swing),
+        (0.90, 0.0, Line),
+        (1.12, P, Swing),
+        (1.75, P, Line),
+        (2.00, 2.0 * P, Swing),
+        (2.05, 2.0 * P, Line),
+        (2.20, P, Swing),
+        (2.36, 2.0 * P, Swing),
+        (2.42, 2.0 * P, Line),
+        (2.56, 3.0 * P, Swing),
+        (2.58, 3.0 * P, Line),
+        (2.72, 4.0 * P, Swing),
+    ],
     spin: &[(1.18, 0.0, Line), (1.70, -2.0 * P, Line)],
     toss: &[(1.18, 0.0, Line), (1.44, 0.24, Out), (1.70, 0.0, In)],
-    wrist: &[(0.0, 0.0, Line), (0.18, 0.0, Line), (0.25, 0.25, Smooth), (0.40, -0.25, Out), (0.50, 0.15, Smooth), (0.62, -0.30, Out), (0.82, 0.25, Smooth), (0.98, -0.35, Out), (1.12, 0.0, Smooth), (1.70, 0.0, Line), (1.75, 0.25, Smooth), (1.90, -0.30, Out), (2.05, 0.20, Smooth), (2.16, -0.25, Out), (2.36, 0.25, Smooth), (2.50, -0.25, Out), (2.65, 0.15, Smooth), (2.80, 0.0, Smooth)],
-    up: &[(0.0, 0.0, Line), (0.25, 1.0, Smooth), (2.75, 1.0, Line), (3.0, 0.0, Smooth)],
-    shift: [
-        &[(0.0, 0.0, Line), (0.25, -0.18, Smooth), (0.40, -0.21, Out), (0.62, -0.15, Out), (0.90, -0.20, Smooth), (1.05, -0.16, Out), (1.12, -0.17, Smooth), (1.70, -0.17, Line), (1.85, -0.18, Smooth), (2.15, -0.21, Out), (2.45, -0.15, Out), (2.75, -0.18, Smooth), (3.0, 0.0, Smooth)],
-        &[(0.0, 0.0, Line), (0.25, 0.14, Smooth), (1.12, 0.11, Smooth), (1.20, 0.22, Out), (1.40, 0.16, Smooth), (1.64, 0.08, Out), (1.70, 0.11, Smooth), (1.90, 0.14, Smooth), (2.75, 0.14, Line), (3.0, 0.0, Smooth)],
-        &[(1.12, 0.0, Line), (1.20, -0.05, Out), (1.64, 0.03, Out), (1.70, 0.0, Smooth)],
+    wrist: &[
+        (0.0, 0.0, Line),
+        (0.18, 0.0, Line),
+        (0.25, 0.25, Smooth),
+        (0.40, -0.25, Out),
+        (0.50, 0.15, Smooth),
+        (0.62, -0.30, Out),
+        (0.82, 0.25, Smooth),
+        (0.98, -0.35, Out),
+        (1.12, 0.0, Smooth),
+        (1.70, 0.0, Line),
+        (1.75, 0.25, Smooth),
+        (1.90, -0.30, Out),
+        (2.05, 0.20, Smooth),
+        (2.16, -0.25, Out),
+        (2.36, 0.25, Smooth),
+        (2.50, -0.25, Out),
+        (2.65, 0.15, Smooth),
+        (2.80, 0.0, Smooth),
     ],
-    tilt: &[(0.0, 0.0, Line), (0.22, 0.10, Smooth), (0.40, -0.25, Out), (0.55, 0.15, Smooth), (0.70, -0.20, Out), (0.88, 0.20, Smooth), (1.05, -0.20, Out), (1.12, -0.05, Smooth), (1.70, -0.05, Line), (1.78, 0.15, Smooth), (1.95, -0.20, Out), (2.10, 0.15, Smooth), (2.30, -0.20, Out), (2.45, 0.15, Smooth), (2.65, -0.10, Out), (3.0, 0.0, Smooth)],
-    pitch: &[(0.0, 0.0, Line), (0.25, 0.10, Smooth), (1.12, 0.15, Smooth), (1.20, -0.30, Out), (1.45, -0.10, Smooth), (1.64, 0.20, Out), (1.70, 0.15, Smooth), (1.90, 0.10, Smooth), (2.75, 0.10, Line), (3.0, 0.0, Smooth)],
-    roll: &[(0.0, 0.0, Line), (0.25, 0.35, Smooth), (0.90, 0.20, Smooth), (1.12, 0.22, Smooth), (1.70, 0.22, Line), (1.78, 0.25, Smooth), (2.20, -0.25, Smooth), (2.75, 0.30, Smooth), (3.0, 0.0, Smooth)],
+    up: &[
+        (0.0, 0.0, Line),
+        (0.25, 1.0, Smooth),
+        (2.75, 1.0, Line),
+        (3.0, 0.0, Smooth),
+    ],
+    shift: [
+        &[
+            (0.0, 0.0, Line),
+            (0.25, -0.18, Smooth),
+            (0.40, -0.21, Out),
+            (0.62, -0.15, Out),
+            (0.90, -0.20, Smooth),
+            (1.05, -0.16, Out),
+            (1.12, -0.17, Smooth),
+            (1.70, -0.17, Line),
+            (1.85, -0.18, Smooth),
+            (2.15, -0.21, Out),
+            (2.45, -0.15, Out),
+            (2.75, -0.18, Smooth),
+            (3.0, 0.0, Smooth),
+        ],
+        &[
+            (0.0, 0.0, Line),
+            (0.25, 0.14, Smooth),
+            (1.12, 0.11, Smooth),
+            (1.20, 0.22, Out),
+            (1.40, 0.16, Smooth),
+            (1.64, 0.08, Out),
+            (1.70, 0.11, Smooth),
+            (1.90, 0.14, Smooth),
+            (2.75, 0.14, Line),
+            (3.0, 0.0, Smooth),
+        ],
+        &[
+            (1.12, 0.0, Line),
+            (1.20, -0.05, Out),
+            (1.64, 0.03, Out),
+            (1.70, 0.0, Smooth),
+        ],
+    ],
+    tilt: &[
+        (0.0, 0.0, Line),
+        (0.22, 0.10, Smooth),
+        (0.40, -0.25, Out),
+        (0.55, 0.15, Smooth),
+        (0.70, -0.20, Out),
+        (0.88, 0.20, Smooth),
+        (1.05, -0.20, Out),
+        (1.12, -0.05, Smooth),
+        (1.70, -0.05, Line),
+        (1.78, 0.15, Smooth),
+        (1.95, -0.20, Out),
+        (2.10, 0.15, Smooth),
+        (2.30, -0.20, Out),
+        (2.45, 0.15, Smooth),
+        (2.65, -0.10, Out),
+        (3.0, 0.0, Smooth),
+    ],
+    pitch: &[
+        (0.0, 0.0, Line),
+        (0.25, 0.10, Smooth),
+        (1.12, 0.15, Smooth),
+        (1.20, -0.30, Out),
+        (1.45, -0.10, Smooth),
+        (1.64, 0.20, Out),
+        (1.70, 0.15, Smooth),
+        (1.90, 0.10, Smooth),
+        (2.75, 0.10, Line),
+        (3.0, 0.0, Smooth),
+    ],
+    roll: &[
+        (0.0, 0.0, Line),
+        (0.25, 0.35, Smooth),
+        (0.90, 0.20, Smooth),
+        (1.12, 0.22, Smooth),
+        (1.70, 0.22, Line),
+        (1.78, 0.25, Smooth),
+        (2.20, -0.25, Smooth),
+        (2.75, 0.30, Smooth),
+        (3.0, 0.0, Smooth),
+    ],
     sounds: &[
         (0.27, SWISH, 0.15, 1.9),
         (0.43, CLICK, 0.6, 1.8),
@@ -330,7 +547,14 @@ struct Playing {
 }
 impl Playing {
     fn new(anim: &'static Anim, holding: bool) -> Self {
-        Self { anim, started: Instant::now(), played: 0, holding, skipped: 0.0, last: 0.0 }
+        Self {
+            anim,
+            started: Instant::now(),
+            played: 0,
+            holding,
+            skipped: 0.0,
+            last: 0.0,
+        }
     }
     /// Where it is in the animation now.
     fn time(&self) -> f32 {
@@ -369,32 +593,55 @@ const GRIP_SHOWN: [f32; 7] = [-1.0, 11.0, -2.2, 0.0, 0.0, -30.0, 0.4];
 /// The knife's length (blade tip to handle end, in its model units) the grip's size is for.
 const LENGTH: f32 = 41.0;
 fn grips() -> ([f32; 7], [f32; 7]) {
-    let tuned = std::fs::read_to_string("private/knife_pose.txt").ok().and_then(|text| {
-        let v: Vec<f32> = text.split(|c: char| c == ',' || c.is_whitespace()).filter_map(|n| n.parse().ok()).collect();
-        (v.len() == 14).then(|| (v[..7].try_into().unwrap(), v[7..].try_into().unwrap()))
-    });
+    let tuned = std::fs::read_to_string("private/knife_pose.txt")
+        .ok()
+        .and_then(|text| {
+            let v: Vec<f32> = text
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter_map(|n| n.parse().ok())
+                .collect();
+            (v.len() == 14).then(|| (v[..7].try_into().unwrap(), v[7..].try_into().unwrap()))
+        });
     tuned.unwrap_or((GRIP_REST, GRIP_SHOWN))
 }
 
 impl Game<'_> {
     /// Whether `item` in the main hand is drawn as the knife.
     pub(super) fn knife_shown(&self, item: &str) -> bool {
-        self.settings.extras.pvp.skins.knife && item.ends_with("_sword") && model().is_some()
+        self.settings.extras.pvp.skins.knife
+            && item.ends_with("_sword")
+            && (self.knife_rig().is_some() || model().is_some())
+    }
+
+    /// The rig of the knife chosen on the Cosmetics page, when it is on this computer.
+    pub(super) fn knife_rig(&self) -> Option<&'static Rig> {
+        rig(&self.settings.extras.pvp.skins.knife_skin)
     }
 
     /// The selected slot and its item, when it shows as the knife.
     fn knife_held(&self) -> Option<(usize, String)> {
-        let item = self.inventory.get(self.selected).and_then(|s| s.as_ref()).map(|s| s.item.to_string())?;
-        self.knife_shown(&item).then_some((self.selected, item))
+        let item = self
+            .inventory
+            .get(self.selected)
+            .and_then(|s| s.as_ref())
+            .map(|s| s.item.to_string())?;
+        // Another knife chosen is another knife taken in hand.
+        let knife = &self.settings.extras.pvp.skins.knife_skin;
+        self.knife_shown(&item)
+            .then(|| (self.selected, format!("{item}#{knife}")))
     }
 
     /// The inspect key, in play with a sword shown as the knife. True when taken.
     pub(super) fn knife_key_press(&mut self, name: &str) -> bool {
-        if self.screen != Screen::Playing || name != self.settings.extras.pvp.skins.inspect_key {
+        if self.screen != Screen::Playing || name != self.settings.keys.get("key.oteria.inspect") {
             return false;
         }
         if self.knife_held().is_none() {
             return false;
+        }
+        if let Some(rig) = self.knife_rig() {
+            self.knife_rig_inspect(rig);
+            return true;
         }
         // The key repeating while held doesn't start it again.
         let holding = STATE.with(|s| s.borrow().playing.as_ref().is_some_and(|p| p.holding));
@@ -409,8 +656,12 @@ impl Game<'_> {
     /// them; it stops when the knife goes.
     pub(super) fn knife_frame(&mut self) {
         let held = self.knife_held();
-        let key_down = horizon_client::keybinds::key_code(&self.settings.extras.pvp.skins.inspect_key)
-            .is_some_and(|k| self.physical_keys.contains(&k));
+        let key_down =
+            horizon_client::keybinds::key_code(self.settings.keys.get("key.oteria.inspect"))
+                .is_some_and(|k| self.physical_keys.contains(&k));
+        if let Some(rig) = self.knife_rig() {
+            return self.knife_rig_frame(rig, held, key_down);
+        }
         let due: Vec<(&str, f32, f32)> = STATE.with(|s| {
             let mut s = s.borrow_mut();
             if held != s.held {
@@ -460,18 +711,25 @@ impl Game<'_> {
         out: &mut Vec<Vertex>,
     ) -> usize {
         use glam::{EulerRot, Mat4, Quat, Vec3};
+        if let Some(rig) = self.knife_rig() {
+            return self.draw_knife_rig(rig, to_world, left, inverse_height, light, out);
+        }
         // While tuning, `private/knife_t.txt` ("draw 0.3", "inspect 1.2") holds one moment.
-        let frozen = std::fs::read_to_string("private/knife_t.txt").ok().and_then(|text| {
-            let (kind, t) = text.trim().split_once(' ')?;
-            let anim = if kind == "draw" { &DRAW } else { &INSPECT };
-            Some((anim.pose(t.parse().ok()?), kind == "draw"))
-        });
+        let frozen = std::fs::read_to_string("private/knife_t.txt")
+            .ok()
+            .and_then(|text| {
+                let (kind, t) = text.trim().split_once(' ')?;
+                let anim = if kind == "draw" { &DRAW } else { &INSPECT };
+                Some((anim.pose(t.parse().ok()?), kind == "draw"))
+            });
         let (pose, drawing) = frozen
-            .or_else(|| STATE.with(|s| {
-                let s = s.borrow();
-                let p = s.playing.as_ref()?;
-                Some((p.anim.pose(p.time()), std::ptr::eq(p.anim, &DRAW)))
-            }))
+            .or_else(|| {
+                STATE.with(|s| {
+                    let s = s.borrow();
+                    let p = s.playing.as_ref()?;
+                    Some((p.anim.pose(p.time()), std::ptr::eq(p.anim, &DRAW)))
+                })
+            })
             .unwrap_or_default();
         // The opening brings the arm up itself, in place of the game's own lowered hand.
         let inverse_height = if drawing { 0.0 } else { inverse_height };
@@ -485,9 +743,13 @@ impl Game<'_> {
             * Mat4::from_rotation_x(pose.pitch)
             * Mat4::from_translation(-at);
         let slim = self.player_model.as_ref().is_some_and(|m| m.slim);
-        let pivot = self.res.player_arm(slim, left).as_ref().map_or([-5.0 * side, 2.0, 0.0], |a| {
-            [a.pose[0], a.pose[1], a.pose[2]]
-        });
+        let pivot = self
+            .res
+            .player_arm(slim, left)
+            .as_ref()
+            .map_or([-5.0 * side, 2.0, 0.0], |a| {
+                [a.pose[0], a.pose[1], a.pose[2]]
+            });
         let pivot = Vec3::from(pivot) / 16.0;
         // The forearm rolls about its own length (y, in the arm part's space).
         let arm = to_world
@@ -512,7 +774,10 @@ impl Game<'_> {
         let (rest, shown) = grips();
         let g: [f32; 7] = std::array::from_fn(|k| rest[k] + (shown[k] - rest[k]) * pose.up);
         let pin = |name: &str| {
-            part.children.iter().find(|p| p.name == name).map_or(Vec3::ZERO, |p| Vec3::new(p.pose[0], p.pose[1], p.pose[2]))
+            part.children
+                .iter()
+                .find(|p| p.name == name)
+                .map_or(Vec3::ZERO, |p| Vec3::new(p.pose[0], p.pose[1], p.pose[2]))
         };
         let (safe_pin, bite_pin) = (pin("handle_safe"), pin("handle_latch"));
         // The fist closes on the held handle near its pin, the rest of it out of the fist.
@@ -552,7 +817,15 @@ impl Game<'_> {
             }
             q
         };
-        horizon_client::mobs::render_model(part, base, &pose_of, [r.u0, r.v0, r.u1, r.v1], light, 0, out);
+        horizon_client::mobs::render_model(
+            part,
+            base,
+            &pose_of,
+            [r.u0, r.v0, r.u1, r.v1],
+            light,
+            0,
+            out,
+        );
         start
     }
 }
@@ -564,9 +837,19 @@ mod tests {
     #[test]
     fn the_model_reads_and_has_its_moving_parts() {
         let knife = model().expect("the knife's model reads");
-        let names: Vec<&str> = knife.part.children.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = knife
+            .part
+            .children
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
         assert_eq!(names, ["blade", "handle_safe", "handle_latch"]);
-        assert!(knife.length > 20.0 && knife.grip > 0.0, "{} {}", knife.length, knife.grip);
+        assert!(
+            knife.length > 20.0 && knife.grip > 0.0,
+            "{} {}",
+            knife.length,
+            knife.grip
+        );
     }
 
     /// Whole turns are the same pose.
@@ -584,29 +867,54 @@ mod tests {
         assert!(same_angle(inspect.blade, 0.0) && same_angle(inspect.latch, 0.0));
         for anim in [&DRAW, &INSPECT] {
             let end = anim.pose(anim.length);
-            assert!(same_angle(end.blade, 0.0) && same_angle(end.latch, 0.0), "{end:?}");
+            assert!(
+                same_angle(end.blade, 0.0) && same_angle(end.latch, 0.0),
+                "{end:?}"
+            );
             assert!(same_angle(end.spin, 0.0));
             let still = [end.toss, end.wrist, end.up, end.tilt, end.pitch, end.roll];
-            assert!(still.iter().chain(&end.shift).all(|v| v.abs() < 1e-4), "{end:?}");
-            assert!(anim.sounds.windows(2).all(|w| w[0].0 <= w[1].0), "the sounds in order");
+            assert!(
+                still.iter().chain(&end.shift).all(|v| v.abs() < 1e-4),
+                "{end:?}"
+            );
+            assert!(
+                anim.sounds.windows(2).all(|w| w[0].0 <= w[1].0),
+                "the sounds in order"
+            );
             assert!(anim.sounds.last().is_some_and(|s| s.0 < anim.length));
         }
         // The rollover: shut again halfway through the opening.
         let shut = DRAW.pose(0.53);
-        assert!(same_angle(shut.blade, PI) && same_angle(shut.latch, 0.0), "{shut:?}");
+        assert!(
+            same_angle(shut.blade, PI) && same_angle(shut.latch, 0.0),
+            "{shut:?}"
+        );
         // The inspect's aerial: a straight stick, out of the fist.
         let air = INSPECT.pose(1.44);
-        assert!(same_angle(air.blade, 0.0) && same_angle(air.latch, PI) && air.toss > 0.2, "{air:?}");
+        assert!(
+            same_angle(air.blade, 0.0) && same_angle(air.latch, PI) && air.toss > 0.2,
+            "{air:?}"
+        );
     }
 
     #[test]
     fn the_aerial_repeats_without_a_jump() {
         let (from, to) = INSPECT.repeat.expect("the inspect repeats its aerial");
         let (a, b) = (INSPECT.pose(from), INSPECT.pose(to));
-        assert!(same_angle(a.blade, b.blade) && same_angle(a.latch, b.latch) && same_angle(a.spin, b.spin));
+        assert!(
+            same_angle(a.blade, b.blade)
+                && same_angle(a.latch, b.latch)
+                && same_angle(a.spin, b.spin)
+        );
         let near = |x: f32, y: f32| (x - y).abs() < 1e-3;
-        assert!(near(a.toss, b.toss) && near(a.wrist, b.wrist) && near(a.up, b.up), "{a:?} {b:?}");
-        assert!(near(a.tilt, b.tilt) && near(a.pitch, b.pitch) && near(a.roll, b.roll), "{a:?} {b:?}");
+        assert!(
+            near(a.toss, b.toss) && near(a.wrist, b.wrist) && near(a.up, b.up),
+            "{a:?} {b:?}"
+        );
+        assert!(
+            near(a.tilt, b.tilt) && near(a.pitch, b.pitch) && near(a.roll, b.roll),
+            "{a:?} {b:?}"
+        );
         assert!((0..3).all(|k| near(a.shift[k], b.shift[k])), "{a:?} {b:?}");
         assert!(DRAW.repeat.is_none());
     }

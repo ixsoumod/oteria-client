@@ -778,6 +778,22 @@ fn read_offline_skin(path: &std::path::Path, model: &str) -> Result<(Vec<u8>, bo
     Ok((skin, model == "slim"))
 }
 
+/// Why a skin couldn't be had or sent (`skin_by_name`, `auth::upload_skin`): a language key.
+pub type SkinError = &'static str;
+
+/// A player's skin by their name, as the services give it: its PNG and whether it is slim.
+/// Blocks on the network: call it off the main thread.
+pub fn skin_by_name(name: &str) -> Result<(Vec<u8>, bool), SkinError> {
+    let doc = crate::auth::discovery().map_err(|_| "oteria.skin.error.offline")?;
+    let profile =
+        resolve_profile(&NameOrId::Name(name.to_owned()), &doc).ok_or("oteria.skin.error.no_player")?;
+    let (value, signature) = profile.textures().ok_or("oteria.skin.error.no_skin")?;
+    let textures = unpack(&value, signature, texture_uris());
+    let url = textures.skin.ok_or("oteria.skin.error.no_skin")?;
+    let png = http_get(&url).ok_or("oteria.skin.error.offline")?;
+    Ok((png, textures.slim))
+}
+
 /// The signed-in account's own profile properties (`Minecraft.profileFuture`:
 /// `fetchProfile(id, true)`, so its `textures` property is signed), or empty
 /// without an answer. Blocks on the network.

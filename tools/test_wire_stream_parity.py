@@ -18,7 +18,7 @@ over the scenario, and must never fall between two packets of one tick.
   python3 tools/test_wire_stream_parity.py --clients horizon,horizon-legacy   # Legacy (1.8.9) combat feel
 
 The second form plays the same scenarios with two Horizon clients, the second set to the Legacy combat feel with
-every combat extra on (horizon-extras.txt: `LEGACY_EXTRAS`), and compares their streams the same way: the feel
+every combat extra on (oteria-extras.txt: `LEGACY_EXTRAS`), and compares their streams the same way: the feel
 changes what the player sees and hears, never what the client sends, and the 1.8 rules ("in worlds you host")
 never reach a server that isn't the player's own.
 
@@ -72,7 +72,7 @@ TARGET = ('summon minecraft:husk {x} {y} {z} {{NoAI:1b,Silent:1b,PersistenceRequ
 PRELUDE = 10
 # Client ticks between a reset's last teleport and the scenario: the player lands and stands still.
 SETTLE = 40
-# The Legacy client's horizon-extras.txt (crates/horizon-client-render/src/pvp.rs): the 1.8.9 feel, its
+# The Legacy client's oteria-extras.txt (crates/horizon-client-render/src/pvp.rs): the 1.8.9 feel, its
 # indicator and sounds, and the 1.8 rules, which only a world the player hosts may use.
 LEGACY_EXTRAS = 'combatFeel:legacy\ncombatIndicator:true\ncombatSounds:true\ncombatRules:true\n'
 # The clients --clients may name: the first is the reference, the second must send what it sends.
@@ -284,7 +284,7 @@ class HeadlessGame(Game):
             (work / d).mkdir(parents=True)
         if extras:
             # The game folder is the home here (Game runs horizon-ctl there): extras sit next to options.txt.
-            (self.home / 'horizon-extras.txt').write_text(extras)
+            (self.home / 'oteria-extras.txt').write_text(extras)
         self.env = lab.game_env(HORIZON_HOME=self.home, HORIZON_LAUNCHER_HOME=work / 'launcher',
                                 XDG_DATA_HOME=work / 'data', XDG_CONFIG_HOME=work / 'config',
                                 HORIZON_TELEMETRY_URL='off', HORIZON_TICK_SCRIPT=scripts / 'scenario.json')

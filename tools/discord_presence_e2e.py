@@ -9,7 +9,7 @@ The game goes title -> world -> Nether -> quit through horizon-ctl, and the acti
     single     single player on its server thread
     lan        a host opens its world to LAN and a guest joins: the guest shows "Multiplayer",
                the host "Hosting a world" with a party of 2 of 8
-    setting    off in horizon-extras.txt: nothing reaches Discord; the Extras switch
+    setting    off in oteria-extras.txt: nothing reaches Discord; the Extras switch
                turns it on (the activity appears) and off (it is cleared)
     late       Discord starts after the game: found within the 15 s retry
 
@@ -129,7 +129,7 @@ class Game:
         self.ctl = bins / 'horizon-ctl'
         self.home = Path(tempfile.mkdtemp(prefix=f'hzdp-{name}-'))
         if extras:
-            (self.home / 'horizon-extras.txt').write_text(extras)
+            (self.home / 'oteria-extras.txt').write_text(extras)
         self.socket = self.home / 'c.sock'
         self.discord = FakeDiscord()
         if discord_running:
@@ -221,7 +221,7 @@ def extras_row(game, label):
 
 
 def setting(bins):
-    """Off in horizon-extras.txt: Discord never hears from the game. Turned on in Extras: the
+    """Off in oteria-extras.txt: Discord never hears from the game. Turned on in Extras: the
     activity appears; off again: it is cleared."""
     game = Game(bins, 'setting', extras='discordPresence:false\n')
     d = game.discord
@@ -236,7 +236,7 @@ def setting(bins):
         d.wait('turned on', shows('In the menus'))
         game.ctl_run('click', switch['id'])
         d.wait('turned off', lambda a: a is None)
-        assert 'discordPresence:false' in (game.home / 'horizon-extras.txt').read_text()
+        assert 'discordPresence:false' in (game.home / 'oteria-extras.txt').read_text()
         print('  ok: saved off')
         game.quit()
     finally:

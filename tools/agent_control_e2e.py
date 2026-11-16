@@ -1016,7 +1016,7 @@ def no_ai_check(mode, ctl, resources):
     work, env = scratch(mode, resources)
     socket = work / 'c.sock'
     try:
-        (work / 'horizon-extras.txt').write_text('fps:true\nnoAi:true\n')
+        (work / 'oteria-extras.txt').write_text('fps:true\nnoAi:true\n')
         if mode == 'cli':
             for words in (['state'], ['launch', '--world', 'NoAi'], ['logs']):
                 r = subprocess.run([str(ctl), '--socket', str(socket), *words], cwd=work, env=env,
@@ -1040,9 +1040,9 @@ def no_ai_check(mode, ctl, resources):
             log(mode, ['mcp'], {'exit': r.returncode, 'stderr': r.stderr.strip()})
             assert r.returncode == 4 and r.stderr.strip() == f'horizon-ctl mcp: {REFUSAL}', r
             # Turned on during a session: the next call refuses.
-            (work / 'horizon-extras.txt').write_text('noAi:false\n')
+            (work / 'oteria-extras.txt').write_text('noAi:false\n')
             m = Mcp(ctl, socket, work, env)
-            (work / 'horizon-extras.txt').write_text('noAi:true\n')
+            (work / 'oteria-extras.txt').write_text('noAi:true\n')
             try:
                 m('state')
                 raise AssertionError('state ran under No AI')
@@ -1065,7 +1065,7 @@ def setting_check(mode, ctl, out, resources):
     work, env = scratch(mode, resources)
     socket = work / 'c.sock'
     env['HORIZON_CONTROL'] = str(socket)  # the default endpoint, this home's
-    (work / 'horizon-extras.txt').write_text('agentControl:true\n')
+    (work / 'oteria-extras.txt').write_text('agentControl:true\n')
     args = [str(ctl.with_name('horizon-client'))]
     if sys.platform == 'darwin':
         args.append('--offscreen')
@@ -1099,7 +1099,7 @@ def setting_check(mode, ctl, out, resources):
         while socket.exists():
             assert time.time() < deadline, 'Agent Control off, but the socket stayed'
             time.sleep(0.5)
-        assert 'agentControl:false' in (work / 'horizon-extras.txt').read_text()
+        assert 'agentControl:false' in (work / 'oteria-extras.txt').read_text()
         assert game.poll() is None, 'the game exited when Agent Control went off'
         print(f'[{mode}] PASS: setting')
         return True

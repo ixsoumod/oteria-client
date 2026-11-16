@@ -87,7 +87,7 @@ original_write_options = bench.write_options
 
 def write_options(game_dir, distance, version=None):
     text = original_write_options(game_dir, distance, version)
-    (game_dir / 'horizon-graphics.txt').write_text(
+    (game_dir / 'oteria-graphics.txt').write_text(
         f'entityCulling:{CURRENT_MODE}\n'
         'entityCullingPrecheck:64\n'
         'graphicsApi:opengl\n'

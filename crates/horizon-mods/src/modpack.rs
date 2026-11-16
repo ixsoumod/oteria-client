@@ -19,7 +19,7 @@ const OVERRIDES: &str = "overrides/";
 const MAX_OVERRIDE: u64 = 64 << 20;
 const MAX_OVERRIDES: u64 = 256 << 20;
 /// The settings files an override may replace.
-const SETTINGS: [&str; 3] = ["options.txt", "horizon-graphics.txt", "horizon-extras.txt"];
+const SETTINGS: [&str; 3] = ["options.txt", "oteria-graphics.txt", "oteria-extras.txt"];
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]

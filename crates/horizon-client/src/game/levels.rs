@@ -1061,7 +1061,7 @@ mod tests {
         let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
         options.resources = root.to_path_buf();
         options.game_dir = Some(home.to_path_buf());
-        // A fixed name: no generated horizon-player.txt in the working directory.
+        // A fixed name: no generated oteria-player.txt in the working directory.
         options.player_name = Some("H260".into());
         options.execution_role = crate::game::execution_role::ExecutionRole::IntegratedServer;
         let mut game = Game::new(

@@ -133,7 +133,7 @@ pub enum H {
 pub enum Item {
     Vanilla(Opt),
     Horizon(H),
-    /// A Horizon extra that changes the picture (`extras::Item`, kept in `horizon-extras.txt`).
+    /// A Horizon extra that changes the picture (`extras::Item`, kept in `oteria-extras.txt`).
     Extra(crate::extras::Item),
 }
 

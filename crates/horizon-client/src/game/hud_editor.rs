@@ -1,16 +1,15 @@
 //! The HUD editor (`docs/pvp.md`): the PvP & HUD widgets on the game, each in a frame the
 //! player drags anywhere (snapping to the screen's edges and middle and to the other
 //! widgets), resizes by a corner's square (proportionally, between `pvp_hud::SCALES`) or with
-//! the wheel, and sends back to its corner with a right click. In the
-//! middle, Oteria's glass toolbar: the hint, Reset and Done (the widgets' style is on the mods
-//! page). Opened from the PvP & HUD page, the mods page or its key. Nothing here reaches the
-//! server.
+//! the wheel, and sends back to its corner with a right click. At the top, one line says
+//! Escape saves; it goes back to the game, wherever the editor was opened from (the PvP & HUD
+//! page, Oteria's menu or its key). Nothing here reaches the server.
 use super::{Game, Screen};
 use crate::ui_theme::{Face, Ui};
 use horizon_client::{
     hud::{HudBatch, rgba},
     lang,
-    pvp_hud::{self, Layout, Place, WidgetId},
+    pvp_hud::{self, Place, WidgetId},
 };
 
 #[derive(Default)]
@@ -19,12 +18,6 @@ pub(super) struct HudEditor {
     drag: Option<(WidgetId, f32, f32)>,
     /// The lines the dragged box snapped to: a vertical one at x, a horizontal one at y.
     guides: (Option<f32>, Option<f32>),
-    /// Opened from the PvP & HUD page: Done goes back there.
-    from_options: bool,
-    /// Opened from Oteria's mods page: Done goes back there.
-    pub(super) to_oteria: bool,
-    /// Where Reset and Done were drawn (GUI pixels), for clicks.
-    buttons: [[f32; 4]; 2],
     /// A corner held: the widget, its opposite corner (which stays), and its size at 100%.
     resize: Option<(WidgetId, (f32, f32), (f32, f32))>,
 }
@@ -52,10 +45,21 @@ fn resized(
     let (dx, dy) = (cursor.0 - anchor.0, cursor.1 - anchor.1);
     let k = (dx.abs() / base.0.max(1.0)).max(dy.abs() / base.1.max(1.0));
     let scale = (k * 100.0).round().clamp(f32::from(lo), f32::from(hi)) as u8;
-    let size = (base.0 * f32::from(scale) / 100.0, base.1 * f32::from(scale) / 100.0);
+    let size = (
+        base.0 * f32::from(scale) / 100.0,
+        base.1 * f32::from(scale) / 100.0,
+    );
     // The held corner goes where the cursor is; the opposite one stays.
-    let x = if dx < 0.0 { anchor.0 - size.0 } else { anchor.0 };
-    let y = if dy < 0.0 { anchor.1 - size.1 } else { anchor.1 };
+    let x = if dx < 0.0 {
+        anchor.0 - size.0
+    } else {
+        anchor.0
+    };
+    let y = if dy < 0.0 {
+        anchor.1 - size.1
+    } else {
+        anchor.1
+    };
     (scale, (x, y), size)
 }
 
@@ -63,41 +67,24 @@ fn resized(
 const FRAME: u32 = 0xB0FF_FFFF;
 const FRAME_HOT: u32 = 0xFF2B_BFE9;
 const GUIDE: u32 = 0xFF2B_BFE9;
-/// The toolbar's glass and its Done, as `0xRRGGBB` (`oteria_menu::argb`).
-const PANEL: u32 = 0x0B_1119;
-const ACCENT: u32 = 0x2B_BFE9;
-
-fn inside([x, y, w, h]: [f32; 4], (px, py): (f32, f32)) -> bool {
-    px >= x && px < x + w && py >= y && py < y + h
-}
 
 impl Game<'_> {
-    /// Opens the editor over the game, from the page (`from_options`) or the key.
-    pub(super) fn open_hud_editor(&mut self, from_options: bool) {
+    /// Opens the editor over the game (from the PvP & HUD page, Oteria's menu or the key).
+    pub(super) fn open_hud_editor(&mut self, _from_options: bool) {
         if self.player.is_none() || self.title.is_some() {
             return;
         }
         self.keys.clear();
-        self.pvp.editor = Some(HudEditor {
-            from_options,
-            ..HudEditor::default()
-        });
+        self.pvp.editor = Some(HudEditor::default());
         self.screen = Screen::HudEditor;
         self.capture(false);
     }
+    /// Escape: the layout saved, and back to the game.
     pub(super) fn close_hud_editor(&mut self) {
-        let editor = self.pvp.editor.take();
-        let from_options = editor.as_ref().is_some_and(|e| e.from_options);
+        self.pvp.editor = None;
         self.settings.save(&Self::options_path());
-        if editor.is_some_and(|e| e.to_oteria) {
-            self.screen = Screen::Playing;
-            self.open_oteria_mods();
-        } else if from_options {
-            self.open_options_at(false, horizon_client::options_ui::Page::Pvp);
-        } else {
-            self.screen = Screen::Playing;
-            self.capture(true);
-        }
+        self.screen = Screen::Playing;
+        self.capture(true);
     }
     /// The editor key, from the game.
     pub(super) fn hud_editor_key_press(&mut self, name: &str) -> bool {
@@ -143,12 +130,30 @@ impl Game<'_> {
             batch.fill(atlas, x + bw, y, 1.0, bh, c);
             // A square on each corner: drag one to resize.
             for (cx, cy) in [(x, y), (x + bw, y), (x, y + bh), (x + bw, y + bh)] {
-                let over = corner_near([x, y, bw, bh], self.cursor)
-                    .is_some_and(|(at, _)| at == (cx, cy));
+                let over =
+                    corner_near([x, y, bw, bh], self.cursor).is_some_and(|(at, _)| at == (cx, cy));
                 let h = if over { HANDLE + 1.0 } else { HANDLE };
                 let (hx, hy) = (cx - h / 2.0 - 0.5, cy - h / 2.0 - 0.5);
-                batch.fill(atlas, hx - 0.5, hy - 0.5, h + 1.0, h + 1.0, rgba(0, 0, 0, 160));
-                batch.fill(atlas, hx, hy, h, h, colour(if Some(id) == hot { FRAME_HOT } else { 0xFFFF_FFFF }));
+                batch.fill(
+                    atlas,
+                    hx - 0.5,
+                    hy - 0.5,
+                    h + 1.0,
+                    h + 1.0,
+                    rgba(0, 0, 0, 160),
+                );
+                batch.fill(
+                    atlas,
+                    hx,
+                    hy,
+                    h,
+                    h,
+                    colour(if Some(id) == hot {
+                        FRAME_HOT
+                    } else {
+                        0xFFFF_FFFF
+                    }),
+                );
             }
         }
         if let Some(e) = &self.pvp.editor {
@@ -159,71 +164,36 @@ impl Game<'_> {
                 batch.fill(atlas, 0.0, y, w, 1.0, colour(GUIDE));
             }
         }
-        // The toolbar, in Oteria's style: the hint over Reset and Done.
+        // At the top, one line: Escape saves; under it, how to move them, dimmer. Each with a
+        // shadow, over whatever the world shows.
         let argb = super::oteria_menu::argb;
         let mut ui = Ui::new(atlas, batch, self.cursor);
-        let (d, scale) = (ui.density, ui.batch.scale);
-        let gui = |v: f32| v * d / scale;
+        let save = lang::get_or("oteria.hud.esc", "Press Esc to save");
         let hint = lang::get_or(
             "oteria.hud.hint",
             "Drag the widgets · A corner or the wheel: size · Right click: back to its corner",
         );
-        let (bw, bh, gap) = (150.0, 34.0, 10.0);
-        let pw = (ui.measure(Face::Regular, 12.0, &hint) + 40.0).max(2.0 * bw + gap + 32.0);
-        let ph = 96.0;
-        let (px, py) = ((ui.w - pw) / 2.0, (ui.h - ph) / 2.0);
-        ui.rounded(px, py, pw, ph, 12.0, argb(PANEL, 0.82));
-        ui.border(px, py, pw, ph, 12.0, argb(0xFF_FFFF, 0.08));
-        ui.text_centered(Face::Regular, 12.0, px + pw / 2.0, py + 14.0, argb(0xFF_FFFF, 0.7), &hint);
-        let cx = px + pw / 2.0;
-        let places = [
-            [cx - gap / 2.0 - bw, py + 44.0, bw, bh],
-            [cx + gap / 2.0, py + 44.0, bw, bh],
-        ];
-        let labels = [
-            lang::get_or("oteria.hud.reset", "Reset"),
-            lang::get_or("oteria.hud.done", "Done"),
-        ];
-        for (k, (r, label)) in places.iter().zip(&labels).enumerate() {
-            let over = inside(*r, ui.cursor);
-            let fill = match k {
-                0 => argb(0xFF_FFFF, if over { 0.16 } else { 0.08 }),
-                _ => argb(ACCENT, if over { 0.95 } else { 0.78 }),
+        let cx = ui.w / 2.0;
+        for (dy, alpha) in [(1.0, 0.55), (0.0, 1.0)] {
+            let colour = if dy > 0.0 {
+                argb(0x00_0000, alpha)
+            } else {
+                argb(0xFF_FFFF, alpha)
             };
-            ui.rounded(r[0], r[1], r[2], r[3], 8.0, fill);
-            ui.text_centered(Face::Medium, 12.0, r[0] + r[2] / 2.0, r[1] + 9.0, argb(0xFF_FFFF, 1.0), label);
-            horizon_client::widgets::widget_cursor(over, true);
+            ui.text_centered(Face::SemiBold, 15.0, cx + dy, 18.0 + dy, colour, &save);
+        }
+        for (dy, alpha) in [(1.0, 0.45), (0.0, 0.75)] {
+            let colour = if dy > 0.0 {
+                argb(0x00_0000, alpha)
+            } else {
+                argb(0xFF_FFFF, alpha)
+            };
+            ui.text_centered(Face::Regular, 11.0, cx + dy, 42.0 + dy, colour, &hint);
         }
         ui.finish();
-        let rects = places.map(|r| r.map(gui));
-        horizon_client::widgets::record("oteria-hud-reset", rects[0], true);
-        horizon_client::widgets::record("oteria-hud-done", rects[1], true);
-        if let Some(e) = &mut self.pvp.editor {
-            e.buttons = rects;
-        }
     }
-    /// A press: a button, else the widget under the cursor (right button: back to its corner).
+    /// A press on the widget under the cursor (right button: back to its corner).
     pub(super) fn hud_editor_press(&mut self, right: bool) {
-        let pressed = self
-            .pvp
-            .editor
-            .as_ref()
-            .and_then(|e| e.buttons.iter().position(|r| inside(*r, self.cursor)));
-        match pressed {
-            Some(_) if right => return,
-            Some(0) => {
-                self.audio.play_button_click();
-                self.settings.extras.pvp.layout = Layout::default();
-                self.settings.save(&Self::options_path());
-                return;
-            }
-            Some(_) => {
-                self.audio.play_button_click();
-                self.close_hud_editor();
-                return;
-            }
-            None => {}
-        }
         // A corner's square: resizing, around the opposite corner.
         if !right {
             let held = self.pvp.boxes.iter().rev().find_map(|&(id, rect)| {
@@ -316,8 +286,17 @@ mod tests {
         let (scale, at, _) = resized((50.0, 30.0), (40.0, 20.0), (30.0, 20.0));
         assert_eq!((scale, at), (50, (30.0, 20.0)));
         // Never past the limits.
-        assert_eq!(resized((0.0, 0.0), (40.0, 20.0), (1.0, 1.0)).0, pvp_hud::SCALES.0);
-        assert_eq!(resized((0.0, 0.0), (40.0, 20.0), (900.0, 1.0)).0, pvp_hud::SCALES.1);
-        assert!(corner_near(rect, (30.0, 20.0)).is_none(), "the middle is a move");
+        assert_eq!(
+            resized((0.0, 0.0), (40.0, 20.0), (1.0, 1.0)).0,
+            pvp_hud::SCALES.0
+        );
+        assert_eq!(
+            resized((0.0, 0.0), (40.0, 20.0), (900.0, 1.0)).0,
+            pvp_hud::SCALES.1
+        );
+        assert!(
+            corner_near(rect, (30.0, 20.0)).is_none(),
+            "the middle is a move"
+        );
     }
 }

@@ -78,7 +78,7 @@ class Game:
         if seed:
             seed(self.home)
         if saved_split:
-            (self.home / 'horizon-extras.txt').write_text('splitscreen:true\n')
+            (self.home / 'oteria-extras.txt').write_text('splitscreen:true\n')
         self.sockets = Path(tempfile.mkdtemp(prefix='hzse-'))  # short: Unix socket paths
         if pick:
             env['HORIZON_SPLIT_PICK'] = '1'
@@ -457,12 +457,12 @@ def scenario_toggle():
         # Close all options pages to persist, then return.
         for _ in range(3):
             g.ctl(1, 'key', 'esc', 'tap')
-        check('saved enabled', 'splitscreen:true' in (g.home / 'horizon-extras.txt').read_text(), True)
+        check('saved enabled', 'splitscreen:true' in (g.home / 'oteria-extras.txt').read_text(), True)
         page(g)
         g.ctl(1, 'click-button', 'Splitscreen: On')
         for _ in range(3):
             g.ctl(1, 'key', 'esc', 'tap')
-        check('saved disabled', 'splitscreen:false' in (g.home / 'horizon-extras.txt').read_text(), True)
+        check('saved disabled', 'splitscreen:false' in (g.home / 'oteria-extras.txt').read_text(), True)
         check('solo keeps its full view', g.size(1), whole)
     finally:
         g.quit()
@@ -1095,7 +1095,7 @@ def scenario_pack_overlay():
     try:
         log = g.home / 'logs/latest.log'
         stone = 'assets/minecraft/textures/block/stone.png'
-        overlays = [d for d in (g.home / '.horizon-cache/resourcepacks').iterdir() if d.is_dir()]
+        overlays = [d for d in (g.home / '.oteria-cache/resourcepacks').iterdir() if d.is_dir()]
         check('one overlay for the selection', len(overlays), 1)
         check("vanilla's stone in it before", (overlays[0] / stone).exists(), True)
         # The first shader pack of a session turns material maps on, which reloads the packs.

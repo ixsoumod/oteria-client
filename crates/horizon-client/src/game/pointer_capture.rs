@@ -40,6 +40,10 @@ impl Game<'_> {
     /// controller alike.
     pub(super) fn look_turn(&mut self, x: f64, y: f64) {
         self.tutorial.mouse(x, y);
+        // Gliding with the barrel roll on: the mouse flies the plane.
+        if self.barrel_turn(x, y) {
+            return;
+        }
         let zoom = self.zoom_turn_scale();
         self.turn_player(x * zoom, y * zoom);
     }
@@ -82,7 +86,10 @@ impl Game<'_> {
     /// under it, so the load is checked too. Pausing then stopped the integrated server and its
     /// spawn chunks with it, and the loading screen waited for them forever (Oteria).
     pub(super) fn pause_if_inactive(&mut self) {
-        let level_loading = self.remote.as_ref().is_some_and(|r| r.level_load.is_active());
+        let level_loading = self
+            .remote
+            .as_ref()
+            .is_some_and(|r| r.level_load.is_active());
         if self
             .focus_lost
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))

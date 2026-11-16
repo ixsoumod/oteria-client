@@ -11,6 +11,11 @@
 //! The PROFILES tab lists the player's profiles (`oteria_profiles`): Create, and on each card
 //! Use, Rename (typed in place), Duplicate and Delete (a second click confirms).
 //!
+//! A colour option opens a picker under its row, eased open: the ready-made colours, a
+//! saturation and brightness square with a hue bar beside it (dragged, the colour is put on as
+//! it moves), and a field to type `#RRGGBB`. A number option's value is a field that takes
+//! digits only, with its arrows either side.
+//!
 //! As the menu, it moves on the clock: the hover lights, the switches' colours, the scroll and
 //! the way between the grid and a tile's settings all ease towards where they are going.
 
@@ -20,7 +25,7 @@ use horizon_client::extras::{Extras, Item};
 use horizon_client::lang;
 use horizon_client::name_badge;
 use horizon_client::oteria_icons as icon;
-use horizon_client::pvp::{self, DRAWN, Opt};
+use horizon_client::pvp::{self, Colour, DRAWN, Opt};
 
 /// The menu's colours, as `0xRRGGBB` (`argb` makes them the batch's).
 const PANEL: u32 = 0x0B_1119;
@@ -115,7 +120,7 @@ macro_rules! hud {
 }
 
 /// Every tile, in the grid's order.
-pub(super) static TILES: [Tile; 29] = [
+pub(super) static TILES: [Tile; 45] = [
     tile!("oteria.mod.fps", "FPS", icon::GAUGE, Hud, hud!(HudFpsCorner), e => e.pvp.hud.fps),
     tile!("oteria.mod.cps", "CPS", icon::MOUSE, Hud, hud!(HudCpsCorner), e => e.pvp.hud.cps),
     tile!("oteria.mod.keystrokes", "Keystrokes", icon::KEYBOARD, Hud, hud!(HudKeysCorner), e => e.pvp.hud.keys),
@@ -129,6 +134,37 @@ pub(super) static TILES: [Tile; 29] = [
     tile!("oteria.mod.clock", "Clock", icon::CLOCK, Hud, hud!(HudClockCorner), e => e.pvp.hud.clock),
     tile!("oteria.mod.reach", "Reach Display", icon::RULER_2, Hud, hud!(HudReachCorner), e => e.pvp.hud.reach),
     tile!("oteria.mod.speed", "Speed", icon::RUN, Hud, hud!(HudSpeedCorner), e => e.pvp.hud.speed),
+    tile!("oteria.mod.cooldowns", "Cooldowns", icon::CLOCK, Hud, hud!(HudCooldownsCorner), e => e.pvp.hud.cooldowns),
+    tile!("oteria.mod.totems", "Totem Counter", icon::CROWN, Hud, hud!(HudTotemsCorner), e => e.pvp.hud.totems),
+    tile!("oteria.mod.pots", "Pot Counter", icon::FLASK, Hud, hud!(HudPotsCorner), e => e.pvp.hud.pots),
+    tile!("oteria.mod.crystal", "Crystal Optimizer", icon::SPARKLES, Pvp,
+        &[Item::Pvp(Opt::CrystalKeep)], e => e.pvp.crystal.enabled),
+    tile!("oteria.mod.anchor", "Anchor Optimizer", icon::BULB, Pvp,
+        &[Item::Pvp(Opt::AnchorCharge)], e => e.pvp.anchor.enabled),
+    tile!("oteria.mod.pops", "Pop Counter", icon::FLAME, Pvp, &[], e => e.pvp.pops),
+    tile!("oteria.mod.hitboxes", "Hitboxes", icon::BOX, Pvp, &[
+        Item::Pvp(Opt::HitboxPlayers),
+        Item::Pvp(Opt::HitboxHostile),
+        Item::Pvp(Opt::HitboxPassive),
+        Item::Pvp(Opt::HitboxItems),
+        Item::Pvp(Opt::HitboxProjectiles),
+        Item::Pvp(Opt::HitboxCrystals),
+        Item::Pvp(Opt::HitboxOthers),
+        Item::Pvp(Opt::HitboxEyes),
+        Item::Pvp(Opt::HitboxLook),
+        Item::Pvp(Opt::HitboxWidth),
+        Item::Pvp(Opt::HitboxOwn),
+    ], e => e.pvp.hitboxes.enabled),
+    Tile {
+        key: "oteria.mod.secret",
+        english: "Super Secret Settings",
+        icon: icon::EYE,
+        category: Category::Visual,
+        settings: &[Item::Pvp(Opt::Secret)],
+        get: |e: &Extras| e.pvp.secret.effect != 0,
+        // On: Notch's, the first effect; the gear or the Options button picks another.
+        set: |e: &mut Extras, on: bool| e.pvp.secret.effect = u8::from(on),
+    },
     tile!("oteria.mod.crosshair", "Crosshair", icon::CROSSHAIR, Pvp, &[
         Item::Pvp(Opt::CrosshairShape),
         Item::Pvp(Opt::CrosshairSize),
@@ -165,6 +201,27 @@ pub(super) static TILES: [Tile; 29] = [
         &[Item::Pvp(Opt::ClearLava)], e => e.pvp.tweaks.clear_water),
     tile!("oteria.mod.sky", "Sky Mode", icon::MOON_STARS, Visual,
         &[Item::Pvp(Opt::SkyPack)], e => e.pvp.sky.enabled),
+    tile!("oteria.mod.blur", "Motion Blur", icon::RIPPLE, Visual,
+        &[Item::Pvp(Opt::BlurStrength)], e => e.pvp.blur.enabled),
+    tile!("oteria.mod.environment", "Environment", icon::SPARKLES, Visual, &[
+        Item::Pvp(Opt::EnvGround),
+        Item::Pvp(Opt::EnvGroundColour),
+        Item::Pvp(Opt::EnvGroundRadius),
+        Item::Pvp(Opt::EnvParticles),
+        Item::Pvp(Opt::EnvParticlesColour),
+        Item::Pvp(Opt::EnvParticlesAmount),
+        Item::Pvp(Opt::EnvHat),
+        Item::Pvp(Opt::EnvHatColour),
+        Item::Pvp(Opt::EnvSky),
+        Item::Pvp(Opt::EnvSkyColour),
+        Item::Pvp(Opt::EnvFog),
+        Item::Pvp(Opt::EnvFogColour),
+        Item::Pvp(Opt::EnvFogDensity),
+    ], e => e.pvp.environment.enabled),
+    tile!("oteria.mod.time_changer", "Time Changer", icon::CLOCK, Visual,
+        &[Item::Pvp(Opt::ClockTime)], e => e.pvp.clock.enabled),
+    tile!("oteria.mod.weather", "Weather Changer", icon::DROPLET, Visual,
+        &[Item::Pvp(Opt::SkyWeatherPick)], e => e.pvp.sky_weather.enabled),
     tile!("oteria.mod.particles", "No Block Particles", icon::SPARKLES, Visual, &[], e => e.hide_block_particles),
     tile!("oteria.mod.minimap", "Minimap", icon::MAP, Utility,
         &[
@@ -173,6 +230,15 @@ pub(super) static TILES: [Tile; 29] = [
             Item::Pvp(Opt::MapRotate),
             Item::Pvp(Opt::MapZoom),
         ], e => e.minimap),
+    tile!("oteria.mod.tiers", "Tier Tagger", icon::CROWN, Pvp,
+        &[Item::Pvp(Opt::TiersMode)], e => e.pvp.tiers.enabled),
+    tile!("oteria.mod.barrel", "Barrel Roll", icon::FEATHER, Utility, &[
+        Item::Pvp(Opt::BarrelBanking),
+        Item::Pvp(Opt::BarrelRighting),
+        Item::Pvp(Opt::BarrelInvert),
+        Item::Pvp(Opt::BarrelSwitch),
+        Item::Pvp(Opt::BarrelSensitivity),
+    ], e => e.pvp.barrel.enabled),
     tile!("oteria.mod.elytra", "Elytra Indicator", icon::FEATHER, Pvp, &[], e => e.pvp.tweaks.elytra_indicator),
     tile!("oteria.mod.voice", "Voice Chat", icon::MICROPHONE, Utility,
         &[
@@ -196,6 +262,10 @@ pub(super) static TILES: [Tile; 29] = [
             Item::Pvp(Opt::MouseScrollScaling),
             Item::Sort,
         ], e => e.mouse_tweaks),
+    tile!("oteria.mod.zoom", "Zoom", icon::SEARCH, Utility,
+        &[Item::Pvp(Opt::ZoomSmooth), Item::Pvp(Opt::ZoomLevel)], e => e.pvp.zoom.enabled),
+    tile!("oteria.mod.music", "Music", icon::VOLUME, Utility,
+        &[Item::Pvp(Opt::MusicLyrics), Item::Pvp(Opt::MusicCard)], e => e.pvp.music.enabled),
     tile!("oteria.mod.reconnect", "Auto Reconnect", icon::REFRESH, Utility, &[], e => e.auto_reconnect),
     tile!("oteria.mod.nametag", "Own Name Tag", icon::USER, Utility, &[], e => e.own_name_tag),
 ];
@@ -227,6 +297,13 @@ pub(super) enum Action {
     Preset(usize),
     /// The drawn crosshair's pixels, once the stroke is done.
     Pixels([u16; DRAWN]),
+    /// A colour option set (`None`: off); saved when the last field is true (a drag puts each
+    /// step on, and saves when let go).
+    SetColour(Opt, Option<Colour>, bool),
+    /// A number option typed, kept within its range by `Opt::set_number`.
+    SetNumber(Opt, u32),
+    /// A slider dragged (`Opt::set_slider`); saved once let go (the last field true).
+    SetSlider(Opt, u32, bool),
     Profile(ProfileOp),
     /// The menu's rocket: Boost on (true) or off (`oteria_boost`).
     Boost(bool),
@@ -236,6 +313,8 @@ pub(super) enum Action {
     Host(super::oteria_host::HostAction),
     /// The Cosmetics page (`oteria_cosmetics`).
     Cosmetics(super::oteria_cosmetics::CosmeticsAction),
+    /// The Keyboard page (`oteria_keyboard`).
+    Keyboard(super::oteria_keyboard::KeyboardAction),
     Close,
     EditHud,
 }
@@ -282,7 +361,84 @@ pub(super) struct Mods {
     grid: ([f32; 4], f32),
     /// Where things were drawn (GUI pixels), for clicks.
     hits: Vec<([f32; 4], Hit)>,
+    /// The colour option whose picker is open (or closing), and how far it has opened.
+    picker: Option<Picker>,
+    picker_k: f32,
+    /// The number option whose value is being typed, and the digits so far.
+    number: Option<(Opt, String)>,
+    /// What a drag or a typed value asks of the game, taken after each frame.
+    pending: Vec<Action>,
+    /// The slider being dragged: its option, its track (GUI pixels) and the value it is at.
+    slider: Option<(Opt, [f32; 4], u32)>,
 }
+
+/// A colour option's picker.
+#[derive(Clone, Debug, PartialEq)]
+struct Picker {
+    opt: Opt,
+    /// False while it closes.
+    open: bool,
+    /// The colour on the square and the bar: hue (0..1), saturation, brightness.
+    hsv: [f32; 3],
+    /// The hex digits typed, while the field has the keyboard.
+    hex: Option<String>,
+    drag: Option<Drag>,
+    /// The square and the hue bar (GUI pixels), for drags.
+    square: [f32; 4],
+    hue: [f32; 4],
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Drag {
+    Square,
+    Hue,
+}
+/// The picker's height (dp) once open.
+const PICKER_H: f32 = 150.0;
+
+/// `0xRRGGBB` as hue (0..1), saturation and brightness.
+fn rgb_to_hsv(rgb: u32) -> [f32; 3] {
+    let ch = |s: u32| ((rgb >> s) & 0xFF) as f32 / 255.0;
+    let (r, g, b) = (ch(16), ch(8), ch(0));
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let h = if d == 0.0 {
+        0.0
+    } else if max == r {
+        ((g - b) / d).rem_euclid(6.0) / 6.0
+    } else if max == g {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    let s = if max == 0.0 { 0.0 } else { d / max };
+    [h, s, max]
+}
+/// Hue (0..1), saturation and brightness as `0xRRGGBB`.
+fn hsv_to_rgb([h, s, v]: [f32; 3]) -> u32 {
+    let h6 = (h.rem_euclid(1.0)) * 6.0;
+    let c = v * s;
+    let x = c * (1.0 - (h6 % 2.0 - 1.0).abs());
+    let (r, g, b) = match h6 as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    let ch = |t: f32| (((t + m) * 255.0).round().clamp(0.0, 255.0)) as u32;
+    ch(r) << 16 | ch(g) << 8 | ch(b)
+}
+/// A colour as the picker shows it: off and inverted have none of their own.
+fn shown_rgb(c: Option<Colour>) -> u32 {
+    match c {
+        None => 0x2A_2F38,
+        Some(c) => c.argb() & 0xFF_FFFF,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Hit {
     Category(Category),
@@ -303,6 +459,19 @@ enum Hit {
     NameField,
     CopyProfile(usize),
     DeleteProfile(usize),
+    /// A colour option's row: its picker opens, or closes.
+    ColourRow(Opt),
+    /// A ready-made colour in the picker (`None`: off).
+    Swatch(Option<Colour>),
+    Square,
+    HueBar,
+    HexField,
+    /// The picker's background: a click there keeps it open and does nothing.
+    PickerPanel,
+    /// A number option's value: typed.
+    NumberField(Opt),
+    /// A slider's track: pressed, it follows the pointer.
+    Slider(Opt),
 }
 impl Default for Mods {
     fn default() -> Self {
@@ -331,6 +500,11 @@ impl Default for Mods {
             last: None,
             grid: ([0.0; 4], 1.0),
             hits: Vec::new(),
+            picker: None,
+            picker_k: 0.0,
+            number: None,
+            pending: Vec::new(),
+            slider: None,
         }
     }
 }
@@ -370,6 +544,13 @@ fn fit(ui: &Ui, face: Face, size: f32, text: &str, width: f32) -> String {
 }
 
 impl Mods {
+    /// Opens `opt`'s picker, as a click on its row does (tests).
+    #[cfg(test)]
+    fn click_test_picker(&mut self, opt: Opt) {
+        self.hits = vec![([0.0, 0.0, 10.0, 10.0], Hit::ColourRow(opt))];
+        self.click((1.0, 1.0), [0; DRAWN]);
+    }
+
     /// The tiles the filter and the search leave, by index.
     fn shown(&self) -> Vec<usize> {
         let query = self.search.trim().to_lowercase();
@@ -382,7 +563,13 @@ impl Mods {
     /// Escape: out of the search, then out of a tile's settings. False when there was neither
     /// (the menu goes back to its buttons).
     pub(super) fn back(&mut self) -> bool {
-        if self.renaming.take().is_some() {
+        if self.number.take().is_some() {
+            // The digits typed are dropped.
+        } else if let Some(p) = self.picker.as_mut().filter(|p| p.hex.is_some()) {
+            p.hex = None;
+        } else if let Some(p) = self.picker.as_mut().filter(|p| p.open) {
+            p.open = false;
+        } else if self.renaming.take().is_some() {
             // The name typed is dropped; the profile keeps its own.
         } else if self.typing {
             self.typing = false;
@@ -397,7 +584,13 @@ impl Mods {
 
     /// A press at `cursor` (GUI pixels): what the game should do, if anything.
     pub(super) fn click(&mut self, cursor: (f32, f32), crosshair: [u16; DRAWN]) -> Option<Action> {
-        let hit = self.hits.iter().rev().find(|(r, _)| inside(*r, cursor)).map(|h| h.1);
+        let found = self
+            .hits
+            .iter()
+            .rev()
+            .find(|(r, _)| inside(*r, cursor))
+            .copied();
+        let hit = found.map(|h| h.1);
         // A name being typed is kept by a click anywhere else.
         if self.renaming.is_some() && hit != Some(Hit::NameField) {
             return self.commit_name();
@@ -405,8 +598,75 @@ impl Mods {
         if !matches!(hit, Some(Hit::DeleteProfile(_))) {
             self.confirm = None;
         }
+        // A number being typed is put on by a click anywhere else.
+        if self
+            .number
+            .as_ref()
+            .is_some_and(|(o, _)| hit != Some(Hit::NumberField(*o)))
+        {
+            self.commit_number();
+        }
+        if let Some(p) = self.picker.as_mut()
+            && hit != Some(Hit::HexField)
+        {
+            p.hex = None;
+        }
         self.typing = hit == Some(Hit::Search);
         match hit? {
+            Hit::ColourRow(opt) => {
+                match self.picker.as_mut() {
+                    Some(p) if p.opt == opt && p.open => p.open = false,
+                    _ => {
+                        self.picker = Some(Picker {
+                            opt,
+                            open: true,
+                            hsv: [0.0, 0.0, 1.0],
+                            hex: None,
+                            drag: None,
+                            square: [0.0; 4],
+                            hue: [0.0; 4],
+                        });
+                        // Its colour is read on the first frame it draws.
+                        self.picker_k = 0.0;
+                    }
+                }
+                None
+            }
+            Hit::Swatch(colour) => {
+                let p = self.picker.as_mut()?;
+                if let Some(c) = colour {
+                    p.hsv = rgb_to_hsv(c.argb() & 0xFF_FFFF);
+                }
+                Some(Action::SetColour(p.opt, colour, true))
+            }
+            Hit::Square | Hit::HueBar => {
+                let p = self.picker.as_mut()?;
+                p.drag = Some(if hit == Some(Hit::Square) {
+                    Drag::Square
+                } else {
+                    Drag::Hue
+                });
+                self.drag_picker(cursor);
+                None
+            }
+            Hit::HexField => {
+                let p = self.picker.as_mut()?;
+                p.hex.get_or_insert_with(String::new);
+                None
+            }
+            Hit::PickerPanel => None,
+            Hit::Slider(opt) => {
+                let track = found?.0;
+                self.slider = Some((opt, track, u32::MAX));
+                self.drag_slider(cursor);
+                None
+            }
+            Hit::NumberField(opt) => {
+                if self.number.as_ref().is_none_or(|(o, _)| *o != opt) {
+                    self.number = Some((opt, String::new()));
+                }
+                None
+            }
             Hit::Tab(tab) => {
                 if self.tab != tab {
                     self.tab = tab;
@@ -446,6 +706,7 @@ impl Mods {
             Hit::EditHud => Some(Action::EditHud),
             Hit::Toggle(i) => Some(Action::Toggle(i)),
             Hit::Gear(i) => {
+                (self.picker, self.number) = (None, None);
                 self.open = Some(i);
                 self.shown = i;
                 self.rows.clear();
@@ -453,6 +714,7 @@ impl Mods {
                 None
             }
             Hit::Back => {
+                (self.picker, self.number) = (None, None);
                 self.open = None;
                 self.target = 0.0;
                 None
@@ -477,6 +739,21 @@ impl Mods {
     /// The left button let go at `cursor` (GUI pixels): the end of a stroke on the grid, if one
     /// was on.
     pub(super) fn release(&mut self, cursor: (f32, f32)) -> Option<Action> {
+        if self.slider.is_some() {
+            self.drag_slider(cursor);
+            let (opt, _, v) = self.slider.take()?;
+            return Some(Action::SetSlider(opt, v, true));
+        }
+        if self.picker.as_ref().is_some_and(|p| p.drag.is_some()) {
+            self.drag_picker(cursor);
+            let p = self.picker.as_mut()?;
+            p.drag = None;
+            return Some(Action::SetColour(
+                p.opt,
+                Some(Colour::Custom(hsv_to_rgb(p.hsv))),
+                true,
+            ));
+        }
         self.stroke(cursor);
         self.paint = None;
         self.last = None;
@@ -512,6 +789,74 @@ impl Mods {
         (cx < DRAWN && cy < DRAWN).then_some((cx, cy))
     }
 
+    /// A drag on the picker's square or hue bar goes on under `cursor` (GUI pixels): the colour
+    /// is put on as it moves, saved when let go (`release`).
+    fn drag_picker(&mut self, (x, y): (f32, f32)) {
+        let Some(p) = self.picker.as_mut() else {
+            return;
+        };
+        let at = |[rx, ry, rw, rh]: [f32; 4]| {
+            (
+                ((x - rx) / rw.max(1.0)).clamp(0.0, 1.0),
+                ((y - ry) / rh.max(1.0)).clamp(0.0, 1.0),
+            )
+        };
+        let before = p.hsv;
+        match p.drag {
+            Some(Drag::Square) => {
+                let (s, v) = at(p.square);
+                (p.hsv[1], p.hsv[2]) = (s, 1.0 - v);
+            }
+            Some(Drag::Hue) => p.hsv[0] = at(p.hue).1.min(0.999),
+            None => return,
+        }
+        if p.hsv != before {
+            let colour = Some(Colour::Custom(hsv_to_rgb(p.hsv)));
+            self.pending.push(Action::SetColour(p.opt, colour, false));
+        }
+    }
+
+    /// A slider's drag goes on under `cursor` (GUI pixels): its value is put on as it moves,
+    /// saved when let go (`release`).
+    fn drag_slider(&mut self, (x, _): (f32, f32)) {
+        let Some((opt, [tx, _, tw, _], v)) = self.slider.as_mut() else {
+            return;
+        };
+        let Some((lo, hi)) = opt.slider() else {
+            return;
+        };
+        let k = ((x - *tx) / tw.max(1.0)).clamp(0.0, 1.0);
+        let next = lo + ((hi - lo) as f32 * k).round() as u32;
+        if next != *v {
+            *v = next;
+            self.pending.push(Action::SetSlider(*opt, next, false));
+        }
+    }
+
+    /// The typed number put on (Enter, or a click elsewhere); nothing typed keeps the value.
+    fn commit_number(&mut self) {
+        if let Some((opt, digits)) = self.number.take()
+            && let Ok(v) = digits.parse::<u32>()
+        {
+            self.pending.push(Action::SetNumber(opt, v));
+        }
+    }
+
+    /// Enter: a typed number or colour put on, the search left.
+    pub(super) fn enter(&mut self) -> Option<Action> {
+        self.commit_number();
+        if let Some(p) = self.picker.as_mut() {
+            p.hex = None;
+        }
+        self.typing = false;
+        None
+    }
+
+    /// What drags and typed values asked since the last frame.
+    pub(super) fn take_pending(&mut self) -> Vec<Action> {
+        std::mem::take(&mut self.pending)
+    }
+
     /// The name typed for a profile, to give it (Enter, or a click elsewhere). None when nothing
     /// was typed: it keeps its name.
     pub(super) fn commit_name(&mut self) -> Option<Action> {
@@ -521,7 +866,10 @@ impl Mods {
 
     /// Whether the keyboard goes to the page: the search, or a profile's name.
     pub(super) fn wants_keys(&self) -> bool {
-        self.typing || self.renaming.is_some()
+        self.typing
+            || self.renaming.is_some()
+            || self.number.is_some()
+            || self.picker.as_ref().is_some_and(|p| p.hex.is_some())
     }
 
     /// The wheel turned by `lines` (positive: up).
@@ -531,6 +879,34 @@ impl Mods {
 
     /// A key while the search field has the keyboard: typed text, or Backspace. True when taken.
     pub(super) fn type_key(&mut self, text: Option<&str>, backspace: bool) -> bool {
+        // A number: digits only, three at most.
+        if let Some((_, digits)) = self.number.as_mut() {
+            if backspace {
+                digits.pop();
+            } else if let Some(text) = text {
+                let room = 3usize.saturating_sub(digits.len());
+                digits.extend(text.chars().filter(char::is_ascii_digit).take(room));
+            }
+            return true;
+        }
+        // A colour: six hex digits, put on once all six are there.
+        if let Some(p) = self.picker.as_mut()
+            && let Some(hex) = p.hex.as_mut()
+        {
+            if backspace {
+                hex.pop();
+            } else if let Some(text) = text {
+                let room = 6usize.saturating_sub(hex.len());
+                hex.extend(text.chars().filter(char::is_ascii_hexdigit).take(room));
+            }
+            if hex.len() == 6
+                && let Some(c) = Colour::parse(hex)
+            {
+                p.hsv = rgb_to_hsv(c.argb() & 0xFF_FFFF);
+                self.pending.push(Action::SetColour(p.opt, Some(c), true));
+            }
+            return true;
+        }
         if let Some((_, name)) = self.renaming.as_mut() {
             if backspace {
                 name.pop();
@@ -585,8 +961,11 @@ impl Mods {
             hits: std::mem::take(&mut self.hits),
         };
 
-        // A stroke on the grid goes on under the pointer while the button is down.
+        // A stroke on the grid goes on under the pointer while the button is down, as a drag on
+        // the colour picker.
         self.stroke(cursor);
+        self.drag_picker(cursor);
+        self.drag_slider(cursor);
 
         // The glass panel.
         ui.rounded(px, py, pw, ph, 14.0, argb(PANEL, 0.80 * a));
@@ -596,15 +975,44 @@ impl Mods {
         let hh = 50.0;
         if let Some(r) = ui.atlas.sprites.get(name_badge::SPRITE).copied() {
             let s = 32.0 / d;
-            ui.batch.rect_uv(gui(px + 18.0), gui(py + (hh - s) / 2.0), gui(s), gui(s), r, argb(WHITE, a));
+            ui.batch.rect_uv(
+                gui(px + 18.0),
+                gui(py + (hh - s) / 2.0),
+                gui(s),
+                gui(s),
+                r,
+                argb(WHITE, a),
+            );
         }
         let tx = px + 18.0 + 32.0 / d + 8.0;
         let bw = ui.measure(Face::SemiBold, 14.0, "OTERIA");
-        ui.text(Face::SemiBold, 14.0, tx, py + (hh - 20.0) / 2.0, argb(WHITE, a), "OTERIA");
-        ui.text(Face::Regular, 14.0, tx + bw, py + (hh - 20.0) / 2.0, argb(WHITE, 0.75 * a), " CLIENT");
+        ui.text(
+            Face::SemiBold,
+            14.0,
+            tx,
+            py + (hh - 20.0) / 2.0,
+            argb(WHITE, a),
+            "OTERIA",
+        );
+        ui.text(
+            Face::Regular,
+            14.0,
+            tx + bw,
+            py + (hh - 20.0) / 2.0,
+            argb(WHITE, 0.75 * a),
+            " CLIENT",
+        );
         let tabs = [
-            (lang::get_or("oteria.mods.tab", "MODS"), Tab::Mods, "oteria-tab-mods"),
-            (lang::get_or("oteria.profiles.tab", "PROFILES"), Tab::Profiles, "oteria-tab-profiles"),
+            (
+                lang::get_or("oteria.mods.tab", "MODS"),
+                Tab::Mods,
+                "oteria-tab-mods",
+            ),
+            (
+                lang::get_or("oteria.profiles.tab", "PROFILES"),
+                Tab::Profiles,
+                "oteria-tab-profiles",
+            ),
         ];
         let mut tab_x = px + 200.0;
         for (label, tab, id) in &tabs {
@@ -612,12 +1020,23 @@ impl Mods {
             let lw = ui.measure(Face::Medium, 11.0, label) + 28.0;
             let r = [tab_x, py + (hh - 28.0) / 2.0, lw, 28.0];
             let over = inside(r, pointer);
-            let fill = if *on { argb(ACCENT, 0.24 * a) } else { argb(WHITE, if over { 0.10 } else { 0.04 } * a) };
+            let fill = if *on {
+                argb(ACCENT, 0.24 * a)
+            } else {
+                argb(WHITE, if over { 0.10 } else { 0.04 } * a)
+            };
             ui.rounded(r[0], r[1], r[2], r[3], 7.0, fill);
             if *on {
                 ui.border(r[0], r[1], r[2], r[3], 7.0, argb(ACCENT, 0.55 * a));
             }
-            ui.text(Face::Medium, 11.0, r[0] + 14.0, r[1] + (28.0 - 16.0) / 2.0, argb(WHITE, a), label);
+            ui.text(
+                Face::Medium,
+                11.0,
+                r[0] + 14.0,
+                r[1] + (28.0 - 16.0) / 2.0,
+                argb(WHITE, a),
+                label,
+            );
             if !*on {
                 page.hit(r, Hit::Tab(*tab));
                 horizon_client::widgets::record(id, r.map(gui), true);
@@ -626,10 +1045,34 @@ impl Mods {
         }
         let close = [px + pw - 18.0 - 32.0, py + (hh - 32.0) / 2.0, 32.0, 32.0];
         let over = inside(close, pointer);
-        ui.rounded(close[0], close[1], close[2], close[3], 8.0, argb(if over { OFF } else { WHITE }, if over { 0.85 } else { 0.06 } * a));
-        page.icon(ui, icon::X, close[0] + 16.0, close[1] + 16.0, argb(WHITE, a), false);
+        ui.rounded(
+            close[0],
+            close[1],
+            close[2],
+            close[3],
+            8.0,
+            argb(
+                if over { OFF } else { WHITE },
+                if over { 0.85 } else { 0.06 } * a,
+            ),
+        );
+        page.icon(
+            ui,
+            icon::X,
+            close[0] + 16.0,
+            close[1] + 16.0,
+            argb(WHITE, a),
+            false,
+        );
         page.hit(close, Hit::Close);
-        ui.rounded(px + 14.0, py + hh, pw - 28.0, 1.0, 0.0, argb(WHITE, 0.08 * a));
+        ui.rounded(
+            px + 14.0,
+            py + hh,
+            pw - 28.0,
+            1.0,
+            0.0,
+            argb(WHITE, 0.08 * a),
+        );
 
         // The tabs' crossfade: the mods' body out as the profiles come in, and back.
         let goal = if self.tab == Tab::Profiles { 1.0 } else { 0.0 };
@@ -655,18 +1098,53 @@ impl Mods {
                 } else if over {
                     ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(WHITE, 0.06 * a));
                 }
-                page.icon(ui, category.icon(), r[0] + 22.0, r[1] + 16.0, argb(WHITE, if on || over { 1.0 } else { 0.7 } * a), false);
+                page.icon(
+                    ui,
+                    category.icon(),
+                    r[0] + 22.0,
+                    r[1] + 16.0,
+                    argb(WHITE, if on || over { 1.0 } else { 0.7 } * a),
+                    false,
+                );
                 let colour = argb(WHITE, if on || over { 1.0 } else { 0.72 } * a);
-                ui.text(Face::Medium, 12.0, r[0] + 44.0, r[1] + (32.0 - 17.0) / 2.0, colour, &category.name());
+                ui.text(
+                    Face::Medium,
+                    12.0,
+                    r[0] + 44.0,
+                    r[1] + (32.0 - 17.0) / 2.0,
+                    colour,
+                    &category.name(),
+                );
                 page.hit(r, Hit::Category(*category));
                 horizon_client::widgets::record(&format!("oteria-cat-{k}"), r.map(gui), true);
             }
             let edit = [lx, py + ph - 14.0 - 36.0, lw, 36.0];
             let over = inside(edit, pointer);
-            ui.rounded(edit[0], edit[1], edit[2], edit[3], 9.0, argb(ACCENT, if over { 0.95 } else { 0.75 } * a));
-            page.icon(ui, icon::LAYOUT, edit[0] + 22.0, edit[1] + 18.0, argb(WHITE, a), false);
+            ui.rounded(
+                edit[0],
+                edit[1],
+                edit[2],
+                edit[3],
+                9.0,
+                argb(ACCENT, if over { 0.95 } else { 0.75 } * a),
+            );
+            page.icon(
+                ui,
+                icon::LAYOUT,
+                edit[0] + 22.0,
+                edit[1] + 18.0,
+                argb(WHITE, a),
+                false,
+            );
             let edit_label = lang::get_or("oteria.mods.edit_hud", "Edit HUD");
-            ui.text(Face::Medium, 12.0, edit[0] + 44.0, edit[1] + (36.0 - 17.0) / 2.0, argb(WHITE, a), &edit_label);
+            ui.text(
+                Face::Medium,
+                12.0,
+                edit[0] + 44.0,
+                edit[1] + (36.0 - 17.0) / 2.0,
+                argb(WHITE, a),
+                &edit_label,
+            );
             page.hit(edit, Hit::EditHud);
             horizon_client::widgets::record("oteria-edit-hud", edit.map(gui), true);
 
@@ -674,18 +1152,53 @@ impl Mods {
             let ax = lx + lw + 14.0;
             let aw = px + pw - 14.0 - ax;
             let search = [ax + aw - 240.0, ly, 240.0, 32.0];
-            ui.rounded(search[0], search[1], search[2], search[3], 9.0, argb(WHITE, if self.typing { 0.12 } else { 0.06 } * a));
+            ui.rounded(
+                search[0],
+                search[1],
+                search[2],
+                search[3],
+                9.0,
+                argb(WHITE, if self.typing { 0.12 } else { 0.06 } * a),
+            );
             if self.typing {
-                ui.border(search[0], search[1], search[2], search[3], 9.0, argb(ACCENT, 0.7 * a));
+                ui.border(
+                    search[0],
+                    search[1],
+                    search[2],
+                    search[3],
+                    9.0,
+                    argb(ACCENT, 0.7 * a),
+                );
             }
-            page.icon(ui, icon::SEARCH, search[0] + 18.0, search[1] + 16.0, argb(WHITE, 0.7 * a), false);
-            let caret = if self.typing && self.blink < 0.55 { "|" } else { "" };
+            page.icon(
+                ui,
+                icon::SEARCH,
+                search[0] + 18.0,
+                search[1] + 16.0,
+                argb(WHITE, 0.7 * a),
+                false,
+            );
+            let caret = if self.typing && self.blink < 0.55 {
+                "|"
+            } else {
+                ""
+            };
             let (text, colour) = if self.search.is_empty() && !self.typing {
-                (lang::get_or("oteria.mods.search", "Search…"), argb(WHITE, 0.45 * a))
+                (
+                    lang::get_or("oteria.mods.search", "Search…"),
+                    argb(WHITE, 0.45 * a),
+                )
             } else {
                 (format!("{}{caret}", self.search), argb(WHITE, a))
             };
-            ui.text(Face::Regular, 12.0, search[0] + 36.0, search[1] + (32.0 - 17.0) / 2.0, colour, &text);
+            ui.text(
+                Face::Regular,
+                12.0,
+                search[0] + 36.0,
+                search[1] + (32.0 - 17.0) / 2.0,
+                colour,
+                &text,
+            );
             page.hit(search, Hit::Search);
             horizon_client::widgets::record("oteria-search", search.map(gui), true);
 
@@ -702,16 +1215,39 @@ impl Mods {
             self.scroll += (self.target - self.scroll) * (1.0 - (-dt * 18.0).exp());
             let t = ease(self.detail);
             if t < 1.0 {
-                self.draw_grid(ui, &mut page, extras, a * (1.0 - t), dt, view, ly, self.open.is_none() && on_mods);
+                self.draw_grid(
+                    ui,
+                    &mut page,
+                    extras,
+                    a * (1.0 - t),
+                    dt,
+                    view,
+                    ly,
+                    self.open.is_none() && on_mods,
+                );
             }
             if t > 0.0 {
                 let slide = (1.0 - t) * 24.0;
-                self.draw_detail(ui, &mut page, extras, a * t, dt, view, slide, self.open.is_some() && on_mods);
+                self.draw_detail(
+                    ui,
+                    &mut page,
+                    extras,
+                    a * t,
+                    dt,
+                    view,
+                    slide,
+                    self.open.is_some() && on_mods,
+                );
             }
         }
         if k > 0.0 {
             page.live = !on_mods;
-            let view = [px + 24.0 + (1.0 - k) * 24.0, py + hh + 18.0, pw - 48.0, ph - hh - 18.0 - 18.0];
+            let view = [
+                px + 24.0 + (1.0 - k) * 24.0,
+                py + hh + 18.0,
+                pw - 48.0,
+                ph - hh - 18.0 - 18.0,
+            ];
             self.draw_profiles(ui, &mut page, profiles, a * k, dt, view, !on_mods);
         }
         page.live = true;
@@ -729,22 +1265,62 @@ impl Mods {
     /// The profiles tab: its title and Create, then a card for each profile: its name (or the
     /// field its new name is typed in), and Use, Rename, Duplicate and Delete.
     #[allow(clippy::too_many_arguments)]
-    fn draw_profiles(&mut self, ui: &mut Ui, page: &mut Page, profiles: Option<&Profiles>, a: f32, dt: f32, view: [f32; 4], live: bool) {
+    fn draw_profiles(
+        &mut self,
+        ui: &mut Ui,
+        page: &mut Page,
+        profiles: Option<&Profiles>,
+        a: f32,
+        dt: f32,
+        view: [f32; 4],
+        live: bool,
+    ) {
         let [vx, vy, vw, vh] = view;
         let (pointer, gui) = (page.pointer, page.gui);
         let follow = 1.0 - (-dt * 16.0).exp();
         let title = lang::get_or("oteria.profiles.title", "Profiles");
         ui.text(Face::SemiBold, 16.0, vx, vy + 2.0, argb(WHITE, a), &title);
-        let sub = lang::get_or("oteria.profiles.subtitle", "Each profile keeps its own mods, HUD and crosshair.");
+        let sub = lang::get_or(
+            "oteria.profiles.subtitle",
+            "Each profile keeps its own mods, HUD and crosshair.",
+        );
         let sub = fit(ui, Face::Regular, 12.0, &sub, vw - 240.0);
-        ui.text(Face::Regular, 12.0, vx, vy + 26.0, argb(WHITE, 0.55 * a), &sub);
+        ui.text(
+            Face::Regular,
+            12.0,
+            vx,
+            vy + 26.0,
+            argb(WHITE, 0.55 * a),
+            &sub,
+        );
         // Create: green, with its plus.
         let create = [vx + vw - 210.0, vy + 4.0, 210.0, 38.0];
         let over = live && inside(create, pointer);
-        ui.rounded(create[0], create[1], create[2], create[3], 9.0, argb(ON, if over { 1.0 } else { 0.82 } * a));
-        page.icon(ui, icon::PLUS, create[0] + 24.0, create[1] + 19.0, argb(WHITE, a), false);
+        ui.rounded(
+            create[0],
+            create[1],
+            create[2],
+            create[3],
+            9.0,
+            argb(ON, if over { 1.0 } else { 0.82 } * a),
+        );
+        page.icon(
+            ui,
+            icon::PLUS,
+            create[0] + 24.0,
+            create[1] + 19.0,
+            argb(WHITE, a),
+            false,
+        );
         let label = lang::get_or("oteria.profiles.create", "Create a profile");
-        ui.text(Face::Medium, 12.0, create[0] + 44.0, create[1] + (38.0 - 17.0) / 2.0, argb(WHITE, a), &label);
+        ui.text(
+            Face::Medium,
+            12.0,
+            create[0] + 44.0,
+            create[1] + (38.0 - 17.0) / 2.0,
+            argb(WHITE, a),
+            &label,
+        );
         page.hit(create, Hit::NewProfile);
         if live {
             horizon_client::widgets::record("oteria-profile-new", create.map(gui), true);
@@ -767,7 +1343,14 @@ impl Mods {
             0.0
         };
         let within = |r: [f32; 4]| live && r[1] + r[3] > ly && r[1] < ly + lh;
-        let clipped = |r: [f32; 4]| [r[0], r[1].max(ly), r[2], (r[1] + r[3]).min(ly + lh) - r[1].max(ly)];
+        let clipped = |r: [f32; 4]| {
+            [
+                r[0],
+                r[1].max(ly),
+                r[2],
+                (r[1] + r[3]).min(ly + lh) - r[1].max(ly),
+            ]
+        };
         let start = ui.batch.vertices.len();
         for (i, name) in profiles.names.iter().enumerate() {
             let r = [vx, ly + i as f32 * (ch + gap) - scroll, vw, ch];
@@ -779,15 +1362,46 @@ impl Mods {
             self.cards[i] += ((if over { 1.0 } else { 0.0 }) - self.cards[i]) * follow;
             let hv = self.cards[i];
             if active {
-                ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(ACCENT, (0.14 + 0.04 * hv) * a));
+                ui.rounded(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    10.0,
+                    argb(ACCENT, (0.14 + 0.04 * hv) * a),
+                );
                 ui.border(r[0], r[1], r[2], r[3], 10.0, argb(ACCENT, 0.6 * a));
                 ui.rounded(r[0], r[1] + 16.0, 3.0, ch - 32.0, 1.5, argb(ACCENT, a));
             } else {
-                ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.05 + 0.04 * hv) * a));
-                ui.border(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.07 + 0.12 * hv) * a));
+                ui.rounded(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    10.0,
+                    argb(WHITE, (0.05 + 0.04 * hv) * a),
+                );
+                ui.border(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    10.0,
+                    argb(WHITE, (0.07 + 0.12 * hv) * a),
+                );
             }
             let (ax, ay) = (r[0] + 18.0, r[1] + (ch - 36.0) / 2.0);
-            ui.rounded(ax, ay, 36.0, 36.0, 18.0, argb(if active { ACCENT } else { WHITE }, if active { 0.35 } else { 0.08 } * a));
+            ui.rounded(
+                ax,
+                ay,
+                36.0,
+                36.0,
+                18.0,
+                argb(
+                    if active { ACCENT } else { WHITE },
+                    if active { 0.35 } else { 0.08 } * a,
+                ),
+            );
             page.icon(ui, icon::USER, ax + 18.0, ay + 18.0, argb(WHITE, a), false);
 
             // The buttons, from the right: Delete, Duplicate, Rename, and Use for the others.
@@ -796,7 +1410,11 @@ impl Mods {
             let confirm = self.confirm == Some(i);
             let can_delete = n > 1;
             let confirm_label = lang::get_or("oteria.profiles.confirm", "Delete?");
-            let dw = if confirm { ui.measure(Face::Medium, 11.0, &confirm_label) + 28.0 } else { bs };
+            let dw = if confirm {
+                ui.measure(Face::Medium, 11.0, &confirm_label) + 28.0
+            } else {
+                bs
+            };
             let mut bx = r[0] + vw - 14.0 - dw;
             let del = [bx, by, dw, bs];
             let del_over = within(del) && inside(del, pointer) && can_delete;
@@ -809,12 +1427,30 @@ impl Mods {
             };
             ui.rounded(del[0], del[1], del[2], del[3], 8.0, fill);
             if confirm {
-                ui.text_centered(Face::Medium, 11.0, del[0] + dw / 2.0, del[1] + (bs - 16.0) / 2.0, argb(WHITE, a), &confirm_label);
+                ui.text_centered(
+                    Face::Medium,
+                    11.0,
+                    del[0] + dw / 2.0,
+                    del[1] + (bs - 16.0) / 2.0,
+                    argb(WHITE, a),
+                    &confirm_label,
+                );
             } else {
-                page.icon(ui, icon::TRASH, del[0] + bs / 2.0, del[1] + bs / 2.0, argb(WHITE, if can_delete { 0.85 } else { 0.3 } * a), false);
+                page.icon(
+                    ui,
+                    icon::TRASH,
+                    del[0] + bs / 2.0,
+                    del[1] + bs / 2.0,
+                    argb(WHITE, if can_delete { 0.85 } else { 0.3 } * a),
+                    false,
+                );
             }
             if can_delete {
-                buttons.push((del, Hit::DeleteProfile(i), format!("oteria-profile-{i}-delete")));
+                buttons.push((
+                    del,
+                    Hit::DeleteProfile(i),
+                    format!("oteria-profile-{i}-delete"),
+                ));
             }
             for (sprite, hit, id) in [
                 (icon::COPY, Hit::CopyProfile(i), "copy"),
@@ -823,8 +1459,22 @@ impl Mods {
                 bx -= 8.0 + bs;
                 let b = [bx, by, bs, bs];
                 let over = within(b) && inside(b, pointer);
-                ui.rounded(b[0], b[1], b[2], b[3], 8.0, argb(WHITE, if over { 0.16 } else { 0.07 } * a));
-                page.icon(ui, sprite, b[0] + bs / 2.0, b[1] + bs / 2.0, argb(WHITE, 0.85 * a), false);
+                ui.rounded(
+                    b[0],
+                    b[1],
+                    b[2],
+                    b[3],
+                    8.0,
+                    argb(WHITE, if over { 0.16 } else { 0.07 } * a),
+                );
+                page.icon(
+                    ui,
+                    sprite,
+                    b[0] + bs / 2.0,
+                    b[1] + bs / 2.0,
+                    argb(WHITE, 0.85 * a),
+                    false,
+                );
                 buttons.push((b, hit, format!("oteria-profile-{i}-{id}")));
             }
             if !active {
@@ -833,8 +1483,22 @@ impl Mods {
                 bx -= 8.0 + uw;
                 let b = [bx, by, uw, bs];
                 let over = within(b) && inside(b, pointer);
-                ui.rounded(b[0], b[1], b[2], b[3], 8.0, argb(ACCENT, if over { 0.95 } else { 0.7 } * a));
-                ui.text_centered(Face::Medium, 11.0, b[0] + uw / 2.0, b[1] + (bs - 16.0) / 2.0, argb(WHITE, a), &use_label);
+                ui.rounded(
+                    b[0],
+                    b[1],
+                    b[2],
+                    b[3],
+                    8.0,
+                    argb(ACCENT, if over { 0.95 } else { 0.7 } * a),
+                );
+                ui.text_centered(
+                    Face::Medium,
+                    11.0,
+                    b[0] + uw / 2.0,
+                    b[1] + (bs - 16.0) / 2.0,
+                    argb(WHITE, a),
+                    &use_label,
+                );
                 buttons.push((b, Hit::UseProfile(i), format!("oteria-profile-{i}-use")));
             }
 
@@ -845,8 +1509,22 @@ impl Mods {
             match &self.renaming {
                 Some((k, typed)) if *k == i => {
                     let field = [nx - 8.0, r[1] + (ch - 34.0) / 2.0, room.min(300.0), 34.0];
-                    ui.rounded(field[0], field[1], field[2], field[3], 8.0, argb(WHITE, 0.10 * a));
-                    ui.border(field[0], field[1], field[2], field[3], 8.0, argb(ACCENT, 0.8 * a));
+                    ui.rounded(
+                        field[0],
+                        field[1],
+                        field[2],
+                        field[3],
+                        8.0,
+                        argb(WHITE, 0.10 * a),
+                    );
+                    ui.border(
+                        field[0],
+                        field[1],
+                        field[2],
+                        field[3],
+                        8.0,
+                        argb(ACCENT, 0.8 * a),
+                    );
                     let ty = field[1] + (34.0 - 20.0) / 2.0;
                     let caret_x = if typed.is_empty() {
                         ui.text(Face::Medium, 14.0, nx, ty, argb(WHITE, 0.3 * a), name);
@@ -864,9 +1542,15 @@ impl Mods {
                     let label = fit(ui, Face::Medium, 14.0, name, room);
                     ui.text(Face::Medium, 14.0, nx, r[1] + 11.0, argb(WHITE, a), &label);
                     let (state, colour) = if active {
-                        (lang::get_or("oteria.profiles.active", "In use"), argb(ACCENT, a))
+                        (
+                            lang::get_or("oteria.profiles.active", "In use"),
+                            argb(ACCENT, a),
+                        )
                     } else {
-                        (lang::get_or("oteria.profiles.inactive", "Click to use"), argb(WHITE, 0.5 * a))
+                        (
+                            lang::get_or("oteria.profiles.inactive", "Click to use"),
+                            argb(WHITE, 0.5 * a),
+                        )
                     };
                     ui.text(Face::Regular, 11.0, nx, r[1] + 32.0, colour, &state);
                 }
@@ -876,7 +1560,11 @@ impl Mods {
                 if !active {
                     page.hit(clipped(r), Hit::UseProfile(i));
                 }
-                horizon_client::widgets::record(&format!("oteria-profile-{i}"), clipped(r).map(gui), true);
+                horizon_client::widgets::record(
+                    &format!("oteria-profile-{i}"),
+                    clipped(r).map(gui),
+                    true,
+                );
                 for (b, hit, id) in buttons {
                     if within(b) {
                         page.hit(clipped(b), hit);
@@ -885,19 +1573,42 @@ impl Mods {
                 }
             }
         }
-        ui.batch.clip_since(start, gui(vx - 2.0), gui(ly), gui(vx + vw + 2.0), gui(ly + lh));
+        ui.batch.clip_since(
+            start,
+            gui(vx - 2.0),
+            gui(ly),
+            gui(vx + vw + 2.0),
+            gui(ly + lh),
+        );
     }
 
     /// The grid of tiles, with the count of what shows above it.
     #[allow(clippy::too_many_arguments)]
-    fn draw_grid(&mut self, ui: &mut Ui, page: &mut Page, extras: &Extras, a: f32, dt: f32, view: [f32; 4], ly: f32, live: bool) {
+    fn draw_grid(
+        &mut self,
+        ui: &mut Ui,
+        page: &mut Page,
+        extras: &Extras,
+        a: f32,
+        dt: f32,
+        view: [f32; 4],
+        ly: f32,
+        live: bool,
+    ) {
         let [gx, gy, aw, gh] = view;
         let pointer = page.pointer;
         let gui = page.gui;
         let follow = 1.0 - (-dt * 16.0).exp();
         let shown = self.shown();
         let count = format!("{} mods", shown.len());
-        ui.text(Face::Medium, 12.0, gx + 2.0, ly + (32.0 - 17.0) / 2.0, argb(WHITE, 0.55 * a), &count);
+        ui.text(
+            Face::Medium,
+            12.0,
+            gx + 2.0,
+            ly + (32.0 - 17.0) / 2.0,
+            argb(WHITE, 0.55 * a),
+            &count,
+        );
         let gap = 10.0;
         let cols = (((aw + gap) / (176.0 + gap)).floor() as usize).clamp(2, 5);
         let tw = (aw - gap * (cols - 1) as f32) / cols as f32;
@@ -912,7 +1623,12 @@ impl Mods {
         let start = ui.batch.vertices.len();
         for (n, &i) in shown.iter().enumerate() {
             let (col, row) = (n % cols, n / cols);
-            let r = [gx + col as f32 * (tw + gap), gy + row as f32 * (th + gap) - scroll, tw, th];
+            let r = [
+                gx + col as f32 * (tw + gap),
+                gy + row as f32 * (th + gap) - scroll,
+                tw,
+                th,
+            ];
             if r[1] + th < gy || r[1] > gy + gh {
                 continue;
             }
@@ -923,36 +1639,108 @@ impl Mods {
             let sw = self.switch[i].get_or_insert(if on { 1.0 } else { 0.0 });
             *sw += ((if on { 1.0 } else { 0.0 }) - *sw) * (1.0 - (-dt * 14.0).exp());
             let (hv, sv) = (self.hover[i], *sw);
-            ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.05 + 0.04 * hv) * a));
-            ui.border(r[0], r[1], r[2], r[3], 10.0, argb(WHITE, (0.07 + 0.14 * hv) * a));
+            ui.rounded(
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                10.0,
+                argb(WHITE, (0.05 + 0.04 * hv) * a),
+            );
+            ui.border(
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                10.0,
+                argb(WHITE, (0.07 + 0.14 * hv) * a),
+            );
             let cx = r[0] + tw / 2.0;
-            page.icon(ui, tile.icon, cx, r[1] + 30.0, argb(WHITE, (0.75 + 0.25 * hv) * a), true);
+            page.icon(
+                ui,
+                tile.icon,
+                cx,
+                r[1] + 30.0,
+                argb(WHITE, (0.75 + 0.25 * hv) * a),
+                true,
+            );
             let name = tile.name();
             let nw = ui.measure(Face::Medium, 13.0, &name);
-            ui.text(Face::Medium, 13.0, cx - nw / 2.0, r[1] + 50.0, argb(WHITE, (0.82 + 0.18 * hv) * a), &name);
+            ui.text(
+                Face::Medium,
+                13.0,
+                cx - nw / 2.0,
+                r[1] + 50.0,
+                argb(WHITE, (0.82 + 0.18 * hv) * a),
+                &name,
+            );
             let by = r[1] + th - 10.0 - 30.0;
             let gear = [r[0] + 10.0, by, 30.0, 30.0];
             let gear_over = over && inside(gear, pointer);
-            ui.rounded(gear[0], gear[1], gear[2], gear[3], 7.0, argb(WHITE, if gear_over { 0.16 } else { 0.07 } * a));
-            page.icon(ui, icon::SETTINGS, gear[0] + 15.0, gear[1] + 15.0, argb(WHITE, 0.85 * a), false);
-            let bar = [gear[0] + 36.0, by, r[0] + tw - 10.0 - (gear[0] + 36.0), 30.0];
+            ui.rounded(
+                gear[0],
+                gear[1],
+                gear[2],
+                gear[3],
+                7.0,
+                argb(WHITE, if gear_over { 0.16 } else { 0.07 } * a),
+            );
+            page.icon(
+                ui,
+                icon::SETTINGS,
+                gear[0] + 15.0,
+                gear[1] + 15.0,
+                argb(WHITE, 0.85 * a),
+                false,
+            );
+            let bar = [
+                gear[0] + 36.0,
+                by,
+                r[0] + tw - 10.0 - (gear[0] + 36.0),
+                30.0,
+            ];
             let bar_over = over && inside(bar, pointer);
             let colour = mix(OFF, ON, sv);
-            ui.rounded(bar[0], bar[1], bar[2], bar[3], 7.0, argb(colour, (if bar_over { 0.95 } else { 0.80 }) * a));
+            ui.rounded(
+                bar[0],
+                bar[1],
+                bar[2],
+                bar[3],
+                7.0,
+                argb(colour, (if bar_over { 0.95 } else { 0.80 }) * a),
+            );
             let label = if on {
                 lang::get_or("oteria.mods.enabled", "ENABLED")
             } else {
                 lang::get_or("oteria.mods.disabled", "DISABLED")
             };
             let lw = ui.measure(Face::Medium, 11.0, &label);
-            ui.text(Face::Medium, 11.0, bar[0] + (bar[2] - lw) / 2.0, bar[1] + (30.0 - 16.0) / 2.0, argb(WHITE, a), &label);
+            ui.text(
+                Face::Medium,
+                11.0,
+                bar[0] + (bar[2] - lw) / 2.0,
+                bar[1] + (30.0 - 16.0) / 2.0,
+                argb(WHITE, a),
+                &label,
+            );
             if live {
-                let visible = |b: [f32; 4]| [b[0], b[1].max(gy), b[2], (b[1] + b[3]).min(gy + gh) - b[1].max(gy)];
+                let visible = |b: [f32; 4]| {
+                    [
+                        b[0],
+                        b[1].max(gy),
+                        b[2],
+                        (b[1] + b[3]).min(gy + gh) - b[1].max(gy),
+                    ]
+                };
                 page.hit(visible(bar), Hit::Toggle(i));
                 page.hit(visible(gear), Hit::Gear(i));
                 // Named for the tools that drive the game (`horizon-ctl click`).
                 horizon_client::widgets::record(tile.key, visible(bar).map(gui), true);
-                horizon_client::widgets::record(&format!("{}.gear", tile.key), visible(gear).map(gui), true);
+                horizon_client::widgets::record(
+                    &format!("{}.gear", tile.key),
+                    visible(gear).map(gui),
+                    true,
+                );
                 // A press anywhere else on the tile turns it on or off too.
                 let body = visible([r[0], r[1], r[2], by - r[1]]);
                 if body[3] > 0.0 {
@@ -960,18 +1748,41 @@ impl Mods {
                 }
             }
         }
-        ui.batch.clip_since(start, gui(gx - 2.0), gui(gy), gui(gx + aw + 2.0), gui(gy + gh));
+        ui.batch.clip_since(
+            start,
+            gui(gx - 2.0),
+            gui(gy),
+            gui(gx + aw + 2.0),
+            gui(gy + gh),
+        );
         if shown.is_empty() {
             let none = lang::get_or("oteria.mods.none", "No mod matches.");
             let nw = ui.measure(Face::Regular, 13.0, &none);
-            ui.text(Face::Regular, 13.0, gx + (aw - nw) / 2.0, gy + 40.0, argb(WHITE, 0.55 * a), &none);
+            ui.text(
+                Face::Regular,
+                13.0,
+                gx + (aw - nw) / 2.0,
+                gy + 40.0,
+                argb(WHITE, 0.55 * a),
+                &none,
+            );
         }
     }
 
     /// The open tile's settings: its name and switch, the crosshair's presets and grid, then
     /// its options, scrolled within the view; the hovered option's description at the foot.
     #[allow(clippy::too_many_arguments)]
-    fn draw_detail(&mut self, ui: &mut Ui, page: &mut Page, extras: &Extras, a: f32, dt: f32, view: [f32; 4], slide: f32, live: bool) {
+    fn draw_detail(
+        &mut self,
+        ui: &mut Ui,
+        page: &mut Page,
+        extras: &Extras,
+        a: f32,
+        dt: f32,
+        view: [f32; 4],
+        slide: f32,
+        live: bool,
+    ) {
         let [vx, vy, vw, vh] = view;
         let (vx, pointer, gui) = (vx + slide, page.pointer, page.gui);
         let tile = &TILES[self.shown];
@@ -980,23 +1791,65 @@ impl Mods {
         // The head: back, icon, name, and the tile's own switch.
         let back = [vx, vy, 36.0, 36.0];
         let over = live && inside(back, pointer);
-        ui.rounded(back[0], back[1], back[2], back[3], 9.0, argb(WHITE, if over { 0.14 } else { 0.06 } * a));
-        ui.text_centered(Face::Medium, 18.0, back[0] + 18.0, back[1] + 6.0, argb(WHITE, a), "‹");
-        page.icon(ui, tile.icon, vx + 36.0 + 26.0, vy + 18.0, argb(WHITE, a), true);
-        ui.text(Face::SemiBold, 16.0, vx + 36.0 + 48.0, vy + 7.0, argb(WHITE, a), &tile.name());
+        ui.rounded(
+            back[0],
+            back[1],
+            back[2],
+            back[3],
+            9.0,
+            argb(WHITE, if over { 0.14 } else { 0.06 } * a),
+        );
+        ui.text_centered(
+            Face::Medium,
+            18.0,
+            back[0] + 18.0,
+            back[1] + 6.0,
+            argb(WHITE, a),
+            "‹",
+        );
+        page.icon(
+            ui,
+            tile.icon,
+            vx + 36.0 + 26.0,
+            vy + 18.0,
+            argb(WHITE, a),
+            true,
+        );
+        ui.text(
+            Face::SemiBold,
+            16.0,
+            vx + 36.0 + 48.0,
+            vy + 7.0,
+            argb(WHITE, a),
+            &tile.name(),
+        );
         let on = (tile.get)(extras);
         let sw = self.switch[self.shown].get_or_insert(if on { 1.0 } else { 0.0 });
         *sw += ((if on { 1.0 } else { 0.0 }) - *sw) * ease_k;
         let bar = [vx + vw - 150.0, vy + 3.0, 150.0, 30.0];
         let bar_over = live && inside(bar, pointer);
-        ui.rounded(bar[0], bar[1], bar[2], bar[3], 7.0, argb(mix(OFF, ON, *sw), if bar_over { 0.95 } else { 0.8 } * a));
+        ui.rounded(
+            bar[0],
+            bar[1],
+            bar[2],
+            bar[3],
+            7.0,
+            argb(mix(OFF, ON, *sw), if bar_over { 0.95 } else { 0.8 } * a),
+        );
         let label = if on {
             lang::get_or("oteria.mods.enabled", "ENABLED")
         } else {
             lang::get_or("oteria.mods.disabled", "DISABLED")
         };
         let lw = ui.measure(Face::Medium, 11.0, &label);
-        ui.text(Face::Medium, 11.0, bar[0] + (bar[2] - lw) / 2.0, bar[1] + 7.0, argb(WHITE, a), &label);
+        ui.text(
+            Face::Medium,
+            11.0,
+            bar[0] + (bar[2] - lw) / 2.0,
+            bar[1] + 7.0,
+            argb(WHITE, a),
+            &label,
+        );
         if live {
             page.hit(back, Hit::Back);
             page.hit(bar, Hit::Toggle(self.shown));
@@ -1009,9 +1862,23 @@ impl Mods {
         let mut y = by - scroll;
         let start = ui.batch.vertices.len();
         let within = |r: [f32; 4]| live && r[1] + r[3] > by && r[1] < by + bh;
-        let clipped = |r: [f32; 4]| [r[0], r[1].max(by), r[2], (r[1] + r[3]).min(by + bh) - r[1].max(by)];
+        let clipped = |r: [f32; 4]| {
+            [
+                r[0],
+                r[1].max(by),
+                r[2],
+                (r[1] + r[3]).min(by + bh) - r[1].max(by),
+            ]
+        };
         let section = |ui: &mut Ui, y: f32, text: &str| {
-            ui.text(Face::Medium, 11.0, vx + 2.0, y, argb(WHITE, 0.5 * a), &text.to_uppercase());
+            ui.text(
+                Face::Medium,
+                11.0,
+                vx + 2.0,
+                y,
+                argb(WHITE, 0.5 * a),
+                &text.to_uppercase(),
+            );
         };
 
         if tile.is_crosshair() {
@@ -1025,29 +1892,91 @@ impl Mods {
             for (k, (key, english, preset)) in presets.iter().enumerate() {
                 let r = [vx + k as f32 * (cw + gap), y, cw, 86.0];
                 let chosen = c.custom
-                    && (c.shape, c.size, c.gap, c.thickness, c.dot) == (preset.shape, preset.size, preset.gap, preset.thickness, preset.dot);
+                    && (c.shape, c.size, c.gap, c.thickness, c.dot)
+                        == (
+                            preset.shape,
+                            preset.size,
+                            preset.gap,
+                            preset.thickness,
+                            preset.dot,
+                        );
                 let over = within(r) && inside(r, pointer);
-                ui.rounded(r[0], r[1], r[2], r[3], 10.0, argb(if chosen { ACCENT } else { WHITE }, if chosen { 0.2 } else if over { 0.1 } else { 0.05 } * a));
-                ui.border(r[0], r[1], r[2], r[3], 10.0, argb(if chosen { ACCENT } else { WHITE }, if chosen { 0.7 } else { 0.08 } * a));
-                draw_mask(ui, &preset.mask(), r[0] + cw / 2.0, r[1] + 32.0, 2.0, argb(WHITE, a));
+                ui.rounded(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    10.0,
+                    argb(
+                        if chosen { ACCENT } else { WHITE },
+                        if chosen {
+                            0.2
+                        } else if over {
+                            0.1
+                        } else {
+                            0.05
+                        } * a,
+                    ),
+                );
+                ui.border(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    10.0,
+                    argb(
+                        if chosen { ACCENT } else { WHITE },
+                        if chosen { 0.7 } else { 0.08 } * a,
+                    ),
+                );
+                draw_mask(
+                    ui,
+                    &preset.mask(),
+                    r[0] + cw / 2.0,
+                    r[1] + 32.0,
+                    2.0,
+                    argb(WHITE, a),
+                );
                 let name = lang::get_or(key, english);
                 let nw = ui.measure(Face::Medium, 11.0, &name);
-                ui.text(Face::Medium, 11.0, r[0] + (cw - nw) / 2.0, r[1] + 62.0, argb(WHITE, 0.85 * a), &name);
+                ui.text(
+                    Face::Medium,
+                    11.0,
+                    r[0] + (cw - nw) / 2.0,
+                    r[1] + 62.0,
+                    argb(WHITE, 0.85 * a),
+                    &name,
+                );
                 if within(r) {
                     page.hit(clipped(r), Hit::Preset(k));
-                    horizon_client::widgets::record(&format!("oteria-preset-{k}"), clipped(r).map(gui), true);
+                    horizon_client::widgets::record(
+                        &format!("oteria-preset-{k}"),
+                        clipped(r).map(gui),
+                        true,
+                    );
                 }
             }
             y += 86.0 + 18.0;
 
             // The drawing grid: a click flips a pixel, a drag paints the same way.
-            section(ui, y, &lang::get_or("oteria.crosshair.draw", "Draw your own"));
+            section(
+                ui,
+                y,
+                &lang::get_or("oteria.crosshair.draw", "Draw your own"),
+            );
             y += 22.0;
             let pixels = self.pixels.unwrap_or(c.pixels);
             let cell = 13.0;
             let side = cell * DRAWN as f32;
             let grid = [vx, y, side, side];
-            ui.rounded(grid[0] - 4.0, grid[1] - 4.0, side + 8.0, side + 8.0, 8.0, argb(0x000000, 0.35 * a));
+            ui.rounded(
+                grid[0] - 4.0,
+                grid[1] - 4.0,
+                side + 8.0,
+                side + 8.0,
+                8.0,
+                argb(0x000000, 0.35 * a),
+            );
             for (gy_, row) in pixels.iter().enumerate() {
                 for gx_ in 0..DRAWN {
                     let set = row >> gx_ & 1 == 1;
@@ -1056,14 +1985,21 @@ impl Mods {
                     let fill = if set {
                         argb(WHITE, 0.95 * a)
                     } else {
-                        argb(if middle { ACCENT } else { WHITE }, if middle { 0.25 } else { 0.06 } * a)
+                        argb(
+                            if middle { ACCENT } else { WHITE },
+                            if middle { 0.25 } else { 0.06 } * a,
+                        )
                     };
                     ui.rounded(x0 + 0.5, y0 + 0.5, cell - 1.0, cell - 1.0, 2.0, fill);
                 }
             }
             if within(grid) {
                 page.hit(clipped(grid), Hit::Grid);
-                horizon_client::widgets::record("oteria-crosshair-grid", clipped(grid).map(gui), true);
+                horizon_client::widgets::record(
+                    "oteria-crosshair-grid",
+                    clipped(grid).map(gui),
+                    true,
+                );
             }
             self.grid = (grid.map(gui), gui(cell));
             // Beside it: how it looks at its real size, and a button to start again.
@@ -1077,36 +2013,104 @@ impl Mods {
                 dot: false,
                 ..*c
             };
-            draw_mask(ui, &drawn.mask(), sx + 32.0, sy + 52.0, ui_gui_scale(ui) / page.d, argb(WHITE, a));
+            draw_mask(
+                ui,
+                &drawn.mask(),
+                sx + 32.0,
+                sy + 52.0,
+                ui_gui_scale(ui) / page.d,
+                argb(WHITE, a),
+            );
             let clear = [sx, sy + 96.0, 120.0, 30.0];
             let over = within(clear) && inside(clear, pointer);
-            ui.rounded(clear[0], clear[1], clear[2], clear[3], 7.0, argb(WHITE, if over { 0.14 } else { 0.07 } * a));
+            ui.rounded(
+                clear[0],
+                clear[1],
+                clear[2],
+                clear[3],
+                7.0,
+                argb(WHITE, if over { 0.14 } else { 0.07 } * a),
+            );
             let clear_label = lang::get_or("oteria.crosshair.clear", "Clear");
             let cw = ui.measure(Face::Medium, 11.0, &clear_label);
-            ui.text(Face::Medium, 11.0, clear[0] + (120.0 - cw) / 2.0, clear[1] + 7.0, argb(WHITE, a), &clear_label);
+            ui.text(
+                Face::Medium,
+                11.0,
+                clear[0] + (120.0 - cw) / 2.0,
+                clear[1] + 7.0,
+                argb(WHITE, a),
+                &clear_label,
+            );
             if within(clear) {
                 page.hit(clipped(clear), Hit::ClearGrid);
             }
-            let hint = lang::get_or("oteria.crosshair.hint", "Click or drag to paint. Drawing switches the shape to Drawn.");
+            let hint = lang::get_or(
+                "oteria.crosshair.hint",
+                "Click or drag to paint. Drawing switches the shape to Drawn.",
+            );
             let hint = fit(ui, Face::Regular, 11.0, &hint, vw - side - 30.0);
-            ui.text(Face::Regular, 11.0, sx, sy + 140.0, argb(WHITE, 0.5 * a), &hint);
+            ui.text(
+                Face::Regular,
+                11.0,
+                sx,
+                sy + 140.0,
+                argb(WHITE, 0.5 * a),
+                &hint,
+            );
             y += side + 22.0;
         }
 
         // The options: a switch, or a value with arrows either side.
-        let items: Vec<Item> = tile.settings.iter().copied().filter(|i| i.key_name().is_none()).collect();
+        let items: Vec<Item> = tile
+            .settings
+            .iter()
+            .copied()
+            .filter(|i| i.key_name().is_none())
+            .collect();
         if self.rows.len() != items.len() {
             self.rows = items
                 .iter()
-                .map(|i| if i.switch(extras) == Some(true) { 1.0 } else { 0.0 })
+                .map(|i| {
+                    if i.switch(extras) == Some(true) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
                 .collect();
         }
         if !items.is_empty() {
             section(ui, y, &lang::get_or("oteria.mods.options", "Options"));
             y += 22.0;
         } else if !tile.is_crosshair() {
-            let none = lang::get_or("oteria.mods.no_options", "Nothing else to set: the switch above turns it on or off.");
-            ui.text(Face::Regular, 12.0, vx + 2.0, y, argb(WHITE, 0.55 * a), &none);
+            let none = lang::get_or(
+                "oteria.mods.no_options",
+                "Nothing else to set: the switch above turns it on or off.",
+            );
+            ui.text(
+                Face::Regular,
+                12.0,
+                vx + 2.0,
+                y,
+                argb(WHITE, 0.55 * a),
+                &none,
+            );
+        }
+        // The picker eases open and shut; once shut it goes.
+        if let Some(p) = self.picker.as_ref() {
+            let goal = if p.open { 1.0 } else { 0.0 };
+            self.picker_k += (goal - self.picker_k) * (1.0 - (-dt * 16.0).exp());
+            if !p.open && self.picker_k < 0.01 {
+                self.picker = None;
+                self.picker_k = 0.0;
+            }
+        }
+        if self
+            .picker
+            .as_ref()
+            .is_some_and(|p| !items.contains(&Item::Pvp(p.opt)))
+        {
+            self.picker = None;
         }
         let mut hovered = None;
         for (n, item) in items.iter().enumerate() {
@@ -1115,32 +2119,285 @@ impl Mods {
             if over {
                 hovered = Some(*item);
             }
-            ui.rounded(r[0], r[1], r[2], r[3], 8.0, argb(WHITE, if over { 0.08 } else { 0.04 } * a));
-            ui.text(Face::Medium, 12.0, r[0] + 14.0, r[1] + 11.0, argb(WHITE, 0.92 * a), &caption(*item));
+            ui.rounded(
+                r[0],
+                r[1],
+                r[2],
+                r[3],
+                8.0,
+                argb(WHITE, if over { 0.08 } else { 0.04 } * a),
+            );
+            ui.text(
+                Face::Medium,
+                12.0,
+                r[0] + 14.0,
+                r[1] + 11.0,
+                argb(WHITE, 0.92 * a),
+                &caption(*item),
+            );
             match item.switch(extras) {
                 Some(state) => {
                     self.rows[n] += ((if state { 1.0 } else { 0.0 }) - self.rows[n]) * ease_k;
                     let k = self.rows[n];
                     let track = [r[0] + vw - 14.0 - 40.0, r[1] + 10.0, 40.0, 20.0];
-                    ui.rounded(track[0], track[1], track[2], track[3], 10.0, argb(mix(GREY, ON, k), a));
+                    ui.rounded(
+                        track[0],
+                        track[1],
+                        track[2],
+                        track[3],
+                        10.0,
+                        argb(mix(GREY, ON, k), a),
+                    );
                     let knob = track[0] + 2.0 + k * 20.0;
                     ui.rounded(knob, track[1] + 2.0, 16.0, 16.0, 8.0, argb(WHITE, a));
                     if within(r) {
                         page.hit(clipped(r), Hit::Row(*item, false));
                     }
                 }
+                None if let Item::Pvp(opt) = *item
+                    && let (Some((lo, hi)), Some(now)) =
+                        (opt.slider(), opt.slider_value(&extras.pvp)) =>
+                {
+                    // A track with a knob, dragged; the value beside it.
+                    let dragging = self.slider.filter(|(o, _, _)| *o == opt).map(|(_, _, v)| v);
+                    let v = dragging.unwrap_or(now);
+                    let tw = 200.0;
+                    let track = [r[0] + vw - 14.0 - tw, r[1] + 18.0, tw, 4.0];
+                    let k = (v.saturating_sub(lo)) as f32 / (hi - lo).max(1) as f32;
+                    let grab = [track[0] - 8.0, r[1] + 6.0, tw + 16.0, 28.0];
+                    let over = within(grab) && inside(grab, pointer);
+                    ui.rounded(
+                        track[0],
+                        track[1],
+                        track[2],
+                        track[3],
+                        2.0,
+                        argb(WHITE, 0.14 * a),
+                    );
+                    ui.rounded(
+                        track[0],
+                        track[1],
+                        track[2] * k,
+                        track[3],
+                        2.0,
+                        argb(ACCENT, a),
+                    );
+                    let knob = if dragging.is_some() || over {
+                        14.0
+                    } else {
+                        12.0
+                    };
+                    let kx = track[0] + track[2] * k;
+                    ui.rounded(
+                        kx - knob / 2.0,
+                        track[1] + 2.0 - knob / 2.0,
+                        knob,
+                        knob,
+                        knob / 2.0,
+                        argb(WHITE, a),
+                    );
+                    let mut shown = extras.pvp.clone();
+                    opt.set_slider(&mut shown, v);
+                    let value = opt.value(&shown).unwrap_or_default();
+                    let lw = ui.measure(Face::Medium, 12.0, &value);
+                    ui.text(
+                        Face::Medium,
+                        12.0,
+                        track[0] - 14.0 - lw,
+                        r[1] + 11.0,
+                        argb(WHITE, a),
+                        &value,
+                    );
+                    if within(r) {
+                        page.hit(clipped(grab), Hit::Slider(opt));
+                    }
+                }
+                None if let Item::Pvp(opt) = *item
+                    && let Some(colour) = opt.colour(&extras.pvp) =>
+                {
+                    // The colour's swatch and name, and a chevron that turns as its picker opens.
+                    let open = self.picker.as_ref().is_some_and(|p| p.opt == opt);
+                    let k = if open { ease(self.picker_k) } else { 0.0 };
+                    let pill = [r[0] + vw - 14.0 - 170.0, r[1] + 6.0, 170.0, 28.0];
+                    let over_pill = within(pill) && inside(pill, pointer);
+                    ui.rounded(
+                        pill[0],
+                        pill[1],
+                        pill[2],
+                        pill[3],
+                        7.0,
+                        argb(WHITE, if over_pill || open { 0.12 } else { 0.07 } * a),
+                    );
+                    if open {
+                        ui.border(
+                            pill[0],
+                            pill[1],
+                            pill[2],
+                            pill[3],
+                            7.0,
+                            argb(ACCENT, 0.6 * k * a),
+                        );
+                    }
+                    swatch(
+                        ui,
+                        page,
+                        colour,
+                        [pill[0] + 8.0, pill[1] + 6.0, 16.0, 16.0],
+                        a,
+                    );
+                    let name = colour.map_or_else(|| lang::get_or("Off", "Off"), Colour::label);
+                    let name = fit(ui, Face::Medium, 12.0, &name, pill[2] - 56.0);
+                    ui.text(
+                        Face::Medium,
+                        12.0,
+                        pill[0] + 32.0,
+                        pill[1] + 6.0,
+                        argb(WHITE, a),
+                        &name,
+                    );
+                    chevron(
+                        ui,
+                        page,
+                        pill[0] + pill[2] - 14.0,
+                        pill[1] + 14.0,
+                        k,
+                        argb(WHITE, 0.7 * a),
+                    );
+                    if within(r) {
+                        page.hit(clipped(r), Hit::ColourRow(opt));
+                    }
+                }
+                None if let Item::Pvp(opt) = *item
+                    && let (Some((_, unit)), Some(v)) =
+                        (opt.number(), opt.number_value(&extras.pvp)) =>
+                {
+                    // ‹ a field for the digits ›: the arrows step, the field is typed in.
+                    let pill = [r[0] + vw - 14.0 - 170.0, r[1] + 6.0, 170.0, 28.0];
+                    let left = [pill[0], pill[1], 30.0, pill[3]];
+                    let right = [pill[0] + pill[2] - 30.0, pill[1], 30.0, pill[3]];
+                    let field = [pill[0] + 32.0, pill[1] + 2.0, pill[2] - 64.0, pill[3] - 4.0];
+                    let typing = self
+                        .number
+                        .as_ref()
+                        .filter(|(o, _)| *o == opt)
+                        .map(|(_, d)| d.clone());
+                    let lo = within(left) && inside(left, pointer);
+                    let hi = within(right) && inside(right, pointer);
+                    let over_field = within(field) && inside(field, pointer);
+                    ui.rounded(
+                        pill[0],
+                        pill[1],
+                        pill[2],
+                        pill[3],
+                        7.0,
+                        argb(WHITE, 0.07 * a),
+                    );
+                    ui.rounded(
+                        field[0],
+                        field[1],
+                        field[2],
+                        field[3],
+                        6.0,
+                        argb(
+                            WHITE,
+                            if typing.is_some() {
+                                0.14
+                            } else if over_field {
+                                0.10
+                            } else {
+                                0.04
+                            } * a,
+                        ),
+                    );
+                    if typing.is_some() {
+                        ui.border(
+                            field[0],
+                            field[1],
+                            field[2],
+                            field[3],
+                            6.0,
+                            argb(ACCENT, 0.75 * a),
+                        );
+                    }
+                    ui.text_centered(
+                        Face::Medium,
+                        15.0,
+                        pill[0] + 12.0,
+                        pill[1] + 4.0,
+                        argb(WHITE, if lo { 1.0 } else { 0.55 } * a),
+                        "‹",
+                    );
+                    ui.text_centered(
+                        Face::Medium,
+                        15.0,
+                        pill[0] + pill[2] - 12.0,
+                        pill[1] + 4.0,
+                        argb(WHITE, if hi { 1.0 } else { 0.55 } * a),
+                        "›",
+                    );
+                    let text = match &typing {
+                        Some(d) => {
+                            let caret = if self.blink < 0.55 { "|" } else { " " };
+                            format!("{d}{caret}")
+                        }
+                        // Low fire at 0 is off.
+                        None if opt == Opt::FireLower && v == 0 => lang::get_or("Off", "Off"),
+                        None => format!("{v}{unit}"),
+                    };
+                    ui.text_centered(
+                        Face::Medium,
+                        12.0,
+                        field[0] + field[2] / 2.0,
+                        pill[1] + 6.0,
+                        argb(WHITE, a),
+                        &text,
+                    );
+                    if within(r) {
+                        page.hit(clipped(r), Hit::Row(*item, false));
+                        page.hit(clipped(left), Hit::Row(*item, true));
+                        page.hit(clipped(field), Hit::NumberField(opt));
+                    }
+                }
                 None => {
                     let value = item.value(extras);
                     let pill = [r[0] + vw - 14.0 - 170.0, r[1] + 6.0, 170.0, 28.0];
-                    ui.rounded(pill[0], pill[1], pill[2], pill[3], 7.0, argb(WHITE, 0.07 * a));
+                    ui.rounded(
+                        pill[0],
+                        pill[1],
+                        pill[2],
+                        pill[3],
+                        7.0,
+                        argb(WHITE, 0.07 * a),
+                    );
                     let half = [pill[0], pill[1], pill[2] / 2.0, pill[3]];
                     let right = [pill[0] + pill[2] / 2.0, pill[1], pill[2] / 2.0, pill[3]];
                     let lo = within(half) && inside(half, pointer);
                     let hi = within(right) && inside(right, pointer);
-                    ui.text_centered(Face::Medium, 15.0, pill[0] + 12.0, pill[1] + 4.0, argb(WHITE, if lo { 1.0 } else { 0.55 } * a), "‹");
-                    ui.text_centered(Face::Medium, 15.0, pill[0] + pill[2] - 12.0, pill[1] + 4.0, argb(WHITE, if hi { 1.0 } else { 0.55 } * a), "›");
+                    ui.text_centered(
+                        Face::Medium,
+                        15.0,
+                        pill[0] + 12.0,
+                        pill[1] + 4.0,
+                        argb(WHITE, if lo { 1.0 } else { 0.55 } * a),
+                        "‹",
+                    );
+                    ui.text_centered(
+                        Face::Medium,
+                        15.0,
+                        pill[0] + pill[2] - 12.0,
+                        pill[1] + 4.0,
+                        argb(WHITE, if hi { 1.0 } else { 0.55 } * a),
+                        "›",
+                    );
                     let value = fit(ui, Face::Medium, 12.0, &value, pill[2] - 44.0);
-                    ui.text_centered(Face::Medium, 12.0, pill[0] + pill[2] / 2.0, pill[1] + 6.0, argb(WHITE, a), &value);
+                    ui.text_centered(
+                        Face::Medium,
+                        12.0,
+                        pill[0] + pill[2] / 2.0,
+                        pill[1] + 6.0,
+                        argb(WHITE, a),
+                        &value,
+                    );
                     if within(r) {
                         // The row steps forwards; the pill's left half steps back.
                         page.hit(clipped(r), Hit::Row(*item, false));
@@ -1152,19 +2409,343 @@ impl Mods {
                 horizon_client::widgets::record(item.caption_key(), clipped(r).map(gui), true);
             }
             y += 46.0;
+            // The colour's picker, under its row.
+            if let Item::Pvp(opt) = *item
+                && self.picker.as_ref().is_some_and(|p| p.opt == opt)
+            {
+                let k = ease(self.picker_k);
+                let h = PICKER_H * k;
+                if h > 0.5 {
+                    let panel = [vx, y - 2.0, vw, h];
+                    let from = ui.batch.vertices.len();
+                    self.draw_picker(ui, page, extras, panel, a * k.sqrt(), &within, &clipped);
+                    // Only what has opened shows.
+                    ui.batch.clip_since(
+                        from,
+                        gui(vx - 2.0),
+                        gui(panel[1]),
+                        gui(vx + vw + 2.0),
+                        gui(panel[1] + h),
+                    );
+                }
+                y += (PICKER_H + 6.0) * k;
+            }
         }
         let content = y + scroll - by;
         if live {
             self.room = (content - bh).max(0.0);
             self.target = self.target.clamp(0.0, self.room);
         }
-        ui.batch.clip_since(start, gui(vx - 2.0), gui(by), gui(vx + vw + 2.0), gui(by + bh));
+        ui.batch.clip_since(
+            start,
+            gui(vx - 2.0),
+            gui(by),
+            gui(vx + vw + 2.0),
+            gui(by + bh),
+        );
 
         // The hovered option's description, on one line at the foot.
         if let Some(item) = hovered {
             let text = fit(ui, Face::Regular, 11.0, &description(item), vw);
-            ui.text(Face::Regular, 11.0, vx + 2.0, by + bh + 8.0, argb(WHITE, 0.6 * a), &text);
+            ui.text(
+                Face::Regular,
+                11.0,
+                vx + 2.0,
+                by + bh + 8.0,
+                argb(WHITE, 0.6 * a),
+                &text,
+            );
         }
+    }
+}
+
+impl Mods {
+    /// The open picker in `panel` (dp, its full height once open): the ready-made colours, the
+    /// square and the hue bar, the colour as it is and its `#RRGGBB` field.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_picker(
+        &mut self,
+        ui: &mut Ui,
+        page: &mut Page,
+        extras: &Extras,
+        panel: [f32; 4],
+        a: f32,
+        within: &dyn Fn([f32; 4]) -> bool,
+        clipped: &dyn Fn([f32; 4]) -> [f32; 4],
+    ) {
+        let Some(p) = self.picker.as_mut() else {
+            return;
+        };
+        let (pointer, gui) = (page.pointer, page.gui);
+        let opt = p.opt;
+        let Some(choice) = opt.colour_choice() else {
+            return;
+        };
+        let now = opt.colour(&extras.pvp).flatten();
+        // The first frame: the square starts at the colour the option has.
+        if p.square == [0.0; 4] {
+            p.hsv = rgb_to_hsv(now.map_or(0xFF_FFFF, |c| c.argb() & 0xFF_FFFF));
+            if now == Some(Colour::Inverted) {
+                p.hsv = [0.0, 0.0, 1.0];
+            }
+        }
+        let [px, py, pw, _] = panel;
+        let full = [px, py, pw, PICKER_H];
+        ui.rounded(
+            full[0],
+            full[1],
+            full[2],
+            full[3],
+            10.0,
+            argb(0x05_080C, 0.55 * a),
+        );
+        ui.border(
+            full[0],
+            full[1],
+            full[2],
+            full[3],
+            10.0,
+            argb(WHITE, 0.08 * a),
+        );
+        if within(full) {
+            page.hit(clipped(full), Hit::PickerPanel);
+        }
+        let pad = 14.0;
+        let (top, side) = (py + pad, PICKER_H - pad * 2.0);
+
+        // The ready-made colours, six to a row.
+        let label = lang::get_or("oteria.colour.presets", "Colours");
+        ui.text(
+            Face::Medium,
+            10.0,
+            px + pad,
+            top - 2.0,
+            argb(WHITE, 0.5 * a),
+            &label.to_uppercase(),
+        );
+        let (cell, gap) = (24.0, 6.0);
+        for (i, c) in choice.presets().into_iter().enumerate() {
+            let r = [
+                px + pad + (i % 6) as f32 * (cell + gap),
+                top + 16.0 + (i / 6) as f32 * (cell + gap),
+                cell,
+                cell,
+            ];
+            let chosen = c == opt.colour(&extras.pvp).unwrap_or(None);
+            let over = within(r) && inside(r, pointer);
+            if chosen || over {
+                let g = 2.0;
+                ui.border(
+                    r[0] - g,
+                    r[1] - g,
+                    r[2] + g * 2.0,
+                    r[3] + g * 2.0,
+                    8.0,
+                    argb(
+                        if chosen { ACCENT } else { WHITE },
+                        if chosen { 0.95 } else { 0.4 } * a,
+                    ),
+                );
+            }
+            swatch(ui, page, c, r, a);
+            if within(r) {
+                page.hit(clipped(r), Hit::Swatch(c));
+            }
+        }
+
+        // The square: saturation across, brightness down, in strips; the hue bar beside it.
+        let sq = [px + pad + 6.0 * (cell + gap) + 12.0, top, side, side];
+        let hue = p.hsv[0];
+        let pure = hsv_to_rgb([hue, 1.0, 1.0]);
+        let strips = 32;
+        let atlas = ui.atlas;
+        for i in 0..strips {
+            let s = (i as f32 + 0.5) / strips as f32;
+            let topc = mix(WHITE, pure, s);
+            let x0 = sq[0] + sq[2] * i as f32 / strips as f32;
+            let x1 = sq[0] + sq[2] * (i + 1) as f32 / strips as f32;
+            ui.batch.fill_gradient(
+                atlas,
+                (gui(x0), gui(sq[1]), gui(x1) - gui(x0), gui(sq[3])),
+                argb(topc, a),
+                argb(0x00_0000, a),
+            );
+        }
+        let knob = [sq[0] + p.hsv[1] * sq[2], sq[1] + (1.0 - p.hsv[2]) * sq[3]];
+        ui.border(
+            knob[0] - 6.0,
+            knob[1] - 6.0,
+            12.0,
+            12.0,
+            6.0,
+            argb(0x000000, 0.6 * a),
+        );
+        ui.border(
+            knob[0] - 5.0,
+            knob[1] - 5.0,
+            10.0,
+            10.0,
+            5.0,
+            argb(WHITE, a),
+        );
+        let bar = [sq[0] + sq[2] + 10.0, top, 14.0, side];
+        for i in 0..6 {
+            let (h0, h1) = (i as f32 / 6.0, (i + 1) as f32 / 6.0);
+            let y0 = bar[1] + bar[3] * h0;
+            let y1 = bar[1] + bar[3] * h1;
+            let (c0, c1) = (
+                hsv_to_rgb([h0, 1.0, 1.0]),
+                hsv_to_rgb([h1.min(0.9999), 1.0, 1.0]),
+            );
+            ui.batch.fill_gradient(
+                atlas,
+                (gui(bar[0]), gui(y0), gui(bar[2]), gui(y1) - gui(y0)),
+                argb(c0, a),
+                argb(c1, a),
+            );
+        }
+        let hy = bar[1] + hue * bar[3];
+        ui.rounded(
+            bar[0] - 3.0,
+            hy - 2.0,
+            bar[2] + 6.0,
+            4.0,
+            2.0,
+            argb(WHITE, a),
+        );
+        if within(sq) {
+            page.hit(clipped(sq), Hit::Square);
+        }
+        if within(bar) {
+            page.hit(clipped(bar), Hit::HueBar);
+        }
+        p.square = sq.map(gui);
+        p.hue = bar.map(gui);
+
+        // The colour as it is, and its field.
+        let fx = bar[0] + bar[2] + 18.0;
+        let fw = (px + pw - pad - fx).clamp(90.0, 150.0);
+        let label = lang::get_or("oteria.colour.hex", "Hex");
+        ui.text(
+            Face::Medium,
+            10.0,
+            fx,
+            top - 2.0,
+            argb(WHITE, 0.5 * a),
+            &label.to_uppercase(),
+        );
+        let preview = [fx, top + 16.0, fw, 40.0];
+        swatch(ui, page, now, preview, a);
+        let field = [fx, top + 66.0, fw, 30.0];
+        let typing = p.hex.clone();
+        let over = within(field) && inside(field, pointer);
+        ui.rounded(
+            field[0],
+            field[1],
+            field[2],
+            field[3],
+            7.0,
+            argb(
+                WHITE,
+                if typing.is_some() {
+                    0.14
+                } else if over {
+                    0.10
+                } else {
+                    0.06
+                } * a,
+            ),
+        );
+        if typing.is_some() {
+            ui.border(
+                field[0],
+                field[1],
+                field[2],
+                field[3],
+                7.0,
+                argb(ACCENT, 0.75 * a),
+            );
+        }
+        let text = match &typing {
+            Some(hex) => {
+                let caret = if self.blink < 0.55 { "|" } else { "" };
+                format!("#{}{caret}", hex.to_uppercase())
+            }
+            None => match now {
+                Some(Colour::Inverted) | None => "#——————".into(),
+                Some(c) => format!("#{:06X}", c.argb() & 0xFF_FFFF),
+            },
+        };
+        ui.text(
+            Face::Medium,
+            12.0,
+            field[0] + 10.0,
+            field[1] + 7.0,
+            argb(WHITE, a),
+            &text,
+        );
+        if within(field) {
+            page.hit(clipped(field), Hit::HexField);
+        }
+        let hint = lang::get_or("oteria.colour.hint", "Type 6 digits");
+        let hint = fit(ui, Face::Regular, 10.0, &hint, fw);
+        ui.text(
+            Face::Regular,
+            10.0,
+            fx,
+            top + 102.0,
+            argb(WHITE, 0.45 * a),
+            &hint,
+        );
+    }
+}
+
+/// A colour's swatch in `r` (dp): off is a dark square crossed out, inverted half white and
+/// half black.
+fn swatch(ui: &mut Ui, page: &Page, c: Option<Colour>, r: [f32; 4], a: f32) {
+    let [x, y, w, h] = r;
+    let radius = (w.min(h) / 4.0).min(7.0);
+    match c {
+        Some(Colour::Inverted) => {
+            ui.rounded(x, y, w, h, radius, argb(WHITE, a));
+            ui.rounded(x + w / 2.0, y, w / 2.0, h, 0.0, argb(0x000000, a));
+        }
+        None => {
+            ui.rounded(x, y, w, h, radius, argb(shown_rgb(None), a));
+            // A red stroke from corner to corner.
+            let gui = page.gui;
+            let t = 1.2;
+            let corners = [
+                [gui(x + 3.0), gui(y + h - 3.0 - t)],
+                [gui(x + w - 3.0 - t), gui(y + 3.0)],
+                [gui(x + w - 3.0), gui(y + 3.0 + t)],
+                [gui(x + 3.0 + t), gui(y + h - 3.0)],
+            ];
+            let atlas = ui.atlas;
+            ui.batch.fill_quad(atlas, corners, argb(OFF, a));
+        }
+        Some(c) => ui.rounded(x, y, w, h, radius, argb(shown_rgb(Some(c)), a)),
+    }
+    ui.border(x, y, w, h, radius, argb(WHITE, 0.18 * a));
+}
+
+/// A small chevron centred on (cx, cy): pointing down when `k` is 0, up when it is 1.
+fn chevron(ui: &mut Ui, page: &Page, cx: f32, cy: f32, k: f32, colour: u32) {
+    let gui = page.gui;
+    let dy = 2.5 * (1.0 - 2.0 * k);
+    let (w, t) = (4.5, 1.3);
+    // Two strokes meeting at the tip.
+    let atlas = ui.atlas;
+    for side in [-1.0f32, 1.0] {
+        let outer = [cx + side * w, cy - dy];
+        let tip = [cx, cy + dy];
+        let corners = [
+            [gui(outer[0]), gui(outer[1] - t)],
+            [gui(tip[0]), gui(tip[1] - t)],
+            [gui(tip[0]), gui(tip[1] + t)],
+            [gui(outer[0]), gui(outer[1] + t)],
+        ];
+        ui.batch.fill_quad(atlas, corners, colour);
     }
 }
 
@@ -1213,14 +2794,25 @@ impl Page<'_> {
     /// chrome's (`small`) at 20.
     fn icon(&self, ui: &mut Ui, name: &str, cx: f32, cy: f32, colour: u32, big: bool) {
         let small = icon::small(name);
-        let (name, texels) = if big { (name, 32.0) } else { (small.as_str(), 20.0) };
+        let (name, texels) = if big {
+            (name, 32.0)
+        } else {
+            (small.as_str(), 20.0)
+        };
         if let Some(r) = ui.atlas.sprites.get(name).copied() {
             let s = texels / self.d;
             // On whole screen pixels, so no texel falls between two.
             let k = ui.batch.scale;
             let gui = self.gui;
             let snap = |v: f32| (gui(v) * k).round() / k;
-            ui.batch.rect_uv(snap(cx - s / 2.0), snap(cy - s / 2.0), gui(s), gui(s), r, colour);
+            ui.batch.rect_uv(
+                snap(cx - s / 2.0),
+                snap(cy - s / 2.0),
+                gui(s),
+                gui(s),
+                r,
+                colour,
+            );
         }
     }
 }
@@ -1254,14 +2846,22 @@ mod tests {
     #[test]
     fn every_setting_steps_and_shows_a_value() {
         // Two sky packs for the Sky option to step through, as a resourcepacks folder could hold.
-        *horizon_client::pvp::SKY_PACKS.lock().unwrap() =
-            vec![("file/a.zip".into(), "a".into()), ("file/b.zip".into(), "b".into())];
+        *horizon_client::pvp::SKY_PACKS.lock().unwrap() = vec![
+            ("file/a.zip".into(), "a".into()),
+            ("file/b.zip".into(), "b".into()),
+        ];
         for tile in &TILES {
             for item in tile.settings {
                 let mut e = Extras::default();
                 let before = (item.switch(&e), item.value(&e));
                 item.cycle(&mut e, false);
-                assert_ne!((item.switch(&e), item.value(&e)), before, "{:?} of {}", item, tile.english);
+                assert_ne!(
+                    (item.switch(&e), item.value(&e)),
+                    before,
+                    "{:?} of {}",
+                    item,
+                    tile.english
+                );
                 assert!(!caption(*item).is_empty());
             }
         }
@@ -1272,7 +2872,11 @@ mod tests {
         let mut m = Mods::default();
         assert_eq!(m.shown().len(), TILES.len());
         m.category = Category::Hud;
-        assert!(m.shown().iter().all(|&i| TILES[i].category == Category::Hud));
+        assert!(
+            m.shown()
+                .iter()
+                .all(|&i| TILES[i].category == Category::Hud)
+        );
         m.category = Category::All;
         m.search = "fps".into();
         assert!(m.shown().iter().any(|&i| TILES[i].english == "FPS"));
@@ -1312,7 +2916,9 @@ mod tests {
         assert_eq!(m.click((5.0, 5.0), [0; DRAWN]), None);
         assert_eq!(m.paint, Some(true));
         // Let go far along the row: the cells between are painted too.
-        let Some(Action::Pixels(p)) = m.release((95.0, 5.0)) else { panic!("a stroke ends in pixels") };
+        let Some(Action::Pixels(p)) = m.release((95.0, 5.0)) else {
+            panic!("a stroke ends in pixels")
+        };
         assert_eq!(p[0], (1 << 10) - 1);
         assert_eq!(m.release((5.0, 5.0)), None, "only once");
     }
@@ -1344,11 +2950,59 @@ mod tests {
         assert!(m.back() && m.renaming.is_none());
         // Delete asks once.
         assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
-        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), Some(Action::Profile(ProfileOp::Delete(1))));
+        assert_eq!(
+            m.click((25.0, 5.0), [0; DRAWN]),
+            Some(Action::Profile(ProfileOp::Delete(1)))
+        );
         // Pressed once, then elsewhere: it asks again.
         assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
         assert_eq!(m.click((100.0, 100.0), [0; DRAWN]), None);
         assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
+    }
+
+    #[test]
+    fn colours_go_to_hsv_and_back() {
+        for rgb in [
+            0xFF_0000, 0x00_FF00, 0x00_00FF, 0x12_ABEF, 0xFF_FFFF, 0x00_0000, 0x80_8040,
+        ] {
+            assert_eq!(hsv_to_rgb(rgb_to_hsv(rgb)), rgb, "{rgb:06x}");
+        }
+    }
+
+    #[test]
+    fn a_number_field_takes_digits_only_and_puts_them_on() {
+        let mut m = Mods {
+            number: Some((Opt::CrosshairSize, String::new())),
+            ..Mods::default()
+        };
+        assert!(m.wants_keys());
+        assert!(m.type_key(Some("1a-2"), false));
+        assert!(m.type_key(Some("34"), false));
+        assert_eq!(m.number.as_ref().unwrap().1, "123");
+        m.enter();
+        assert!(m.number.is_none());
+        assert_eq!(
+            m.take_pending(),
+            vec![Action::SetNumber(Opt::CrosshairSize, 123)]
+        );
+    }
+
+    #[test]
+    fn six_hex_digits_put_a_colour_on() {
+        let mut m = Mods::default();
+        m.click_test_picker(Opt::OutlineColour);
+        m.picker.as_mut().unwrap().hex = Some(String::new());
+        m.type_key(Some("#12zAb"), false);
+        assert!(m.take_pending().is_empty());
+        m.type_key(Some("eF9"), false);
+        assert_eq!(
+            m.take_pending(),
+            vec![Action::SetColour(
+                Opt::OutlineColour,
+                Some(Colour::Custom(0x12ABEF)),
+                true
+            )]
+        );
     }
 
     #[test]

@@ -943,8 +943,21 @@ impl Game<'_> {
             }
             None => Default::default(),
         };
-        let badge =
-            |uuid: u128| own_rows.contains(&uuid).then_some(horizon_client::name_badge::GUI_SPRITE);
+        // Tier Tagger's tag before each name that has one.
+        if self.settings.extras.pvp.tiers.enabled {
+            for p in players.iter_mut() {
+                if let Some(tag) = self.tier_tag(p.uuid, &p.name) {
+                    let name = tab_list::name_for_display(p, board);
+                    let tagged = super::names::tier_prefix(tag).append(name);
+                    p.display_name = Some(tagged.component());
+                }
+            }
+        }
+        let badge = |uuid: u128| {
+            own_rows
+                .contains(&uuid)
+                .then_some(horizon_client::name_badge::GUI_SPRITE)
+        };
         let inputs = TabInputs {
             players: &players,
             board,

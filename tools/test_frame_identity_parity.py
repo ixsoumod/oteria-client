@@ -393,7 +393,7 @@ def set_hdr(game, on):
 
 
 SESSIONS = {
-    # 🤖 Agent: name: (horizon-graphics.txt, extra environment, scenes, HDR turned off after the first shots)
+    # 🤖 Agent: name: (oteria-graphics.txt, extra environment, scenes, HDR turned off after the first shots)
     'vanilla': ('', {}, WORLD + list(HUD) + ['sun'], False),
     # 🤖 Agent: An offered HDR output without a system report must leave Auto in SDR.
     'auto_unknown': ('hdr:auto\n', {'HORIZON_HDR_OUTPUT': 'pq'}, ['day_water', 'night_lights'], False),
@@ -436,7 +436,7 @@ def run_session(name, label, bin_dir, out, env_base, args):
     folder = RUN / 'games' / f'{name}-{label}'
     shutil.rmtree(folder, ignore_errors=True)
     folder.mkdir(parents=True)
-    (folder / 'horizon-graphics.txt').write_text(GRAPHICS + graphics)
+    (folder / 'oteria-graphics.txt').write_text(GRAPHICS + graphics)
     # 🤖 Agent: No chat, no tutorial toasts, no pause when the offscreen window has no focus.
     options = 'chatVisibility:2\ntutorialStep:none\npauseOnLostFocus:false\n'
     (folder / 'options.txt').write_text(options)
@@ -596,7 +596,7 @@ def clipped(path):
 
 
 def setting(name, key, default=None):
-    """A session's value of a horizon-graphics.txt key, after GRAPHICS's, else the game's default."""
+    """A session's value of a oteria-graphics.txt key, after GRAPHICS's, else the game's default."""
     graphics = GRAPHICS + SESSIONS[name][0]
     return int(graphics.rsplit(f'{key}:', 1)[1].split()[0]) if f'{key}:' in graphics else default
 

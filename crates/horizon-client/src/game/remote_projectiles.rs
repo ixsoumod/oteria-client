@@ -796,6 +796,7 @@ impl Game<'_> {
         self.tnts.retain(|t| t.id != id);
         self.falling.retain(|f| f.id != id);
         self.crystals.retain(|c| c.id != id);
+        self.oteria_crystal_removed(id);
         self.remove_remote_small_projectiles(id);
     }
 

@@ -214,7 +214,7 @@ pub fn markdown(api: Api) -> String {
     out += &table(&frame, Some(&Frame::OFFSETS[..frame.fields.len()]));
     out += "## Anti-aliasing\n\n\
             While a pack's `[[post]]` chain draws the frame, the player's anti-aliasing settings do not run: `taa`, `fxaa`\n\
-            and `upscaling` in `horizon-graphics.txt` have no effect, and the frame's projection is never jittered, because the\n\
+            and `upscaling` in `oteria-graphics.txt` have no effect, and the frame's projection is never jittered, because the\n\
             last post pass draws the picture itself and Horizon's own resolve, which does TAA, FXAA and TAA upscaling, is the\n\
             step it replaces. The world is still rendered at `resolutionScale` before the pack reads it.\n\n\
             A pack that wants smooth edges draws them itself, in a post pass: a spatial filter (FXAA, SMAA and the like) works on\n\

@@ -4,9 +4,11 @@
 
 pub const BOX: &str = "gui/sprites/oteria_icons/box";
 pub const BULB: &str = "gui/sprites/oteria_icons/bulb";
+pub const CAPE: &str = "gui/sprites/oteria_icons/cape";
 pub const CLOCK: &str = "gui/sprites/oteria_icons/clock";
 pub const COPY: &str = "gui/sprites/oteria_icons/copy";
 pub const CROSSHAIR: &str = "gui/sprites/oteria_icons/crosshair";
+pub const CROWN: &str = "gui/sprites/oteria_icons/crown";
 pub const DROPLET: &str = "gui/sprites/oteria_icons/droplet";
 pub const EYE: &str = "gui/sprites/oteria_icons/eye";
 pub const EYE_OFF: &str = "gui/sprites/oteria_icons/eye-off";
@@ -51,12 +53,14 @@ pub const WIFI_OFF: &str = "gui/sprites/oteria_icons/wifi-off";
 pub const X: &str = "gui/sprites/oteria_icons/x";
 
 /// Each icon's sprite and PNG: the 32 px ones, then the 20 px ones (`small`).
-pub(crate) const ALL: [(&str, &[u8]); 94] = [
+pub(crate) const ALL: [(&str, &[u8]); 106] = [
     (BOX, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/box.png")),
     (BULB, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/bulb.png")),
+    (CAPE, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/cape.png")),
     (CLOCK, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/clock.png")),
     (COPY, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/copy.png")),
     (CROSSHAIR, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/crosshair.png")),
+    (CROWN, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/crown.png")),
     (DROPLET, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/droplet.png")),
     (EYE, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/eye.png")),
     (EYE_OFF, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/eye-off.png")),
@@ -101,9 +105,11 @@ pub(crate) const ALL: [(&str, &[u8]); 94] = [
     (X, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/x.png")),
     ("gui/sprites/oteria_icons_small/box", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/box.png")),
     ("gui/sprites/oteria_icons_small/bulb", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/bulb.png")),
+    ("gui/sprites/oteria_icons_small/cape", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/cape.png")),
     ("gui/sprites/oteria_icons_small/clock", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/clock.png")),
     ("gui/sprites/oteria_icons_small/copy", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/copy.png")),
     ("gui/sprites/oteria_icons_small/crosshair", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/crosshair.png")),
+    ("gui/sprites/oteria_icons_small/crown", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/crown.png")),
     ("gui/sprites/oteria_icons_small/droplet", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/droplet.png")),
     ("gui/sprites/oteria_icons_small/eye", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/eye.png")),
     ("gui/sprites/oteria_icons_small/eye-off", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/eye-off.png")),
@@ -146,7 +152,31 @@ pub(crate) const ALL: [(&str, &[u8]); 94] = [
     ("gui/sprites/oteria_icons_small/wifi", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/wifi.png")),
     ("gui/sprites/oteria_icons_small/wifi-off", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/wifi-off.png")),
     ("gui/sprites/oteria_icons_small/x", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/x.png")),
+    // Tier Tagger's game modes (MCTiers' slugs), before each tier.
+    ("gui/sprites/oteria_tiers/axe", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/axe.png")),
+    ("gui/sprites/oteria_tiers/mace", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/mace.png")),
+    ("gui/sprites/oteria_tiers/nethop", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/nethop.png")),
+    ("gui/sprites/oteria_tiers/pot", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/pot.png")),
+    ("gui/sprites/oteria_tiers/smp", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/smp.png")),
+    ("gui/sprites/oteria_tiers/sword", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/sword.png")),
+    ("gui/sprites/oteria_tiers/uhc", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/uhc.png")),
+    ("gui/sprites/oteria_tiers/vanilla", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/tiers/vanilla.png")),
 ];
+
+/// Tier Tagger's icon for an MCTiers game mode (its slug), if it has one.
+pub fn tier_mode(mode: &str) -> Option<&'static str> {
+    Some(match mode {
+        "axe" => "gui/sprites/oteria_tiers/axe",
+        "mace" => "gui/sprites/oteria_tiers/mace",
+        "nethop" => "gui/sprites/oteria_tiers/nethop",
+        "pot" => "gui/sprites/oteria_tiers/pot",
+        "smp" => "gui/sprites/oteria_tiers/smp",
+        "sword" => "gui/sprites/oteria_tiers/sword",
+        "uhc" => "gui/sprites/oteria_tiers/uhc",
+        "vanilla" => "gui/sprites/oteria_tiers/vanilla",
+        _ => return None,
+    })
+}
 
 /// The 20 px version of `icon`, for the menu's chrome.
 pub fn small(icon: &str) -> String {

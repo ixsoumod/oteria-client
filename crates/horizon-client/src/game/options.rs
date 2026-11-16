@@ -483,7 +483,9 @@ impl Game<'_> {
                 Event::NativeSettings(i) => self.native_settings_refresh(i),
                 Event::NativeButton(i, b) => self.native_settings_event(i, b),
                 Event::Credits => self.open_win_screen(false, super::win::Finish::Options),
+                Event::SuperSecret => self.oteria_secret_next(),
                 Event::HudEditor => self.open_hud_editor(true),
+                Event::Keyboard => self.open_oteria_keyboard(true),
                 // AccessibilityOptionsScreen's link button: ConfirmLinkScreen
                 // back to the options screen.
                 Event::AccessibilityHelp => {

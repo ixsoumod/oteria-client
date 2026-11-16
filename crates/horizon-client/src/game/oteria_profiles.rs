@@ -1,5 +1,5 @@
 //! Oteria's profiles (the mods page's PROFILES tab): named sets of the mods' settings, as
-//! Lunar's. A profile is a copy of `horizon-extras.txt` (every mod's switch and settings, the HUD
+//! Lunar's. A profile is a copy of `oteria-extras.txt` (every mod's switch and settings, the HUD
 //! layout, the crosshair) in `oteria-profiles/<name>.txt` next to `options.txt`; the one in use is
 //! named in `oteria-profiles/active`. Switching saves what is on into the profile in use first,
 //! so nothing set since is lost. Nothing here reaches the server.

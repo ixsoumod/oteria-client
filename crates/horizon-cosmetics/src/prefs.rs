@@ -1,4 +1,4 @@
-//! The cosmetics switches: three lines of the game's `horizon-extras.txt` (in the game's home,
+//! The cosmetics switches: three lines of the game's `oteria-extras.txt` (in the game's home,
 //! beside `options.txt`), so the launcher's Wardrobe and the game's settings read and write the
 //! same ones.
 //!
@@ -13,7 +13,7 @@
 use std::{fs, io, path::Path};
 
 /// The game's extras file.
-pub const FILE: &str = "horizon-extras.txt";
+pub const FILE: &str = "oteria-extras.txt";
 /// Other players' cosmetics: `shown`, `name_tags` or `hidden` (`true` and `false` from before);
 /// no line, not chosen yet (`effective`).
 pub const OTHERS: &str = "cosmeticsOthers";

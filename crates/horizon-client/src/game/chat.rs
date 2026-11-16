@@ -1454,6 +1454,10 @@ impl Game<'_> {
     }
     pub(super) fn chat_click(&mut self) {
         let cursor = self.cursor;
+        // Oteria's music player: its buttons, with the chat open.
+        if self.music_click(cursor) {
+            return;
+        }
         let height = self.renderer.as_ref().map_or(720.0, |r| {
             HudBatch::new([r.config.width, r.config.height]).height
         });

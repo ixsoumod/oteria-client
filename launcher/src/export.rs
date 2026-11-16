@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 /// The game folder's own files that are the instance's settings.
 pub const FILES: [&str; 6] = [
     "options.txt",
-    "horizon-graphics.txt",
-    "horizon-extras.txt",
+    "oteria-graphics.txt",
+    "oteria-extras.txt",
     "horizon-controller.txt",
     "horizon-mods.txt",
     "servers.dat",

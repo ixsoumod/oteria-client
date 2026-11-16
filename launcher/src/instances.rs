@@ -457,14 +457,14 @@ const NOT_COPIED: &[&str] = &[
     "sessions",
     "telemetry",
     "mod-browser",
-    ".horizon-cache",
+    ".oteria-cache",
     // Far terrain's copies of what servers sent, rebuilt as the instance plays.
     "server-terrain",
 ];
 
 /// Files of the player, not of one instance, that a new instance starts with: the keys and video
 /// settings, and the offline name (so the player stays the same player in its worlds).
-const PLAYER_FILES: &[&str] = &["options.txt", "horizon-player.txt"];
+const PLAYER_FILES: &[&str] = &["options.txt", "oteria-player.txt"];
 
 /// Creates an instance named `name`: empty but for the player's options and offline name, or a
 /// copy of `from`'s game folder (its worlds, options and packs). Nothing of `from` changes.

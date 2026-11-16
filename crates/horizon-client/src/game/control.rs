@@ -1743,6 +1743,7 @@ fn key_code(name: &str) -> Option<KeyCode> {
     Some(match name.as_str() {
         "space" => KeyCode::Space,
         "shift" | "lshift" => KeyCode::ShiftLeft,
+        "rshift" => KeyCode::ShiftRight,
         "ctrl" | "control" | "lctrl" => KeyCode::ControlLeft,
         // The edit modifier on macOS (Cmd+A selects all there).
         "super" | "cmd" | "meta" => KeyCode::SuperLeft,

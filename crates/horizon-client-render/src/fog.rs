@@ -434,7 +434,7 @@ pub fn setup_fog(tables: &FogTables, state: &FogState, input: &FogInputs) -> Fog
     }
     fog
 }
-/// Horizon's Fog option turned off (`horizon-graphics.txt` `fog:false`):
+/// Horizon's Fog option turned off (`oteria-graphics.txt` `fog:false`):
 /// no distance fog, in any dimension: the dimension's and biome's own fog
 /// (`visual/fog_start_distance`, `fog_end_distance`: the Nether's ends at 96
 /// blocks) and the render-distance fog. The fog of the fluid or powder snow

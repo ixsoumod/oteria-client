@@ -40,6 +40,12 @@ pub(super) struct PvpState {
     reach_shown: Widget<Option<u32>>,
     speed: pvp_hud::Speed,
     speed_shown: Widget<u32>,
+    /// Each item cooling down: its slot, item, thousandths left and tenths of a second left.
+    cooldowns: Widget<Vec<(usize, Arc<str>, u16, u32)>>,
+    /// The first totem's slot, how many are carried, and how many were popped.
+    totems: Widget<(Option<usize>, u32, u32)>,
+    /// The first healing pot's slot, how many are carried, and whole seconds since the last.
+    pots: Widget<(Option<usize>, u32, Option<u32>)>,
     /// Each widget drawn last frame and its box on screen, for the HUD editor.
     pub(super) boxes: Vec<(pvp_hud::WidgetId, [f32; 4])>,
     /// The HUD editor, while it is open.
@@ -89,11 +95,19 @@ impl Game<'_> {
     pub(super) fn draw_elytra_indicator(&self, batch: &mut HudBatch, w: i32, h: i32) {
         let pvp = &self.settings.extras.pvp;
         if !pvp.tweaks.elytra_indicator
-            || self.armor[1].as_ref().is_none_or(|s| &*s.item != "minecraft:elytra")
+            || self.armor[1]
+                .as_ref()
+                .is_none_or(|s| &*s.item != "minecraft:elytra")
         {
             return;
         }
-        let Some(r) = self.gui.atlas.sprites.get(horizon_client::oteria_art::ELYTRA).copied() else {
+        let Some(r) = self
+            .gui
+            .atlas
+            .sprites
+            .get(horizon_client::oteria_art::ELYTRA)
+            .copied()
+        else {
             return;
         };
         let colour = if pvp.crosshair.custom && pvp.crosshair.colour != Colour::Inverted {
@@ -102,7 +116,14 @@ impl Game<'_> {
         } else {
             rgba(255, 255, 255, 255)
         };
-        batch.rect_uv((w / 2 - 8) as f32, (h / 2 + 6) as f32, 16.0, 16.0, r, colour);
+        batch.rect_uv(
+            (w / 2 - 8) as f32,
+            (h / 2 + 6) as f32,
+            16.0,
+            16.0,
+            r,
+            colour,
+        );
     }
     pub(super) fn draw_custom_crosshair(&mut self, batch: &mut HudBatch, w: i32, h: i32) {
         let mut c = self.settings.extras.pvp.crosshair;
@@ -200,6 +221,7 @@ impl Game<'_> {
     pub(super) fn pvp_frame(&mut self) {
         let tweaks = self.settings.extras.pvp.tweaks;
         horizon_client::enchant::set_numeric_levels(tweaks.numeric_enchants);
+        self.oteria_pvp_frame();
     }
     /// Whether this window may draw PvP & HUD's own time and weather: only a client of a server
     /// (single player's included) draws them, never the server that ticks the world.
@@ -209,16 +231,65 @@ impl Game<'_> {
     /// The day time the frame draws (sky, sun, moon, the sky's light): PvP & HUD's time of day,
     /// else the world's. The world's own `day_time` and everything that plays by it stay.
     pub(super) fn view_day_time(&self) -> i64 {
+        // Oteria's time changer: the same day, at the slider's time.
+        let clock = self.settings.extras.pvp.clock;
+        if clock.enabled && self.own_view() {
+            return self.world.day_time.div_euclid(24_000) * 24_000 + i64::from(clock.time);
+        }
         let fixed = self.settings.extras.pvp.tweaks.time;
         horizon_client::pvp::view_day_time(self.world.day_time, fixed.filter(|_| self.own_view()))
     }
     /// The rain and thunder levels the frame draws (rain, the sky's colour and light, fog): PvP &
     /// HUD's weather, else the world's. Gameplay (riptide, mobs, crops) keeps the world's.
     pub(super) fn view_weather(&self, partial: f32) -> (f32, f32) {
-        match self.settings.extras.pvp.tweaks.weather {
+        let changer = self.settings.extras.pvp.sky_weather;
+        let fixed =
+            changer
+                .enabled
+                .then_some(changer.weather)
+                .or(self.settings.extras.pvp.tweaks.weather);
+        match fixed {
             Some(w) if self.own_view() && self.can_have_weather() => w.levels(),
             _ => self.weather_levels(partial),
         }
+    }
+    /// Oteria's motion blur: the history's share in this frame, for the frame rate it runs at.
+    pub(super) fn motion_blur_share(&self) -> f32 {
+        thread_local! {
+            static LAST: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+        }
+        let now = std::time::Instant::now();
+        let dt = LAST
+            .with(|l| l.replace(Some(now)))
+            .map_or(1.0 / 60.0, |t| now.duration_since(t).as_secs_f32());
+        let b = self.settings.extras.pvp.blur;
+        let playing = matches!(self.screen, super::Screen::Playing) && self.player.is_some();
+        if !b.enabled || !playing {
+            return 0.0;
+        }
+        horizon_client::gfx::blur_share(b.strength, dt)
+    }
+    /// Oteria's environment for this frame: the player's feet and, in third person, the top of
+    /// their head for the hat. `None` while it is off or no world is played.
+    pub(super) fn environment_frame(
+        &self,
+        view_distance: f32,
+    ) -> Option<horizon_client::gfx::EnvironmentFrame> {
+        let settings = self.settings.extras.pvp.environment;
+        // It stays under the pause menu and the inventories: only a world is needed.
+        if !settings.enabled || self.player.is_none() {
+            return None;
+        }
+        let eye = glam::DVec3::from_array(self.view.eye);
+        let eye_height = f64::from(self.view.eye_height);
+        // The camera entity's own eye: the head's top is a little above it (0.18 of 1.62 stood).
+        let head = eye + glam::DVec3::Y * (eye_height * 0.12);
+        Some(horizon_client::gfx::EnvironmentFrame {
+            feet: eye - glam::DVec3::Y * eye_height,
+            head: (self.view.detached && self.camera_mob().is_none()).then_some(head),
+            view_distance,
+            settings,
+        })
     }
     /// This player attacked entity `id`, `distance` from the eyes to where the crosshair's
     /// ray met its box (the combo counter waits for the server's report; the reach widget
@@ -490,6 +561,65 @@ impl Game<'_> {
         } else if !hud.speed {
             state.speed_shown.clear();
         }
+        if hud.cooldowns {
+            let next = self.oteria_cooldowns();
+            let w = &mut self.pvp.cooldowns;
+            w.next = next;
+            let atlas = &self.gui.atlas;
+            let width = |s: &str| HudBatch::text_width(atlas, s);
+            w.refresh(|items, lines| {
+                for (slot, _, left, tenths) in items {
+                    let text = format!("{}.{}s", tenths / 10, tenths % 10);
+                    let line = Line::new(Icon::Slot(*slot), text, &width);
+                    lines.push(line.with_bar(f32::from(*left) / 1000.0));
+                }
+            });
+        } else {
+            self.pvp.cooldowns.clear();
+        }
+        if hud.totems {
+            let (slot, count) = self.oteria_count(|s| &*s.item == "minecraft:totem_of_undying");
+            let popped = self.oteria_own_pops();
+            let w = &mut self.pvp.totems;
+            w.next = (slot, count, popped);
+            let atlas = &self.gui.atlas;
+            let width = |s: &str| HudBatch::text_width(atlas, s);
+            w.refresh(|(slot, count, popped), lines| {
+                let icon = slot.map_or(Icon::Item("minecraft:totem_of_undying".into()), Icon::Slot);
+                let text = horizon_client::lang::tr("oteria.hud.totems", &[count]);
+                let mut line = Line::new(icon, text, &width);
+                if *count == 0 {
+                    line.colour = 0xFFFF_5555;
+                }
+                let popped = horizon_client::lang::tr("oteria.hud.popped", &[popped]);
+                lines.push(line.with_detail(popped, &width));
+            });
+        } else {
+            self.pvp.totems.clear();
+        }
+        if hud.pots {
+            let (slot, count) = self.oteria_count(super::oteria_pvp::is_healing_pot);
+            let since = self.oteria_since_pot().filter(|s| *s < 60.0).map(|s| s as u32);
+            let w = &mut self.pvp.pots;
+            w.next = (slot, count, since);
+            let atlas = &self.gui.atlas;
+            let width = |s: &str| HudBatch::text_width(atlas, s);
+            w.refresh(|(slot, count, since), lines| {
+                let icon = slot.map_or(Icon::Item("minecraft:splash_potion".into()), Icon::Slot);
+                let text = horizon_client::lang::tr("oteria.hud.pots", &[count]);
+                let mut line = Line::new(icon, text, &width);
+                if *count == 0 {
+                    line.colour = 0xFFFF_5555;
+                }
+                if let Some(s) = since {
+                    let ago = horizon_client::lang::tr("oteria.hud.pot_ago", &[s]);
+                    line = line.with_detail(ago, &width);
+                }
+                lines.push(line);
+            });
+        } else {
+            self.pvp.pots.clear();
+        }
         let style = Style {
             background: hud.background.then(|| hud.background_argb()),
             text: hud.text.argb(),
@@ -574,6 +704,21 @@ impl Game<'_> {
                 &p.speed_shown.lines,
                 p.speed_shown.size,
             ),
+            (
+                W::Cooldowns,
+                hud.cooldowns,
+                hud.cooldowns_corner,
+                &p.cooldowns.lines,
+                p.cooldowns.size,
+            ),
+            (
+                W::Totems,
+                hud.totems,
+                hud.totems_corner,
+                &p.totems.lines,
+                p.totems.size,
+            ),
+            (W::Pots, hud.pots, hud.pots_corner, &p.pots.lines, p.pots.size),
         ];
         // The editor shows a widget with nothing to show yet by its name.
         let editing = self.hud_editing();
@@ -611,7 +756,7 @@ impl Game<'_> {
     }
     /// Where a widget of `size` goes at its `place`'s scale: where the player put it, else in
     /// its corner (unless a mod hides that corner). `[x, y, w, h]`, scaled.
-    fn widget_rect(
+    pub(super) fn widget_rect(
         &self,
         corners: &mut Corners,
         place: pvp_hud::Place,
@@ -720,6 +865,49 @@ impl Game<'_> {
         let total = stack.count + found.map(|(_, s)| s.count).sum::<u32>();
         (ranged || total > 1).then(|| (first, stack.item.clone(), total))
     }
+    /// The items cooling down in the hotbar and the off hand, one per cooldown group: slot,
+    /// item, thousandths left, tenths of a second left.
+    fn oteria_cooldowns(&self) -> Vec<(usize, Arc<str>, u16, u32)> {
+        let partial = self.clock.fraction() as f32;
+        let rate = self.clock.rate().max(0.01);
+        let mut seen: Vec<Arc<str>> = Vec::new();
+        let mut out = Vec::new();
+        let slots = (0..9).chain(std::iter::once(super::shield::OFFHAND_SLOT));
+        for slot in slots {
+            let Some(stack) = self.stack_in(slot) else {
+                continue;
+            };
+            let info = self.items().get(&stack.item);
+            let group = horizon_client::cooldowns::group(stack, info.and_then(|i| i.use_cooldown.as_ref()));
+            if seen.contains(&group) {
+                continue;
+            }
+            let left = self.cooldowns.percent(&group, partial);
+            if left <= 0.0 {
+                continue;
+            }
+            let ticks = self.cooldowns.remaining_ticks(&group, partial);
+            // `rate` is ticks a second.
+            let tenths = (ticks / rate * 10.0).ceil().max(0.0) as u32;
+            out.push((slot, stack.item.clone(), (left * 1000.0) as u16, tenths));
+            seen.push(group);
+        }
+        out
+    }
+    /// The first slot holding a stack `pick` takes, and how many such items there are.
+    fn oteria_count(&self, pick: impl Fn(&horizon_client::items::ItemStack) -> bool) -> (Option<usize>, u32) {
+        let slots = self.inventory.iter().map(Option::as_ref).enumerate();
+        let offhand = std::iter::once((super::shield::OFFHAND_SLOT, self.offhand.as_ref()));
+        let mut first = None;
+        let mut total = 0;
+        for (i, s) in offhand.chain(slots) {
+            if let Some(s) = s.filter(|s| pick(s)) {
+                first.get_or_insert(i);
+                total += s.count;
+            }
+        }
+        (first, total)
+    }
     /// One widget's box in `corner`: icons in a column, texts beside them.
     fn paint_widget(
         &self,
@@ -758,6 +946,15 @@ impl Game<'_> {
                         batch.rect_uv(ix, iy, size, size, r, u32::MAX);
                     }
                 }
+                Icon::Item(item) => {
+                    let stack = horizon_client::items::ItemStack {
+                        item: item.clone(),
+                        count: 1,
+                        damage: 0,
+                        extra: None,
+                    };
+                    self.draw_item_model(batch, &stack, ix, iy);
+                }
             }
             let text_h = if line.detail.is_some() { 18.0 } else { 8.0 };
             let tx = x + pvp_hud::PAD + line.text_x(icons);
@@ -774,6 +971,15 @@ impl Game<'_> {
             batch.text_styled(atlas, &line.text, tx, ty, argb(colour), style.shadow);
             if let Some(detail) = &line.detail {
                 batch.text_styled(atlas, detail, tx, ty + 10.0, argb(DETAIL), style.shadow);
+            }
+            // A cooldown's bar under its text, green to red as it runs out.
+            if let Some(full) = line.bar {
+                let bw = line.text_width.max(20.0);
+                let by = ty + 9.0;
+                batch.fill(atlas, tx, by, bw, 1.0, rgba(0, 0, 0, 160));
+                let g = (255.0 * (1.0 - full)) as u8;
+                let r = (255.0 * full) as u8;
+                batch.fill(atlas, tx, by, bw * full, 1.0, rgba(r, g, 64, 255));
             }
             top += line.height();
         }

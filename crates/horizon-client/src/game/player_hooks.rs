@@ -60,6 +60,10 @@ pub(crate) fn register() {
     {
         log::error!("Cosmetics: their hooks came too late: {e}");
     }
+    // Oteria's cape, wings and aura (the Cosmetics page): drawn only while one is worn.
+    if let Err(e) = horizon_hooks::register(&super::oteria_wear::HOOKS) {
+        log::error!("Oteria: the cape, wings and aura's hooks came too late: {e}");
+    }
 }
 
 /// The models of the world a window shows: its own first, then the other players and mannequins.
@@ -193,7 +197,7 @@ thread_local! {
 }
 
 /// The game's model of `mesh`, made once.
-fn part_of(mesh: &Arc<Mesh>) -> Arc<Part> {
+pub(super) fn part_of(mesh: &Arc<Mesh>) -> Arc<Part> {
     fn part(m: &Mesh) -> Part {
         Part {
             name: m.name.clone(),
@@ -387,7 +391,7 @@ impl PlayerDraw for DrawPlayer<'_, '_> {
             });
             return;
         }
-        if self.gpu {
+        if self.gpu && !look.changing {
             let mut models = self.game.skin_models.borrow_mut();
             let mut frame = self.game.skin_frame.borrow_mut();
             let mut skin = horizon_client::mobs::skin::Skin::new(&mut models, &mut frame);
@@ -431,6 +435,11 @@ impl PlayerDraw for DrawPlayer<'_, '_> {
 }
 
 impl Game<'_> {
+    /// A crate's sprite `id` in the GUI atlas (kept this frame), when it is stored.
+    pub(super) fn hook_sprite(&self, id: u64) -> Option<[f32; 4]> {
+        HookSprites(self).get(id)
+    }
+
     /// What crates draw on player model `m` in the world pass (`creatures.rs`): see
     /// [`DrawPlayer`]. The bounds of what went to the GPU.
     #[allow(clippy::too_many_arguments)]
@@ -600,6 +609,18 @@ impl Game<'_> {
         if !own {
             marks.voice = self.voice_name_icon(self.remote_player_uuid(m.id));
         }
+        // Tier Tagger's tag before the name.
+        marks.tier = if own {
+            self.remote.as_ref().and_then(|r| {
+                let name = r.profile_name.clone();
+                self.tier_tag(r.profile(), &name)
+            })
+        } else {
+            self.remote_player_uuid(m.id).and_then(|uuid| {
+                let name = self.remote_player_name(m.id).unwrap_or_default().to_owned();
+                self.tier_tag(uuid, &name)
+            })
+        };
         if !engine::any() {
             return marks;
         }

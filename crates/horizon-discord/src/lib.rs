@@ -8,7 +8,7 @@
 //!
 //! A Horizon crate (docs/layers.md): the game tells it what the player does through the
 //! platform's hooks ([`HOOKS`]: `client_started`, `activity`, `shutdown`), which the official
-//! executable (`horizon-official`) registers with the switch: its line of `horizon-extras.txt`
+//! executable (`horizon-official`) registers with the switch: its line of `oteria-extras.txt`
 //! ([`SETTING`]) and its row in Extras' Multiplayer group ([`SECTION`]). horizon-client's own
 //! executable has no presence.
 #![forbid(unsafe_code)]
@@ -122,7 +122,7 @@ impl Hooks for Presence {
     }
 }
 
-/// The switch's line in `horizon-extras.txt`, where the engine's Extras kept it before.
+/// The switch's line in `oteria-extras.txt`, where the engine's Extras kept it before.
 const KEY: &str = "discordPresence";
 /// The switch's row, and what it says on hover.
 const LABEL: &str = "horizon.extras.discord_presence";
@@ -158,14 +158,14 @@ fn shown(status: Status) -> Status {
     if enabled() { status } else { Status::Off }
 }
 
-/// The switch's line of `horizon-extras.txt`, for `horizon_platform::settings::register`.
+/// The switch's line of `oteria-extras.txt`, for `horizon_platform::settings::register`.
 pub static SETTING: Setting = Setting;
 
 pub struct Setting;
 
 impl Store for Setting {
     fn file(&self) -> &'static str {
-        "horizon-extras.txt"
+        "oteria-extras.txt"
     }
     fn owns(&self, key: &str) -> bool {
         key == KEY

@@ -54,7 +54,7 @@ fn home(name: &str) -> PathBuf {
     )
     .unwrap();
     fs::write(
-        home.join("horizon-graphics.txt"),
+        home.join("oteria-graphics.txt"),
         "preset:custom\npickedShaderPack:\nfxaa:true\n",
     )
     .unwrap();
@@ -110,7 +110,7 @@ fn turning_packs_on_and_off_writes_the_games_own_lines() {
     let classic = find(&home, Kind::Shader, "Classic.zip").unwrap();
     set_enabled(&home, &classic, true).unwrap();
     assert_eq!(
-        fs::read_to_string(home.join("horizon-graphics.txt")).unwrap(),
+        fs::read_to_string(home.join("oteria-graphics.txt")).unwrap(),
         "preset:custom\npickedShaderPack:Classic.zip\nfxaa:true\n",
         "one shader pack at a time"
     );

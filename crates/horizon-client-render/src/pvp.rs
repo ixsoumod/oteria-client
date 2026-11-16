@@ -1,6 +1,6 @@
 //! PvP and HUD options (`docs/pvp.md`): a custom crosshair, block outline, hit colour and HUD
 //! widgets (`pvp_hud`). Kept in
-//! `horizon-extras.txt` with the other extras ([`crate::extras::Extras::pvp`]) and shown on
+//! `oteria-extras.txt` with the other extras ([`crate::extras::Extras::pvp`]) and shown on
 //! Horizon Settings > PvP & HUD. Every option is off by default, so the game looks like
 //! vanilla until the player changes one, and none of them shows anything vanilla doesn't
 //! already tell the player.
@@ -19,6 +19,8 @@ pub enum Colour {
     Blue,
     Magenta,
     Black,
+    /// Any colour, `0xRRGGBB` (the picker's wheel or a typed `#RRGGBB`).
+    Custom(u32),
 }
 impl Colour {
     pub const ALL: [Colour; 10] = [
@@ -45,6 +47,14 @@ impl Colour {
             Colour::Blue => "blue",
             Colour::Magenta => "magenta",
             Colour::Black => "black",
+            Colour::Custom(_) => "custom",
+        }
+    }
+    /// The saved form: the name, or `#rrggbb` for a custom colour.
+    pub fn save(self) -> String {
+        match self {
+            Colour::Custom(rgb) => format!("#{:06x}", rgb & 0xFF_FFFF),
+            c => c.name().to_owned(),
         }
     }
     fn english(self) -> &'static str {
@@ -59,10 +69,14 @@ impl Colour {
             Colour::Blue => "Blue",
             Colour::Magenta => "Magenta",
             Colour::Black => "Black",
+            Colour::Custom(_) => "Custom",
         }
     }
-    /// The name in the current language.
+    /// The name in the current language; a custom colour shows as `#RRGGBB`.
     pub fn label(self) -> String {
+        if let Colour::Custom(rgb) = self {
+            return format!("#{:06X}", rgb & 0xFF_FFFF);
+        }
         crate::lang::get_or(
             &format!("horizon.pvp.colour.{}", self.name()),
             self.english(),
@@ -80,9 +94,15 @@ impl Colour {
             Colour::Blue => 0xFF40_80FF,
             Colour::Magenta => 0xFFFF_40FF,
             Colour::Black => 0xFF00_0000,
+            Colour::Custom(rgb) => 0xFF00_0000 | rgb & 0xFF_FFFF,
         }
     }
-    fn parse(s: &str) -> Option<Colour> {
+    /// A name, or `#rrggbb` (`rrggbb` alone too).
+    pub fn parse(s: &str) -> Option<Colour> {
+        let hex = s.strip_prefix('#').unwrap_or(s);
+        if hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return u32::from_str_radix(hex, 16).ok().map(Colour::Custom);
+        }
         Self::ALL.into_iter().find(|c| c.name() == s)
     }
     fn step(self, back: bool) -> Colour {
@@ -638,6 +658,16 @@ pub struct Hud {
     /// Horizontal speed in blocks per second.
     pub speed: bool,
     pub speed_corner: Corner,
+    /// The cooldowns of the items in hand and the hotbar (ender pearl, chorus fruit, wind
+    /// charge, shield...), each with the seconds left.
+    pub cooldowns: bool,
+    pub cooldowns_corner: Corner,
+    /// How many totems of undying the inventory holds, and how many you popped.
+    pub totems: bool,
+    pub totems_corner: Corner,
+    /// How many healing splash potions the inventory holds, and the seconds since you threw one.
+    pub pots: bool,
+    pub pots_corner: Corner,
     /// A dark box behind each widget.
     pub background: bool,
     /// The boxes' opacity, in percent.
@@ -664,6 +694,9 @@ impl Hud {
             self.clock,
             self.reach,
             self.speed,
+            self.cooldowns,
+            self.totems,
+            self.pots,
         ]
         .contains(&true)
     }
@@ -698,6 +731,12 @@ impl Default for Hud {
             reach_corner: Corner::TopLeft,
             speed: false,
             speed_corner: Corner::TopLeft,
+            cooldowns: false,
+            cooldowns_corner: Corner::BottomLeft,
+            totems: false,
+            totems_corner: Corner::BottomLeft,
+            pots: false,
+            pots_corner: Corner::BottomLeft,
             background: true,
             opacity: HUD_OPACITY,
             text: Colour::White,
@@ -848,7 +887,319 @@ pub struct Pvp {
     pub minimap: Minimap,
     pub skins: Skins,
     pub sky: Sky,
+    pub zoom: Zoom,
+    pub tiers: Tiers,
+    pub blur: MotionBlur,
+    pub environment: Environment,
+    pub clock: Clock,
+    pub sky_weather: SkyWeather,
+    pub barrel: Barrel,
+    pub music: Music,
+    /// The Keyboard page's layout: 60, 75 or 100 (percent of a full keyboard).
+    pub keyboard_layout: u8,
+    pub crystal: CrystalOpt,
+    pub anchor: AnchorOpt,
+    pub hitboxes: Hitboxes,
+    pub secret: Secret,
+    /// Pop Counter: a chat line each time a player near you uses a totem, and when one dies
+    /// after popping (`game/oteria_pvp.rs`).
+    pub pops: bool,
 }
+
+/// Oteria's Crystal Optimizer, after Marlow's Crystal Optimizer (MIT): an End crystal this
+/// player hits with a blow strong enough to break it leaves this client at once, so the next
+/// one can go where it stood without waiting for the server; it comes back if the server
+/// hasn't removed it 30 ticks later (`game/oteria_pvp.rs`). Off by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CrystalOpt {
+    pub enabled: bool,
+    /// The broken crystal stays drawn until the server removes it (it no longer blocks).
+    pub keep_render: bool,
+}
+
+/// Oteria's Anchor Optimizer: a charged respawn anchor this player sets off outside the Nether
+/// disappears at once, ahead of the server, which stays the judge: the block comes back when it
+/// says so (`BlockStatePredictionHandler`). Off by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AnchorOpt {
+    pub enabled: bool,
+    /// Glowstone charges the anchor at once too.
+    pub charge: bool,
+}
+
+/// Oteria's hitboxes: every entity's box in a colour by its kind (`None`: not drawn), with its
+/// eyes and where it looks, as F3+B but always on and coloured (`game/oteria_pvp.rs`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hitboxes {
+    pub enabled: bool,
+    pub players: Option<Colour>,
+    pub hostile: Option<Colour>,
+    pub passive: Option<Colour>,
+    pub items: Option<Colour>,
+    pub projectiles: Option<Colour>,
+    pub crystals: Option<Colour>,
+    pub others: Option<Colour>,
+    /// The red line at the eyes.
+    pub eyes: bool,
+    /// The blue arrow where it looks.
+    pub look: bool,
+    /// The lines' width (`HITBOX_WIDTHS`), in tenths of vanilla's.
+    pub width: u8,
+    /// Your own box, in third person.
+    pub own: bool,
+}
+impl Default for Hitboxes {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            players: Some(Colour::Red),
+            hostile: Some(Colour::Orange),
+            passive: Some(Colour::Green),
+            items: Some(Colour::Yellow),
+            projectiles: Some(Colour::Cyan),
+            crystals: Some(Colour::Magenta),
+            others: Some(Colour::White),
+            eyes: true,
+            look: true,
+            width: 10,
+            own: false,
+        }
+    }
+}
+pub const HITBOX_WIDTHS: (u8, u8) = (4, 30);
+
+/// Super Secret Settings (the 1.8 button, after fooxy's mod, MIT): a fun effect over the whole
+/// screen, picked at random by the button of Options or its key (`key.oteria.secret`), or chosen
+/// here (`gfx/oteria_secret`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Secret {
+    /// The effect (`SECRET_EFFECTS`), 0 off.
+    pub effect: u8,
+}
+/// Super Secret Settings' effects: their language key's end and English name; the index is what
+/// the shader draws (`oteria_secret.wgsl`), 0 none.
+pub const SECRET_EFFECTS: [(&str, &str); 22] = [
+    ("none", "None"),
+    ("notch", "Notch"),
+    ("fxaa", "FXAA"),
+    ("art", "Art"),
+    ("bumpy", "Bumpy"),
+    ("blobs", "Blobs"),
+    ("pencil", "Pencil"),
+    ("color_convolve", "Color Convolve"),
+    ("deconverge", "Deconverge"),
+    ("flip", "Flip"),
+    ("invert", "Invert"),
+    ("ntsc", "NTSC"),
+    ("outline", "Outline"),
+    ("scan_pincushion", "Scan Pincushion"),
+    ("sobel", "Sobel"),
+    ("bits", "Bits"),
+    ("desaturate", "Desaturate"),
+    ("green", "Green"),
+    ("blur", "Blur"),
+    ("wobble", "Wobble"),
+    ("creeper", "Creeper"),
+    ("spider", "Spider"),
+];
+pub fn secret_label(effect: u8) -> String {
+    let (id, english) = SECRET_EFFECTS[usize::from(effect).min(SECRET_EFFECTS.len() - 1)];
+    crate::lang::get_or(&format!("horizon.pvp.secret.{id}"), english)
+}
+
+/// Oteria's music (`game/oteria_music.rs`): the song playing on this computer and its lyrics.
+/// Off by default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Music {
+    pub enabled: bool,
+    /// The lyrics floating in the air ahead of the player.
+    pub lyrics: bool,
+    /// The song's card at the top right.
+    pub card: bool,
+    /// The keys: play/pause, next, previous (unbound at first, set in Controls).
+    pub play_key: String,
+    pub next_key: String,
+    pub previous_key: String,
+}
+impl Default for Music {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            lyrics: true,
+            card: true,
+            play_key: "key.keyboard.unknown".into(),
+            next_key: "key.keyboard.unknown".into(),
+            previous_key: "key.keyboard.unknown".into(),
+        }
+    }
+}
+
+/// Oteria's barrel roll (`game/oteria_barrel.rs`): an elytra flown as a plane. Off by default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Barrel {
+    pub enabled: bool,
+    /// Rolled, the plane turns towards the lower wing.
+    pub banking: bool,
+    /// A roll under 90 degrees comes back level by itself.
+    pub righting: bool,
+    pub invert_pitch: bool,
+    /// The mouse's left and right turn (yaw) instead of rolling.
+    pub switch_roll_yaw: bool,
+    /// The mouse's sensitivity in flight, percent (`BARREL_SENSITIVITIES`).
+    pub sensitivity: u8,
+}
+impl Default for Barrel {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            banking: true,
+            righting: false,
+            invert_pitch: false,
+            switch_roll_yaw: false,
+            sensitivity: 100,
+        }
+    }
+}
+pub const BARREL_SENSITIVITIES: (u8, u8) = (25, 250);
+
+/// Oteria's motion blur (`gfx/motion_blur.rs`): off by default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MotionBlur {
+    pub enabled: bool,
+    /// How long the trail lasts, in percent (`BLUR_STRENGTHS`).
+    pub strength: u8,
+}
+impl Default for MotionBlur {
+    fn default() -> Self {
+        Self { enabled: false, strength: 50 }
+    }
+}
+pub const BLUR_STRENGTHS: (u8, u8) = (10, 100);
+
+/// Oteria's environment (`gfx/oteria_environment.rs`): the world dressed as a dream, off by
+/// default. Each part has its own switch and colour: waves of tiles running out from the player
+/// over the ground, flakes and sparkles floating in the air, a China hat over the player's head
+/// in third person, an aurora sky with stars and shooting stars, and a fog on the distance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Environment {
+    pub enabled: bool,
+    pub ground: bool,
+    pub ground_colour: Colour,
+    /// How far the waves run, in blocks (`ENV_RADII`).
+    pub ground_radius: u8,
+    pub particles: bool,
+    pub particles_colour: Colour,
+    /// How many there are, in percent (`ENV_AMOUNTS`).
+    pub particles_amount: u8,
+    pub hat: bool,
+    pub hat_colour: Colour,
+    pub sky: bool,
+    pub sky_colour: Colour,
+    pub fog: bool,
+    pub fog_colour: Colour,
+    /// How thick the fog is, in percent (`ENV_AMOUNTS`).
+    pub fog_density: u8,
+}
+impl Default for Environment {
+    fn default() -> Self {
+        // The colours of the reference: pink tiles and hat, a purple sky and fog.
+        Self {
+            enabled: false,
+            ground: true,
+            ground_colour: Colour::Custom(0xFF_8EC6),
+            ground_radius: 9,
+            particles: true,
+            particles_colour: Colour::Custom(0xFF_9ADB),
+            particles_amount: 50,
+            hat: true,
+            hat_colour: Colour::Custom(0xFF_9AD0),
+            sky: true,
+            sky_colour: Colour::Custom(0x9B_3A8C),
+            fog: true,
+            fog_colour: Colour::Custom(0x84_3474),
+            fog_density: 50,
+        }
+    }
+}
+pub const ENV_RADII: (u8, u8) = (4, 24);
+pub const ENV_AMOUNTS: (u8, u8) = (10, 100);
+
+/// Oteria's time changer: the time of day this player sees, fixed where the slider puts it.
+/// Never sent to the server; the world's time and what plays by it stay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Clock {
+    pub enabled: bool,
+    /// In the day's ticks, as `/time set` takes them (0: 6 in the morning, 6000: noon).
+    pub time: u16,
+}
+impl Default for Clock {
+    fn default() -> Self {
+        Self { enabled: false, time: 6000 }
+    }
+}
+/// The slider's ends: a day's ticks.
+pub const DAY_TICKS: (u32, u32) = (0, 23_999);
+/// A day time in ticks as the clock reads it, `HH:MM` (tick 0 is 06:00).
+pub fn clock_label(ticks: u32) -> String {
+    let t = ticks % 24_000;
+    let hours = (t / 1000 + 6) % 24;
+    let minutes = (t % 1000) * 60 / 1000;
+    format!("{hours:02}:{minutes:02}")
+}
+
+/// Oteria's weather changer: the weather this player sees, fixed. Never sent to the server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkyWeather {
+    pub enabled: bool,
+    pub weather: ViewWeather,
+}
+impl Default for SkyWeather {
+    fn default() -> Self {
+        Self { enabled: false, weather: ViewWeather::Clear }
+    }
+}
+
+/// Oteria's Tier Tagger: each player's PvP tier from MCTiers before their name, over their head
+/// and in the player list (`game/oteria_tiers.rs`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tiers {
+    pub enabled: bool,
+    /// The game mode shown (`TIER_MODES`); empty: the player's best.
+    pub mode: String,
+}
+/// The game modes MCTiers ranks (its slugs), with their names; "" is the best of them.
+pub const TIER_MODES: [(&str, &str); 9] = [
+    ("", "Best"),
+    ("sword", "Sword"),
+    ("vanilla", "Vanilla"),
+    ("uhc", "UHC"),
+    ("pot", "Pot"),
+    ("nethop", "NethPot"),
+    ("smp", "SMP"),
+    ("axe", "Axe"),
+    ("mace", "Mace"),
+];
+
+/// Oteria's zoom, as OptiFine's: the view narrowed while its key is held (unbound at first, set
+/// in Controls), the wheel zooming in and out while it is, eased or at once
+/// (`game/oteria_zoom.rs`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Zoom {
+    pub enabled: bool,
+    /// The key to hold (`key.oteria.zoom`).
+    pub key: String,
+    /// The view eases in and out (else it narrows at once).
+    pub smooth: bool,
+    /// How many times the view is magnified when the key is pressed (`ZOOM_LEVELS`).
+    pub level: u8,
+}
+impl Default for Zoom {
+    fn default() -> Self {
+        Self { enabled: true, key: "key.keyboard.unknown".into(), smooth: true, level: 4 }
+    }
+}
+/// The magnifications the key starts at.
+pub const ZOOM_LEVELS: (u8, u8) = (2, 10);
 
 /// Oteria's sky mode: a sky pack (OptiFine's custom sky format) from the player's resourcepacks
 /// folder, put on top of their packs while it is on (`game/oteria_sky.rs`).
@@ -868,12 +1219,30 @@ pub static SKY_PACKS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex
 pub struct Skins {
     /// Swords in the main hand drawn as Oteria's butterfly knife (`game/oteria_knife.rs`).
     pub knife: bool,
+    /// Which knife (`oteria_art::KNIFE_RIGS`).
+    pub knife_skin: String,
     /// The key that plays the knife's inspect.
     pub inspect_key: String,
+    /// The skin this player wears in Oteria (`game/oteria_skins.rs`, by its id in the skin
+    /// history); empty: the account's own.
+    pub player: String,
+    /// Oteria's cape, wings and aura worn (`oteria_art::CAPES`, `WINGS`, `AURAS` ids); empty:
+    /// none (`game/oteria_wear.rs`).
+    pub cape: String,
+    pub wings: String,
+    pub aura: String,
 }
 impl Default for Skins {
     fn default() -> Self {
-        Self { knife: false, inspect_key: "key.keyboard.grave.accent".into() }
+        Self {
+            knife: false,
+            knife_skin: "butterfly".into(),
+            inspect_key: "key.keyboard.grave.accent".into(),
+            player: String::new(),
+            cape: String::new(),
+            wings: String::new(),
+            aura: String::new(),
+        }
     }
 }
 
@@ -1018,6 +1387,20 @@ impl Default for Pvp {
             minimap: Minimap::default(),
             skins: Skins::default(),
             sky: Sky::default(),
+            zoom: Zoom::default(),
+            tiers: Tiers::default(),
+            blur: MotionBlur::default(),
+            environment: Environment::default(),
+            clock: Clock::default(),
+            sky_weather: SkyWeather::default(),
+            barrel: Barrel::default(),
+            music: Music::default(),
+            keyboard_layout: 100,
+            crystal: CrystalOpt::default(),
+            anchor: AnchorOpt::default(),
+            hitboxes: Hitboxes::default(),
+            secret: Secret::default(),
+            pops: false,
         }
     }
 }
@@ -1032,7 +1415,7 @@ fn num(value: &str, (lo, hi): (u8, u8), d: u8) -> u8 {
     value.parse::<u8>().map_or(d, |v| v.clamp(lo, hi))
 }
 impl Pvp {
-    /// One `key:value` line of `horizon-extras.txt`; false when the key isn't a PvP one.
+    /// One `key:value` line of `oteria-extras.txt`; false when the key isn't a PvP one.
     pub fn parse_line(&mut self, key: &str, value: &str) -> bool {
         let c = &mut self.crosshair;
         let (o, h, u) = (&mut self.outline, &mut self.hit, &mut self.hud);
@@ -1111,6 +1494,42 @@ impl Pvp {
             "hudReachCorner" => u.reach_corner = Corner::parse(value, u.reach_corner),
             "hudSpeed" => u.speed = flag(value, u.speed),
             "hudSpeedCorner" => u.speed_corner = Corner::parse(value, u.speed_corner),
+            "hudCooldowns" => u.cooldowns = flag(value, u.cooldowns),
+            "hudCooldownsCorner" => u.cooldowns_corner = Corner::parse(value, u.cooldowns_corner),
+            "hudTotems" => u.totems = flag(value, u.totems),
+            "hudTotemsCorner" => u.totems_corner = Corner::parse(value, u.totems_corner),
+            "hudPots" => u.pots = flag(value, u.pots),
+            "hudPotsCorner" => u.pots_corner = Corner::parse(value, u.pots_corner),
+            "oteriaCrystal" => self.crystal.enabled = flag(value, self.crystal.enabled),
+            "oteriaCrystalKeep" => self.crystal.keep_render = flag(value, self.crystal.keep_render),
+            "oteriaAnchor" => self.anchor.enabled = flag(value, self.anchor.enabled),
+            "oteriaAnchorCharge" => self.anchor.charge = flag(value, self.anchor.charge),
+            "oteriaPops" => self.pops = flag(value, self.pops),
+            "oteriaSecret" => {
+                self.secret.effect = num(value, (0, SECRET_EFFECTS.len() as u8 - 1), self.secret.effect)
+            }
+            "hitboxes" => self.hitboxes.enabled = flag(value, self.hitboxes.enabled),
+            "hitboxesEyes" => self.hitboxes.eyes = flag(value, self.hitboxes.eyes),
+            "hitboxesLook" => self.hitboxes.look = flag(value, self.hitboxes.look),
+            "hitboxesOwn" => self.hitboxes.own = flag(value, self.hitboxes.own),
+            "hitboxesWidth" => self.hitboxes.width = num(value, HITBOX_WIDTHS, self.hitboxes.width),
+            k if k.starts_with("hitboxes") => {
+                let off_or = |v: Option<Colour>| match value {
+                    "off" => None,
+                    v2 => Colour::parse(v2).or(v),
+                };
+                let h = &mut self.hitboxes;
+                match k {
+                    "hitboxesPlayers" => h.players = off_or(h.players),
+                    "hitboxesHostile" => h.hostile = off_or(h.hostile),
+                    "hitboxesPassive" => h.passive = off_or(h.passive),
+                    "hitboxesItems" => h.items = off_or(h.items),
+                    "hitboxesProjectiles" => h.projectiles = off_or(h.projectiles),
+                    "hitboxesCrystals" => h.crystals = off_or(h.crystals),
+                    "hitboxesOthers" => h.others = off_or(h.others),
+                    _ => return false,
+                }
+            }
             "numericEnchants" => t.numeric_enchants = flag(value, t.numeric_enchants),
             "lowFire" => t.fire_lower = num(value, FIRE_LOWER, t.fire_lower),
             "shieldSize" => t.shield_size = num(value, SHIELD_SIZES, t.shield_size),
@@ -1126,9 +1545,90 @@ impl Pvp {
             "elytraIndicator" => t.elytra_indicator = flag(value, t.elytra_indicator),
             "mouseRmb" => self.mouse.rmb = flag(value, self.mouse.rmb),
             "skinKnife" => self.skins.knife = flag(value, self.skins.knife),
+            "knifeSkin" if crate::oteria_art::KNIFE_RIGS.contains(&value) => self.skins.knife_skin = value.to_owned(),
+            "oteriaCape" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::CAPES, value).is_some() => {
+                self.skins.cape = value.to_owned()
+            }
+            "oteriaWings" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::WINGS, value).is_some() => {
+                self.skins.wings = value.to_owned()
+            }
+            "oteriaAura" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::AURAS, value).is_some() => {
+                self.skins.aura = value.to_owned()
+            }
             "knifeInspectKey" if value.starts_with("key.") => self.skins.inspect_key = value.to_owned(),
+            "playerSkin" if value.chars().all(|c| c.is_ascii_hexdigit()) => self.skins.player = value.to_owned(),
             "skyMode" => self.sky.enabled = flag(value, self.sky.enabled),
             "skyPack" => self.sky.pack = value.to_owned(),
+            "keyboardLayout" => {
+                if let Ok(v @ (60 | 75 | 100)) = value.parse::<u8>() {
+                    self.keyboard_layout = v;
+                }
+            }
+            "music" => self.music.enabled = flag(value, self.music.enabled),
+            "musicLyrics" => self.music.lyrics = flag(value, self.music.lyrics),
+            "musicCard" => self.music.card = flag(value, self.music.card),
+            "musicPlayKey" if value.starts_with("key.") => self.music.play_key = value.to_owned(),
+            "musicNextKey" if value.starts_with("key.") => self.music.next_key = value.to_owned(),
+            "musicPreviousKey" if value.starts_with("key.") => self.music.previous_key = value.to_owned(),
+            "barrelRoll" => self.barrel.enabled = flag(value, self.barrel.enabled),
+            "barrelBanking" => self.barrel.banking = flag(value, self.barrel.banking),
+            "barrelRighting" => self.barrel.righting = flag(value, self.barrel.righting),
+            "barrelInvertPitch" => self.barrel.invert_pitch = flag(value, self.barrel.invert_pitch),
+            "barrelSwitchRollYaw" => self.barrel.switch_roll_yaw = flag(value, self.barrel.switch_roll_yaw),
+            "barrelSensitivity" => {
+                self.barrel.sensitivity = num(value, BARREL_SENSITIVITIES, self.barrel.sensitivity)
+            }
+            "motionBlur" => self.blur.enabled = flag(value, self.blur.enabled),
+            "environment" => self.environment.enabled = flag(value, self.environment.enabled),
+            "environmentGround" => self.environment.ground = flag(value, self.environment.ground),
+            "environmentGroundColour" => {
+                self.environment.ground_colour = Colour::parse(value).unwrap_or(self.environment.ground_colour)
+            }
+            "environmentGroundRadius" => {
+                self.environment.ground_radius = num(value, ENV_RADII, self.environment.ground_radius)
+            }
+            "environmentParticles" => self.environment.particles = flag(value, self.environment.particles),
+            "environmentParticlesColour" => {
+                self.environment.particles_colour =
+                    Colour::parse(value).unwrap_or(self.environment.particles_colour)
+            }
+            "environmentParticlesAmount" => {
+                self.environment.particles_amount = num(value, ENV_AMOUNTS, self.environment.particles_amount)
+            }
+            "environmentHat" => self.environment.hat = flag(value, self.environment.hat),
+            "environmentHatColour" => {
+                self.environment.hat_colour = Colour::parse(value).unwrap_or(self.environment.hat_colour)
+            }
+            "environmentSky" => self.environment.sky = flag(value, self.environment.sky),
+            "environmentSkyColour" => {
+                self.environment.sky_colour = Colour::parse(value).unwrap_or(self.environment.sky_colour)
+            }
+            "environmentFog" => self.environment.fog = flag(value, self.environment.fog),
+            "environmentFogColour" => {
+                self.environment.fog_colour = Colour::parse(value).unwrap_or(self.environment.fog_colour)
+            }
+            "environmentFogDensity" => {
+                self.environment.fog_density = num(value, ENV_AMOUNTS, self.environment.fog_density)
+            }
+            "motionBlurStrength" => self.blur.strength = num(value, BLUR_STRENGTHS, self.blur.strength),
+            "timeChanger" => self.clock.enabled = flag(value, self.clock.enabled),
+            "timeChangerAt" => {
+                if let Ok(v) = value.parse::<u32>() {
+                    self.clock.time = v.min(DAY_TICKS.1) as u16;
+                }
+            }
+            "weatherChanger" => self.sky_weather.enabled = flag(value, self.sky_weather.enabled),
+            "weatherChangerAt" => {
+                if let Some(w) = ViewWeather::parse(value) {
+                    self.sky_weather.weather = w;
+                }
+            }
+            "tierTagger" => self.tiers.enabled = flag(value, self.tiers.enabled),
+            "tierMode" if TIER_MODES.iter().any(|(m, _)| *m == value) => self.tiers.mode = value.to_owned(),
+            "oteriaZoom" => self.zoom.enabled = flag(value, self.zoom.enabled),
+            "oteriaZoomKey" if value.starts_with("key.") => self.zoom.key = value.to_owned(),
+            "oteriaZoomSmooth" => self.zoom.smooth = flag(value, self.zoom.smooth),
+            "oteriaZoomLevel" => self.zoom.level = num(value, ZOOM_LEVELS, self.zoom.level),
             "mapRound" => self.minimap.round = flag(value, self.minimap.round),
             "mapBiome" => self.minimap.biome = flag(value, self.minimap.biome),
             "mapRotate" => self.minimap.rotate = flag(value, self.minimap.rotate),
@@ -1205,7 +1705,7 @@ impl Pvp {
         }
         true
     }
-    /// The PvP lines of `horizon-extras.txt`.
+    /// The PvP lines of `oteria-extras.txt`.
     pub fn serialize(&self, out: &mut String) {
         use std::fmt::Write;
         let c = &self.crosshair;
@@ -1217,10 +1717,10 @@ impl Pvp {
             c.size,
             c.gap,
             c.thickness,
-            c.colour.name(),
+            c.colour.save(),
             c.outline,
             c.dot,
-            c.hover.map_or("off", Colour::name),
+            c.hover.map_or_else(|| "off".into(), Colour::save),
         );
         let pixels: Vec<String> = c.pixels.iter().map(|row| format!("{row:x}")).collect();
         let _ = writeln!(out, "crosshairPixels:{}", pixels.join(","));
@@ -1229,12 +1729,12 @@ impl Pvp {
             out,
             "outline:{}\noutlineColour:{}\noutlineOpacity:{}\noutlineThickness:{}\noutlineFill:{}\nhit:{}\nhitColour:{}\nhitOpacity:{}\n",
             o.custom,
-            o.colour.name(),
+            o.colour.save(),
             o.opacity,
             o.thickness,
-            o.fill.map_or("off", Colour::name),
+            o.fill.map_or_else(|| "off".into(), Colour::save),
             h.custom,
-            h.colour.name(),
+            h.colour.save(),
             h.opacity,
         );
         let u = &self.hud;
@@ -1286,7 +1786,7 @@ impl Pvp {
             out,
             "hudOpacity:{}\nhudTextColour:{}\nhudShadow:{}\n",
             u.opacity,
-            u.text.name(),
+            u.text.save(),
             u.shadow,
         );
         self.layout.serialize(out);
@@ -1299,7 +1799,7 @@ impl Pvp {
             t.fire_lower,
             t.shield_size,
             t.totem_size,
-            t.glint.map_or("off", Colour::name),
+            t.glint.map_or_else(|| "off".into(), Colour::save),
             t.clear_water,
             t.clear_lava,
         );
@@ -1323,12 +1823,100 @@ impl Pvp {
             c.indicator, c.sounds, c.rules
         );
         let _ = writeln!(out, "elytraIndicator:{}", self.tweaks.elytra_indicator);
+        let off = |c: Option<Colour>| c.map_or_else(|| "off".into(), Colour::save);
+        let lines: [(&str, String); 24] = [
+            ("hudCooldowns", u.cooldowns.to_string()),
+            ("hudCooldownsCorner", u.cooldowns_corner.name().into()),
+            ("hudTotems", u.totems.to_string()),
+            ("hudTotemsCorner", u.totems_corner.name().into()),
+            ("hudPots", u.pots.to_string()),
+            ("hudPotsCorner", u.pots_corner.name().into()),
+            ("oteriaCrystal", self.crystal.enabled.to_string()),
+            ("oteriaCrystalKeep", self.crystal.keep_render.to_string()),
+            ("oteriaAnchor", self.anchor.enabled.to_string()),
+            ("oteriaAnchorCharge", self.anchor.charge.to_string()),
+            ("oteriaPops", self.pops.to_string()),
+            ("oteriaSecret", self.secret.effect.to_string()),
+            ("hitboxes", self.hitboxes.enabled.to_string()),
+            ("hitboxesEyes", self.hitboxes.eyes.to_string()),
+            ("hitboxesLook", self.hitboxes.look.to_string()),
+            ("hitboxesOwn", self.hitboxes.own.to_string()),
+            ("hitboxesWidth", self.hitboxes.width.to_string()),
+            ("hitboxesPlayers", off(self.hitboxes.players)),
+            ("hitboxesHostile", off(self.hitboxes.hostile)),
+            ("hitboxesPassive", off(self.hitboxes.passive)),
+            ("hitboxesItems", off(self.hitboxes.items)),
+            ("hitboxesProjectiles", off(self.hitboxes.projectiles)),
+            ("hitboxesCrystals", off(self.hitboxes.crystals)),
+            ("hitboxesOthers", off(self.hitboxes.others)),
+        ];
+        for (key, value) in lines {
+            let _ = writeln!(out, "{key}:{value}");
+        }
         let _ = write!(
             out,
-            "skinKnife:{}\nknifeInspectKey:{}\n",
-            self.skins.knife, self.skins.inspect_key
+            "skinKnife:{}\nknifeSkin:{}\nknifeInspectKey:{}\nplayerSkin:{}\n",
+            self.skins.knife, self.skins.knife_skin, self.skins.inspect_key, self.skins.player
+        );
+        let _ = write!(
+            out,
+            "oteriaCape:{}\noteriaWings:{}\noteriaAura:{}\n",
+            self.skins.cape, self.skins.wings, self.skins.aura
         );
         let _ = write!(out, "skyMode:{}\nskyPack:{}\n", self.sky.enabled, self.sky.pack);
+        let _ = write!(out, "tierTagger:{}\ntierMode:{}\n", self.tiers.enabled, self.tiers.mode);
+        let _ = writeln!(out, "keyboardLayout:{}", self.keyboard_layout);
+        let m = &self.music;
+        let _ = write!(
+            out,
+            "music:{}\nmusicLyrics:{}\nmusicCard:{}\nmusicPlayKey:{}\nmusicNextKey:{}\nmusicPreviousKey:{}\n",
+            m.enabled, m.lyrics, m.card, m.play_key, m.next_key, m.previous_key
+        );
+        let b = &self.barrel;
+        let _ = write!(
+            out,
+            "barrelRoll:{}\nbarrelBanking:{}\nbarrelRighting:{}\nbarrelInvertPitch:{}\nbarrelSwitchRollYaw:{}\nbarrelSensitivity:{}\n",
+            b.enabled, b.banking, b.righting, b.invert_pitch, b.switch_roll_yaw, b.sensitivity
+        );
+        let _ = write!(
+            out,
+            "motionBlur:{}\nmotionBlurStrength:{}\ntimeChanger:{}\ntimeChangerAt:{}\nweatherChanger:{}\nweatherChangerAt:{}\n",
+            self.blur.enabled,
+            self.blur.strength,
+            self.clock.enabled,
+            self.clock.time,
+            self.sky_weather.enabled,
+            self.sky_weather.weather.name(),
+        );
+        let e = &self.environment;
+        let _ = write!(
+            out,
+            "environment:{}\nenvironmentGround:{}\nenvironmentGroundColour:{}\nenvironmentGroundRadius:{}\nenvironmentParticles:{}\nenvironmentParticlesColour:{}\nenvironmentParticlesAmount:{}\n",
+            e.enabled,
+            e.ground,
+            e.ground_colour.save(),
+            e.ground_radius,
+            e.particles,
+            e.particles_colour.save(),
+            e.particles_amount,
+        );
+        let _ = write!(
+            out,
+            "environmentHat:{}\nenvironmentHatColour:{}\nenvironmentSky:{}\nenvironmentSkyColour:{}\nenvironmentFog:{}\nenvironmentFogColour:{}\nenvironmentFogDensity:{}\n",
+            e.hat,
+            e.hat_colour.save(),
+            e.sky,
+            e.sky_colour.save(),
+            e.fog,
+            e.fog_colour.save(),
+            e.fog_density,
+        );
+        let z = &self.zoom;
+        let _ = write!(
+            out,
+            "oteriaZoom:{}\noteriaZoomKey:{}\noteriaZoomSmooth:{}\noteriaZoomLevel:{}\n",
+            z.enabled, z.key, z.smooth, z.level
+        );
         let mm = &self.minimap;
         let _ = write!(
             out,
@@ -1552,7 +2140,289 @@ opts! {
         "Which sky pack, among those in your resourcepacks folder.";
     VoiceThreshold, "voice_threshold", "Voice activation level",
         "With Voice: how quiet your speech can be and still be sent. A higher number sends quieter sounds.";
+    Zoom, "zoom", "Zoom",
+        "Hold the zoom key to look far, as OptiFine's; the wheel zooms in and out while it is held. Its key is unbound at first: set it in Controls, under Oteria.";
+    ZoomSmooth, "zoom_smooth", "Smooth zoom", "The view eases in and out. Off: it narrows at once.";
+    ZoomLevel, "zoom_level", "Magnification", "How many times the view is magnified when you press the key.";
+    Tiers, "tiers", "Tier Tagger",
+        "Each player's PvP tier from MCTiers (HT1 to LT5) before their name, over their head and in the player list.";
+    TiersMode, "tiers_mode", "Game mode", "Which game mode's tier to show; Best shows each player's best one.";
+    Blur, "blur", "Motion blur", "Each frame keeps a trail of the ones before it, so fast turns blur.";
+    BlurStrength, "blur_strength", "Strength", "How long the trail lasts.";
+    Env, "environment", "Environment",
+        "Dresses the world: waves of tiles over the ground, particles in the air, a China hat, an aurora sky and a coloured fog. Only your view changes.";
+    EnvGround, "environment_ground", "Ground waves", "Waves of glowing tiles run out from under your feet over the ground.";
+    EnvGroundColour, "environment_ground_colour", "Ground colour", "The tiles' and their edges' colour.";
+    EnvGroundRadius, "environment_ground_radius", "Wave reach", "How far the waves run, in blocks.";
+    EnvParticles, "environment_particles", "Particles", "Flakes and sparkles floating in the air around you.";
+    EnvParticlesColour, "environment_particles_colour", "Particle colour", "The flakes' and sparkles' colour.";
+    EnvParticlesAmount, "environment_particles_amount", "Particle amount", "How many particles float in the air.";
+    EnvHat, "environment_hat", "China hat", "A glowing China hat and a halo over your head, in third person.";
+    EnvHatColour, "environment_hat_colour", "Hat colour", "The hat's and its halo's colour.";
+    EnvSky, "environment_sky", "Aurora sky", "Waves of light across the sky, with twinkling stars and shooting stars.";
+    EnvSkyColour, "environment_sky_colour", "Sky colour", "The sky's colour; its waves are lighter, the horizon darker.";
+    EnvFog, "environment_fog", "Fog", "A coloured fog over the distance.";
+    EnvFogColour, "environment_fog_colour", "Fog colour", "The fog's colour.";
+    EnvFogDensity, "environment_fog_density", "Fog density", "How close the fog comes.";
+    Clock, "clock", "Time changer",
+        "Fixes the time of day you see, wherever the slider puts it. Only your view changes: the server's time stays.";
+    ClockTime, "clock_time", "Time", "The time of day you see. Drag the slider.";
+    SkyWeather, "sky_weather", "Weather changer",
+        "Fixes the weather you see. Only your view changes: the server's weather stays.";
+    SkyWeatherPick, "sky_weather_pick", "Weather", "The weather you see.";
+    Barrel, "barrel", "Barrel roll",
+        "Flying with an elytra, the view turns as a plane: the mouse pitches and rolls, Left and Right are the rudder. Loops and barrel rolls go all the way round.";
+    BarrelBanking, "barrel_banking", "Banking", "Rolled, you turn towards the lower wing, as a plane in a turn.";
+    BarrelRighting, "barrel_righting", "Automatic righting", "A roll of less than 90 degrees comes back level by itself.";
+    BarrelInvert, "barrel_invert", "Invert pitch", "Mouse up points the nose down.";
+    BarrelSwitch, "barrel_switch", "Switch roll and yaw",
+        "The mouse's left and right turn you as in vanilla instead of rolling; Left and Right still steer.";
+    BarrelSensitivity, "barrel_sensitivity", "Sensitivity", "How fast the mouse turns the plane.";
+    Music, "music", "Music",
+        "The song playing on this computer (Spotify, or any player Windows' media controls know) and its synced lyrics, from LRCLIB. Play/pause, next and previous have keys in Controls, under Oteria.";
+    MusicLyrics, "music_lyrics", "Floating lyrics", "The line sung now floats in the air ahead of you, the next one under it.";
+    MusicCard, "music_card", "Song card", "The song, its artist and how far it has played, at the top right.";
+    HudCooldowns, "hud_cooldowns", "Cooldowns",
+        "The items cooling down in your hotbar and hands (ender pearl, chorus fruit, wind charge, shield...), with a bar and the seconds left.";
+    HudCooldownsCorner, "hud_cooldowns_corner", "Cooldowns corner", "Where the cooldowns show.";
+    HudTotems, "hud_totems", "Totem counter",
+        "How many totems of undying you carry, and how many you popped since you last died.";
+    HudTotemsCorner, "hud_totems_corner", "Totems corner", "Where the totems show.";
+    HudPots, "hud_pots", "Pot counter",
+        "How many healing splash potions you carry, and the seconds since you threw your last potion.";
+    HudPotsCorner, "hud_pots_corner", "Pots corner", "Where the potions show.";
+    Crystal, "crystal", "Crystal Optimizer",
+        "A crystal you hit hard enough to break leaves at once, so the next one goes where it stood without waiting for the server. If the server didn't break it, it comes back 1.5 seconds later. Nothing is sent that vanilla wouldn't send.";
+    CrystalKeep, "crystal_keep", "Keep render",
+        "The broken crystal stays drawn until the server removes it; you can still place the next one there.";
+    Anchor, "anchor", "Anchor Optimizer",
+        "A charged respawn anchor you set off disappears at once, without waiting for the server. The server stays the judge: if it didn't explode, the anchor comes back.";
+    AnchorCharge, "anchor_charge", "Instant charge", "Glowstone charges the anchor at once too.";
+    Hitboxes, "hitboxes", "Hitboxes",
+        "Every entity's hitbox, in a colour by its kind, with its eyes and where it looks, as F3+B. Off for a kind: its boxes aren't drawn.";
+    HitboxPlayers, "hitbox_players", "Players", "The colour of other players' boxes.";
+    HitboxHostile, "hitbox_hostile", "Hostile mobs", "The colour of monsters' boxes.";
+    HitboxPassive, "hitbox_passive", "Passive mobs", "The colour of animals' and villagers' boxes.";
+    HitboxItems, "hitbox_items", "Items", "The colour of dropped items' and experience orbs' boxes.";
+    HitboxProjectiles, "hitbox_projectiles", "Projectiles", "The colour of arrows', pearls', potions' and tridents' boxes.";
+    HitboxCrystals, "hitbox_crystals", "End crystals", "The colour of End crystals' boxes.";
+    HitboxOthers, "hitbox_others", "Others", "The colour of boats', minecarts', armour stands' and the other entities' boxes.";
+    HitboxEyes, "hitbox_eyes", "Eye line", "A line across each living entity's box at its eyes.";
+    HitboxLook, "hitbox_look", "Look direction", "An arrow from the eyes, where the entity looks.";
+    HitboxWidth, "hitbox_width", "Line width", "How thick the lines are.";
+    HitboxOwn, "hitbox_own", "Your own", "Your own box too, in third person.";
+    Pops, "pops", "Pop Counter",
+        "A chat line each time a player near you uses a totem, with how many they popped, and when they die after popping.";
+    Secret, "secret", "Super Secret Settings",
+        "A fun effect over the whole screen, as 1.8's button. The button in Options picks one at random; so does its key in Controls, under Oteria (Shift with it turns it off).";
 }
+/// What a colour option lets the player choose besides any solid colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColourChoice {
+    /// None (the option off).
+    pub off: bool,
+    /// Vanilla's inverted blend.
+    pub inverted: bool,
+}
+impl ColourChoice {
+    /// The ready-made choices, in the picker's order: off, inverted, then the solid colours.
+    pub fn presets(self) -> Vec<Option<Colour>> {
+        let mut all = Vec::new();
+        if self.off {
+            all.push(None);
+        }
+        if self.inverted {
+            all.push(Some(Colour::Inverted));
+        }
+        all.extend(Colour::ALL[1..].iter().copied().map(Some));
+        all
+    }
+}
+impl Opt {
+    /// For a colour option: what it offers.
+    pub fn colour_choice(self) -> Option<ColourChoice> {
+        let (off, inverted) = match self {
+            Opt::CrosshairColour => (false, true),
+            Opt::CrosshairHover => (true, true),
+            Opt::OutlineColour | Opt::HitColour | Opt::HudTextColour => (false, false),
+            Opt::OutlineFill | Opt::GlintColour => (true, false),
+            Opt::EnvGroundColour
+            | Opt::EnvParticlesColour
+            | Opt::EnvHatColour
+            | Opt::EnvSkyColour
+            | Opt::EnvFogColour => (false, false),
+            Opt::HitboxPlayers
+            | Opt::HitboxHostile
+            | Opt::HitboxPassive
+            | Opt::HitboxItems
+            | Opt::HitboxProjectiles
+            | Opt::HitboxCrystals
+            | Opt::HitboxOthers => (true, false),
+            _ => return None,
+        };
+        Some(ColourChoice { off, inverted })
+    }
+    /// A colour option's colour now (`None`: off).
+    pub fn colour(self, p: &Pvp) -> Option<Option<Colour>> {
+        Some(match self {
+            Opt::CrosshairColour => Some(p.crosshair.colour),
+            Opt::CrosshairHover => p.crosshair.hover,
+            Opt::OutlineColour => Some(p.outline.colour),
+            Opt::OutlineFill => p.outline.fill,
+            Opt::HitColour => Some(p.hit.colour),
+            Opt::HudTextColour => Some(p.hud.text),
+            Opt::GlintColour => p.tweaks.glint,
+            Opt::EnvGroundColour => Some(p.environment.ground_colour),
+            Opt::EnvParticlesColour => Some(p.environment.particles_colour),
+            Opt::EnvHatColour => Some(p.environment.hat_colour),
+            Opt::EnvSkyColour => Some(p.environment.sky_colour),
+            Opt::EnvFogColour => Some(p.environment.fog_colour),
+            Opt::HitboxPlayers => p.hitboxes.players,
+            Opt::HitboxHostile => p.hitboxes.hostile,
+            Opt::HitboxPassive => p.hitboxes.passive,
+            Opt::HitboxItems => p.hitboxes.items,
+            Opt::HitboxProjectiles => p.hitboxes.projectiles,
+            Opt::HitboxCrystals => p.hitboxes.crystals,
+            Opt::HitboxOthers => p.hitboxes.others,
+            _ => return None,
+        })
+    }
+    /// Sets a colour option; a choice it doesn't offer is left out.
+    pub fn set_colour(self, p: &mut Pvp, c: Option<Colour>) {
+        let Some(choice) = self.colour_choice() else {
+            return;
+        };
+        if c.is_none() && !choice.off || c == Some(Colour::Inverted) && !choice.inverted {
+            return;
+        }
+        match (self, c) {
+            (Opt::CrosshairColour, Some(c)) => p.crosshair.colour = c,
+            (Opt::CrosshairHover, c) => p.crosshair.hover = c,
+            (Opt::OutlineColour, Some(c)) => p.outline.colour = c,
+            (Opt::OutlineFill, c) => p.outline.fill = c,
+            (Opt::HitColour, Some(c)) => p.hit.colour = c,
+            (Opt::HudTextColour, Some(c)) => p.hud.text = c,
+            (Opt::GlintColour, c) => p.tweaks.glint = c,
+            (Opt::EnvGroundColour, Some(c)) => p.environment.ground_colour = c,
+            (Opt::EnvParticlesColour, Some(c)) => p.environment.particles_colour = c,
+            (Opt::EnvHatColour, Some(c)) => p.environment.hat_colour = c,
+            (Opt::EnvSkyColour, Some(c)) => p.environment.sky_colour = c,
+            (Opt::EnvFogColour, Some(c)) => p.environment.fog_colour = c,
+            (Opt::HitboxPlayers, c) => p.hitboxes.players = c,
+            (Opt::HitboxHostile, c) => p.hitboxes.hostile = c,
+            (Opt::HitboxPassive, c) => p.hitboxes.passive = c,
+            (Opt::HitboxItems, c) => p.hitboxes.items = c,
+            (Opt::HitboxProjectiles, c) => p.hitboxes.projectiles = c,
+            (Opt::HitboxCrystals, c) => p.hitboxes.crystals = c,
+            (Opt::HitboxOthers, c) => p.hitboxes.others = c,
+            _ => {}
+        }
+    }
+    /// For a number option: its range and the unit shown after it.
+    pub fn number(self) -> Option<((u8, u8), &'static str)> {
+        Some(match self {
+            Opt::CrosshairSize => (SIZES, ""),
+            Opt::CrosshairGap => (GAPS, ""),
+            Opt::CrosshairThickness => (THICKNESSES, ""),
+            Opt::OutlineOpacity => (OPACITIES, "%"),
+            Opt::OutlineThickness => (OUTLINE_THICKNESSES, "x"),
+            Opt::HitOpacity => (HIT_OPACITIES, "%"),
+            Opt::HudOpacity => (HUD_OPACITIES, "%"),
+            Opt::FireLower => (FIRE_LOWER, "%"),
+            Opt::ShieldSize => (SHIELD_SIZES, "%"),
+            Opt::TotemSize => (TOTEM_SIZES, "%"),
+            Opt::VoiceVolume | Opt::VoiceMic => (VOICE_PERCENT, "%"),
+            Opt::VoiceThreshold => (VOICE_THRESHOLD, ""),
+            Opt::ZoomLevel => (ZOOM_LEVELS, "x"),
+            Opt::BlurStrength => (BLUR_STRENGTHS, "%"),
+            Opt::EnvGroundRadius => (ENV_RADII, ""),
+            Opt::EnvParticlesAmount | Opt::EnvFogDensity => (ENV_AMOUNTS, "%"),
+            Opt::BarrelSensitivity => (BARREL_SENSITIVITIES, "%"),
+            Opt::HitboxWidth => (HITBOX_WIDTHS, ""),
+            _ => return None,
+        })
+    }
+    /// A number option's value now.
+    pub fn number_value(self, p: &Pvp) -> Option<u8> {
+        Some(match self {
+            Opt::CrosshairSize => p.crosshair.size,
+            Opt::CrosshairGap => p.crosshair.gap,
+            Opt::CrosshairThickness => p.crosshair.thickness,
+            Opt::OutlineOpacity => p.outline.opacity,
+            Opt::OutlineThickness => p.outline.thickness,
+            Opt::HitOpacity => p.hit.opacity,
+            Opt::HudOpacity => p.hud.opacity,
+            Opt::FireLower => p.tweaks.fire_lower,
+            Opt::ShieldSize => p.tweaks.shield_size,
+            Opt::TotemSize => p.tweaks.totem_size,
+            Opt::VoiceVolume => p.voice.volume,
+            Opt::VoiceMic => p.voice.mic,
+            Opt::VoiceThreshold => p.voice.threshold,
+            Opt::ZoomLevel => p.zoom.level,
+            Opt::BlurStrength => p.blur.strength,
+            Opt::BarrelSensitivity => p.barrel.sensitivity,
+            Opt::EnvGroundRadius => p.environment.ground_radius,
+            Opt::EnvParticlesAmount => p.environment.particles_amount,
+            Opt::EnvFogDensity => p.environment.fog_density,
+            Opt::HitboxWidth => p.hitboxes.width,
+            _ => return None,
+        })
+    }
+    /// For an option set with a slider: its ends.
+    pub fn slider(self) -> Option<(u32, u32)> {
+        match self {
+            Opt::ClockTime => Some(DAY_TICKS),
+            _ => None,
+        }
+    }
+    /// A slider option's value now.
+    pub fn slider_value(self, p: &Pvp) -> Option<u32> {
+        match self {
+            Opt::ClockTime => Some(u32::from(p.clock.time)),
+            _ => None,
+        }
+    }
+    /// Sets a slider option, kept between its ends.
+    pub fn set_slider(self, p: &mut Pvp, v: u32) {
+        if let Some((lo, hi)) = self.slider()
+            && self == Opt::ClockTime
+        {
+            p.clock.time = v.clamp(lo, hi) as u16;
+        }
+    }
+    /// Sets a number option, kept within its range.
+    pub fn set_number(self, p: &mut Pvp, v: u32) {
+        let Some(((lo, hi), _)) = self.number() else {
+            return;
+        };
+        let v = v.clamp(u32::from(lo), u32::from(hi)) as u8;
+        let field = match self {
+            Opt::CrosshairSize => &mut p.crosshair.size,
+            Opt::CrosshairGap => &mut p.crosshair.gap,
+            Opt::CrosshairThickness => &mut p.crosshair.thickness,
+            Opt::OutlineOpacity => &mut p.outline.opacity,
+            Opt::OutlineThickness => &mut p.outline.thickness,
+            Opt::HitOpacity => &mut p.hit.opacity,
+            Opt::HudOpacity => &mut p.hud.opacity,
+            Opt::FireLower => &mut p.tweaks.fire_lower,
+            Opt::ShieldSize => &mut p.tweaks.shield_size,
+            Opt::TotemSize => &mut p.tweaks.totem_size,
+            Opt::VoiceVolume => &mut p.voice.volume,
+            Opt::VoiceMic => &mut p.voice.mic,
+            Opt::VoiceThreshold => &mut p.voice.threshold,
+            Opt::ZoomLevel => &mut p.zoom.level,
+            Opt::BlurStrength => &mut p.blur.strength,
+            Opt::BarrelSensitivity => &mut p.barrel.sensitivity,
+            Opt::EnvGroundRadius => &mut p.environment.ground_radius,
+            Opt::EnvParticlesAmount => &mut p.environment.particles_amount,
+            Opt::EnvFogDensity => &mut p.environment.fog_density,
+            Opt::HitboxWidth => &mut p.hitboxes.width,
+            _ => return,
+        };
+        *field = v;
+    }
+}
+
 /// The PvP & HUD page: headers (language keys) and options.
 pub fn rows() -> Vec<Result<Opt, &'static str>> {
     use Opt::*;
@@ -1637,11 +2507,78 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
     rows.extend([MapShape, MapBiome, MapRotate, MapZoom].map(Ok));
     rows.push(Err("horizon.pvp.header.sky"));
     rows.extend([Sky, SkyPack].map(Ok));
+    rows.push(Err("horizon.pvp.header.oteria_view"));
+    rows.extend([Blur, BlurStrength, Clock, ClockTime, SkyWeather, SkyWeatherPick].map(Ok));
+    rows.push(Err("horizon.pvp.header.environment"));
+    rows.extend(
+        [
+            Env,
+            EnvGround,
+            EnvGroundColour,
+            EnvGroundRadius,
+            EnvParticles,
+            EnvParticlesColour,
+            EnvParticlesAmount,
+            EnvHat,
+            EnvHatColour,
+            EnvSky,
+            EnvSkyColour,
+            EnvFog,
+            EnvFogColour,
+            EnvFogDensity,
+        ]
+        .map(Ok),
+    );
+    rows.push(Err("horizon.pvp.header.music"));
+    rows.extend([Music, MusicLyrics, MusicCard].map(Ok));
+    rows.push(Err("horizon.pvp.header.barrel"));
+    rows.extend([Barrel, BarrelBanking, BarrelRighting, BarrelInvert, BarrelSwitch, BarrelSensitivity].map(Ok));
+    rows.push(Err("horizon.pvp.header.tiers"));
+    rows.extend([Tiers, TiersMode].map(Ok));
+    rows.push(Err("horizon.pvp.header.zoom"));
+    rows.extend([Zoom, ZoomSmooth, ZoomLevel].map(Ok));
     rows.push(Err("horizon.pvp.header.mouse"));
     rows.extend(
         [MouseRmb, MouseLmbItem, MouseLmbEmpty, MouseWheelOrder, MouseWheelDirection, MouseScrollScaling]
             .map(Ok),
     );
+    rows.push(Err("horizon.pvp.header.oteria_pvp"));
+    rows.extend(
+        [
+            HudCooldowns,
+            HudCooldownsCorner,
+            HudTotems,
+            HudTotemsCorner,
+            HudPots,
+            HudPotsCorner,
+            Pops,
+            Crystal,
+            CrystalKeep,
+            Anchor,
+            AnchorCharge,
+        ]
+        .map(Ok),
+    );
+    rows.push(Err("horizon.pvp.header.hitboxes"));
+    rows.extend(
+        [
+            Hitboxes,
+            HitboxPlayers,
+            HitboxHostile,
+            HitboxPassive,
+            HitboxItems,
+            HitboxProjectiles,
+            HitboxCrystals,
+            HitboxOthers,
+            HitboxEyes,
+            HitboxLook,
+            HitboxWidth,
+            HitboxOwn,
+        ]
+        .map(Ok),
+    );
+    rows.push(Err("horizon.pvp.header.secret"));
+    rows.push(Ok(Secret));
     rows.push(Err("horizon.pvp.header.voice"));
     rows.extend(
         [Voice, VoiceMenuKey, VoiceActivation, VoiceKey, VoiceVolume, VoiceMic, VoiceThreshold, VoiceNoise, VoiceSpatial]
@@ -1675,6 +2612,21 @@ impl Opt {
             MapShape | MapBiome | MapRotate | MapZoom => None,
             Sky => None,
             SkyPack => Some(Sky),
+            Zoom | Tiers | Blur | Clock | SkyWeather | Barrel | Music => None,
+            MusicLyrics | MusicCard => Some(Music),
+            BarrelBanking | BarrelRighting | BarrelInvert | BarrelSwitch | BarrelSensitivity => Some(Barrel),
+            BlurStrength => Some(Blur),
+            Env => None,
+            EnvGround | EnvParticles | EnvHat | EnvSky | EnvFog => Some(Env),
+            EnvGroundColour | EnvGroundRadius => Some(EnvGround),
+            EnvParticlesColour | EnvParticlesAmount => Some(EnvParticles),
+            EnvHatColour => Some(EnvHat),
+            EnvSkyColour => Some(EnvSky),
+            EnvFogColour | EnvFogDensity => Some(EnvFog),
+            ClockTime => Some(Clock),
+            SkyWeatherPick => Some(SkyWeather),
+            TiersMode => Some(Tiers),
+            ZoomSmooth | ZoomLevel => Some(Zoom),
             MouseRmb | MouseLmbItem | MouseLmbEmpty | MouseWheelOrder | MouseWheelDirection
             | MouseScrollScaling => None,
             VoiceActivation | VoiceKey | VoiceVolume | VoiceMic | VoiceThreshold | VoiceMenuKey
@@ -1686,6 +2638,16 @@ impl Opt {
             HudArmourCorner | HudArmourPercent => Some(HudArmour),
             HudEffectsCorner => Some(HudEffects),
             HudHeldCorner => Some(HudHeld),
+            HudCooldowns | HudTotems | HudPots | Pops | Crystal | Anchor | Hitboxes | Secret => None,
+            HudCooldownsCorner => Some(HudCooldowns),
+            HudTotemsCorner => Some(HudTotems),
+            HudPotsCorner => Some(HudPots),
+            CrystalKeep => Some(Crystal),
+            AnchorCharge => Some(Anchor),
+            HitboxPlayers | HitboxHostile | HitboxPassive | HitboxItems | HitboxProjectiles
+            | HitboxCrystals | HitboxOthers | HitboxEyes | HitboxLook | HitboxWidth | HitboxOwn => {
+                Some(Hitboxes)
+            }
             _ => Some(Crosshair),
         }
     }
@@ -1731,8 +2693,40 @@ impl Opt {
             Opt::MouseLmbEmpty => p.mouse.lmb_empty,
             Opt::Voice => p.voice.enabled,
             Opt::Sky => p.sky.enabled,
+            Opt::Zoom => p.zoom.enabled,
+            Opt::ZoomSmooth => p.zoom.smooth,
+            Opt::Tiers => p.tiers.enabled,
+            Opt::Blur => p.blur.enabled,
+            Opt::Env => p.environment.enabled,
+            Opt::EnvGround => p.environment.ground,
+            Opt::EnvParticles => p.environment.particles,
+            Opt::EnvHat => p.environment.hat,
+            Opt::EnvSky => p.environment.sky,
+            Opt::EnvFog => p.environment.fog,
+            Opt::Barrel => p.barrel.enabled,
+            Opt::Music => p.music.enabled,
+            Opt::MusicLyrics => p.music.lyrics,
+            Opt::MusicCard => p.music.card,
+            Opt::BarrelBanking => p.barrel.banking,
+            Opt::BarrelRighting => p.barrel.righting,
+            Opt::BarrelInvert => p.barrel.invert_pitch,
+            Opt::BarrelSwitch => p.barrel.switch_roll_yaw,
+            Opt::Clock => p.clock.enabled,
+            Opt::SkyWeather => p.sky_weather.enabled,
             Opt::VoiceNoise => p.voice.noise,
             Opt::VoiceSpatial => p.voice.spatial,
+            Opt::HudCooldowns => p.hud.cooldowns,
+            Opt::HudTotems => p.hud.totems,
+            Opt::HudPots => p.hud.pots,
+            Opt::Pops => p.pops,
+            Opt::Crystal => p.crystal.enabled,
+            Opt::CrystalKeep => p.crystal.keep_render,
+            Opt::Anchor => p.anchor.enabled,
+            Opt::AnchorCharge => p.anchor.charge,
+            Opt::Hitboxes => p.hitboxes.enabled,
+            Opt::HitboxEyes => p.hitboxes.eyes,
+            Opt::HitboxLook => p.hitboxes.look,
+            Opt::HitboxOwn => p.hitboxes.own,
             _ => return None,
         })
     }
@@ -1810,6 +2804,25 @@ impl Opt {
                 true => crate::lang::get_or("horizon.pvp.map.round", "Round"),
                 false => crate::lang::get_or("horizon.pvp.map.square", "Square"),
             },
+            Opt::ZoomLevel => format!("x{}", p.zoom.level),
+            Opt::BlurStrength => format!("{}%", p.blur.strength),
+            Opt::EnvGroundColour => p.environment.ground_colour.label(),
+            Opt::EnvParticlesColour => p.environment.particles_colour.label(),
+            Opt::EnvHatColour => p.environment.hat_colour.label(),
+            Opt::EnvSkyColour => p.environment.sky_colour.label(),
+            Opt::EnvFogColour => p.environment.fog_colour.label(),
+            Opt::EnvGroundRadius => p.environment.ground_radius.to_string(),
+            Opt::EnvParticlesAmount => format!("{}%", p.environment.particles_amount),
+            Opt::EnvFogDensity => format!("{}%", p.environment.fog_density),
+            Opt::BarrelSensitivity => format!("{}%", p.barrel.sensitivity),
+            Opt::ClockTime => clock_label(u32::from(p.clock.time)),
+            Opt::SkyWeatherPick => p.sky_weather.weather.label(),
+            Opt::TiersMode => {
+                let (slug, english) =
+                    TIER_MODES.iter().find(|(m, _)| *m == p.tiers.mode).copied().unwrap_or(TIER_MODES[0]);
+                let key = if slug.is_empty() { "horizon.pvp.tiers.best".to_owned() } else { format!("horizon.pvp.tiers.{slug}") };
+                crate::lang::get_or(&key, english)
+            }
             Opt::MapZoom => {
                 let z = MINIMAP_ZOOMS[usize::from(p.minimap.zoom.min(3))];
                 format!("{z} {}", crate::lang::get_or("horizon.pvp.map.blocks", "blocks/px"))
@@ -1829,6 +2842,21 @@ impl Opt {
             Opt::VoiceVolume => format!("{}%", p.voice.volume),
             Opt::VoiceMic => format!("{}%", p.voice.mic),
             Opt::VoiceThreshold => format!("-{} dB", p.voice.threshold),
+            Opt::HudCooldownsCorner => corner_label(p.hud.cooldowns_corner),
+            Opt::HudTotemsCorner => corner_label(p.hud.totems_corner),
+            Opt::HudPotsCorner => corner_label(p.hud.pots_corner),
+            Opt::HitboxWidth => format!("{:.1}", f32::from(p.hitboxes.width) / 10.0),
+            Opt::Secret => secret_label(p.secret.effect),
+            o @ (Opt::HitboxPlayers
+            | Opt::HitboxHostile
+            | Opt::HitboxPassive
+            | Opt::HitboxItems
+            | Opt::HitboxProjectiles
+            | Opt::HitboxCrystals
+            | Opt::HitboxOthers) => match o.colour(p).flatten() {
+                Some(colour) => colour.label(),
+                None => crate::lang::get_or("Off", "Off"),
+            },
             _ => return None,
         })
     }
@@ -1916,6 +2944,57 @@ impl Opt {
             Opt::ElytraIndicator => t.elytra_indicator = !t.elytra_indicator,
             Opt::MouseRmb => p.mouse.rmb = !p.mouse.rmb,
             Opt::Sky => p.sky.enabled = !p.sky.enabled,
+            Opt::Zoom => p.zoom.enabled = !p.zoom.enabled,
+            Opt::Tiers => p.tiers.enabled = !p.tiers.enabled,
+            Opt::Blur => p.blur.enabled = !p.blur.enabled,
+            Opt::Barrel => p.barrel.enabled = !p.barrel.enabled,
+            Opt::Music => p.music.enabled = !p.music.enabled,
+            Opt::MusicLyrics => p.music.lyrics = !p.music.lyrics,
+            Opt::MusicCard => p.music.card = !p.music.card,
+            Opt::BarrelBanking => p.barrel.banking = !p.barrel.banking,
+            Opt::BarrelRighting => p.barrel.righting = !p.barrel.righting,
+            Opt::BarrelInvert => p.barrel.invert_pitch = !p.barrel.invert_pitch,
+            Opt::BarrelSwitch => p.barrel.switch_roll_yaw = !p.barrel.switch_roll_yaw,
+            Opt::BarrelSensitivity => {
+                p.barrel.sensitivity = step_by(p.barrel.sensitivity, BARREL_SENSITIVITIES, 25, back)
+            }
+            Opt::BlurStrength => p.blur.strength = step_by(p.blur.strength, BLUR_STRENGTHS, 10, back),
+            Opt::Env => p.environment.enabled = !p.environment.enabled,
+            Opt::EnvGround => p.environment.ground = !p.environment.ground,
+            Opt::EnvParticles => p.environment.particles = !p.environment.particles,
+            Opt::EnvHat => p.environment.hat = !p.environment.hat,
+            Opt::EnvSky => p.environment.sky = !p.environment.sky,
+            Opt::EnvFog => p.environment.fog = !p.environment.fog,
+            Opt::EnvGroundColour => p.environment.ground_colour = p.environment.ground_colour.step_solid(back),
+            Opt::EnvParticlesColour => {
+                p.environment.particles_colour = p.environment.particles_colour.step_solid(back)
+            }
+            Opt::EnvHatColour => p.environment.hat_colour = p.environment.hat_colour.step_solid(back),
+            Opt::EnvSkyColour => p.environment.sky_colour = p.environment.sky_colour.step_solid(back),
+            Opt::EnvFogColour => p.environment.fog_colour = p.environment.fog_colour.step_solid(back),
+            Opt::EnvGroundRadius => {
+                p.environment.ground_radius = step_by(p.environment.ground_radius, ENV_RADII, 1, back)
+            }
+            Opt::EnvParticlesAmount => {
+                p.environment.particles_amount = step_by(p.environment.particles_amount, ENV_AMOUNTS, 10, back)
+            }
+            Opt::EnvFogDensity => {
+                p.environment.fog_density = step_by(p.environment.fog_density, ENV_AMOUNTS, 10, back)
+            }
+            Opt::Clock => p.clock.enabled = !p.clock.enabled,
+            // An hour a step.
+            Opt::ClockTime => {
+                let t = i32::from(p.clock.time) + if back { -1000 } else { 1000 };
+                p.clock.time = t.rem_euclid(24_000) as u16;
+            }
+            Opt::SkyWeather => p.sky_weather.enabled = !p.sky_weather.enabled,
+            Opt::SkyWeatherPick => p.sky_weather.weather = step(&ViewWeather::ALL, p.sky_weather.weather, back),
+            Opt::TiersMode => {
+                let slugs: Vec<&str> = TIER_MODES.iter().map(|(m, _)| *m).collect();
+                p.tiers.mode = step(&slugs, p.tiers.mode.as_str(), back).to_owned();
+            }
+            Opt::ZoomSmooth => p.zoom.smooth = !p.zoom.smooth,
+            Opt::ZoomLevel => p.zoom.level = step_num(p.zoom.level, ZOOM_LEVELS.0, ZOOM_LEVELS.1, back),
             Opt::SkyPack => {
                 let ids: Vec<String> =
                     SKY_PACKS.lock().map(|l| l.iter().map(|(id, _)| id.clone()).collect()).unwrap_or_default();
@@ -1984,6 +3063,36 @@ impl Opt {
                     .collect();
                 t.weather = step(&all, t.weather, back);
             }
+            Opt::HudCooldowns => p.hud.cooldowns = !p.hud.cooldowns,
+            Opt::HudCooldownsCorner => p.hud.cooldowns_corner = step(&Corner::ALL, p.hud.cooldowns_corner, back),
+            Opt::HudTotems => p.hud.totems = !p.hud.totems,
+            Opt::HudTotemsCorner => p.hud.totems_corner = step(&Corner::ALL, p.hud.totems_corner, back),
+            Opt::HudPots => p.hud.pots = !p.hud.pots,
+            Opt::HudPotsCorner => p.hud.pots_corner = step(&Corner::ALL, p.hud.pots_corner, back),
+            Opt::Pops => p.pops = !p.pops,
+            Opt::Crystal => p.crystal.enabled = !p.crystal.enabled,
+            Opt::CrystalKeep => p.crystal.keep_render = !p.crystal.keep_render,
+            Opt::Anchor => p.anchor.enabled = !p.anchor.enabled,
+            Opt::AnchorCharge => p.anchor.charge = !p.anchor.charge,
+            Opt::Hitboxes => p.hitboxes.enabled = !p.hitboxes.enabled,
+            Opt::HitboxEyes => p.hitboxes.eyes = !p.hitboxes.eyes,
+            Opt::HitboxLook => p.hitboxes.look = !p.hitboxes.look,
+            Opt::HitboxOwn => p.hitboxes.own = !p.hitboxes.own,
+            Opt::HitboxWidth => p.hitboxes.width = step_by(p.hitboxes.width, HITBOX_WIDTHS, 2, back),
+            o @ (Opt::HitboxPlayers
+            | Opt::HitboxHostile
+            | Opt::HitboxPassive
+            | Opt::HitboxItems
+            | Opt::HitboxProjectiles
+            | Opt::HitboxCrystals
+            | Opt::HitboxOthers) => {
+                let next = solid_or_off(o.colour(p).flatten());
+                o.set_colour(p, next);
+            }
+            Opt::Secret => {
+                let n = SECRET_EFFECTS.len() as u8;
+                p.secret.effect = if back { (p.secret.effect + n - 1) % n } else { (p.secret.effect + 1) % n };
+            }
         }
     }
 }
@@ -1991,6 +3100,51 @@ impl Opt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_custom_colour_is_saved_and_read_back() {
+        let mut p = Pvp::default();
+        Opt::OutlineColour.set_colour(&mut p, Colour::parse("#12aBef"));
+        Opt::GlintColour.set_colour(&mut p, Some(Colour::Custom(0x00FF80)));
+        // Inverted isn't the outline's to take, nor off.
+        Opt::OutlineColour.set_colour(&mut p, Some(Colour::Inverted));
+        Opt::OutlineColour.set_colour(&mut p, None);
+        assert_eq!(p.outline.colour, Colour::Custom(0x12ABEF));
+        assert_eq!(p.outline.colour.label(), "#12ABEF");
+        let mut text = String::new();
+        p.serialize(&mut text);
+        let mut back = Pvp::default();
+        for line in text.lines() {
+            let (k, v) = line.split_once(':').unwrap();
+            back.parse_line(k, v);
+        }
+        assert_eq!(back.outline.colour, Colour::Custom(0x12ABEF));
+        assert_eq!(back.tweaks.glint, Some(Colour::Custom(0x00FF80)));
+    }
+
+    #[test]
+    fn the_clock_reads_ticks_as_a_day_does() {
+        assert_eq!(clock_label(0), "06:00");
+        assert_eq!(clock_label(6000), "12:00");
+        assert_eq!(clock_label(18_000), "00:00");
+        assert_eq!(clock_label(23_999), "05:59");
+        let mut p = Pvp::default();
+        Opt::ClockTime.set_slider(&mut p, 99_999);
+        assert_eq!(p.clock.time, 23_999);
+    }
+
+    #[test]
+    fn a_typed_number_stays_in_its_range() {
+        let mut p = Pvp::default();
+        Opt::CrosshairSize.set_number(&mut p, 999);
+        assert_eq!(p.crosshair.size, SIZES.1);
+        Opt::ShieldSize.set_number(&mut p, 3);
+        assert_eq!(p.tweaks.shield_size, SHIELD_SIZES.0);
+        for &o in Opt::ALL {
+            assert_eq!(o.number().is_some(), o.number_value(&p).is_some(), "{o:?}");
+            assert_eq!(o.colour_choice().is_some(), o.colour(&p).is_some(), "{o:?}");
+        }
+    }
 
     /// The mask drawn as rows of `#` and `.` over `-r..=r`.
     fn picture(m: &Mask, r: i32) -> Vec<String> {
@@ -2308,5 +3462,43 @@ mod tests {
         assert!(legacy.hides_particle(T::SweepAttack) && legacy.hides_particle(T::DamageIndicator));
         assert!(!legacy.hides_particle(T::Crit) && !legacy.hides_particle(T::EnchantedHit));
         assert!(!modern.hides_particle(T::SweepAttack));
+    }
+
+    #[test]
+    fn oteria_pvp_options_are_saved_and_read_back() {
+        let mut p = Pvp::default();
+        p.hud.cooldowns = true;
+        p.hud.totems_corner = Corner::TopRight;
+        p.crystal = CrystalOpt { enabled: true, keep_render: true };
+        p.anchor.enabled = true;
+        p.pops = true;
+        p.secret.effect = 7;
+        p.hitboxes.enabled = true;
+        p.hitboxes.passive = None;
+        p.hitboxes.players = Some(Colour::Custom(0x12AB34));
+        p.hitboxes.width = 20;
+        let mut text = String::new();
+        p.serialize(&mut text);
+        let mut back = Pvp::default();
+        for line in text.lines() {
+            let (k, v) = line.split_once(':').unwrap();
+            back.parse_line(k, v);
+        }
+        assert_eq!(back.hud, p.hud);
+        assert_eq!(back.crystal, p.crystal);
+        assert_eq!(back.anchor, p.anchor);
+        assert!(back.pops);
+        assert_eq!(back.secret, p.secret);
+        assert_eq!(back.hitboxes, p.hitboxes);
+    }
+
+    #[test]
+    fn a_hitbox_colour_cycles_through_off() {
+        let mut p = Pvp::default();
+        p.hitboxes.items = Some(Colour::Black);
+        Opt::HitboxItems.cycle(&mut p, false);
+        assert_eq!(p.hitboxes.items, None);
+        Opt::HitboxItems.cycle(&mut p, false);
+        assert_eq!(p.hitboxes.items, Some(Colour::White));
     }
 }

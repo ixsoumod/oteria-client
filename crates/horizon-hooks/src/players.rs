@@ -378,6 +378,8 @@ pub struct Look {
     pub light: Light,
     /// Drawn see-through at this alpha, after every player, its back faces dropped.
     pub see_through: Option<f32>,
+    /// The mesh is a new one each frame (a cloth as it moves): drawn without keeping it on the GPU.
+    pub changing: bool,
 }
 
 impl Look {
@@ -387,6 +389,15 @@ impl Look {
             uv,
             light: Light::Model,
             see_through: None,
+            changing: false,
+        }
+    }
+
+    /// Made again each frame: see [`Look::changing`].
+    pub fn changing(self) -> Self {
+        Self {
+            changing: true,
+            ..self
         }
     }
 

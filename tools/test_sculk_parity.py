@@ -362,7 +362,7 @@ def main():
         oracle_harness.run_logged(['cargo', 'build', '--locked', '--profile', 'fast', '-p', 'horizon-client', '--bin', 'horizon-client'],
                                   build, 'compile-rust')
         oracle_harness.run_logged([lab.cargo_target() / 'fast/horizon-client', '--resources', resources], build, 'horizon',
-                                  env=lab.game_env(HORIZON_SCULK_FIXTURE=f'{inputs},{build / "horizon.txt"}'))
+                                  env=lab.game_env(HORIZON_SCULK_FIXTURE=f'{inputs},{build / "oteria.txt"}'))
     if args.java_only:
         return
     names = {s[0] for _, s in chosen}

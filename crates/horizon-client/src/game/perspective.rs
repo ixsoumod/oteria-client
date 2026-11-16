@@ -853,6 +853,35 @@ impl Game<'_> {
         size: f32,
         offset_y: f32,
     ) {
+        self.draw_player_preview_as(batch, [x0, y0, x1, y1], size, offset_y, None, None);
+    }
+    /// [`Self::draw_player_preview`], turned `turn` degrees from facing out instead of toward
+    /// the cursor (Oteria's turntable), and in `skin` (its sprite and model) when given.
+    pub(super) fn draw_player_preview_as(
+        &self,
+        batch: &mut HudBatch,
+        corners: [f32; 4],
+        size: f32,
+        offset_y: f32,
+        turn: Option<f32>,
+        skin: Option<(String, bool)>,
+    ) {
+        self.draw_player_preview_with(batch, corners, size, offset_y, turn, skin, None);
+    }
+    /// [`Self::draw_player_preview_as`] with `extra` drawn around the player (seen from both
+    /// sides, among its faces): it is given the picture's matrix (the player's feet at the
+    /// origin, to the box's pixels) and adds its vertices.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draw_player_preview_with(
+        &self,
+        batch: &mut HudBatch,
+        [x0, y0, x1, y1]: [f32; 4],
+        size: f32,
+        offset_y: f32,
+        turn: Option<f32>,
+        skin: Option<(String, bool)>,
+        extra: Option<&dyn Fn(glam::Mat4, &mut Vec<horizon_client::mesher::Vertex>)>,
+    ) {
         let Some(m) = self.player_model.as_ref() else {
             return;
         };
@@ -864,15 +893,25 @@ impl Game<'_> {
             return;
         }
         let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-        let x_angle = ((cx - self.cursor.0) / 40.0).atan();
-        let y_angle = ((cy - self.cursor.1) / 40.0).atan();
+        let (x_angle, y_angle) = match turn {
+            Some(_) => (0.0, 0.0),
+            None => (
+                ((cx - self.cursor.0) / 40.0).atan(),
+                ((cy - self.cursor.1) / 40.0).atan(),
+            ),
+        };
         let mut m = m.clone();
+        if let Some((skin, slim)) = skin {
+            m.skin_3d = self.skin_3d_model(&m.kind, &skin, slim);
+            m.skin = Some(skin);
+            m.slim = slim;
+        }
         // `extractEntityInInventory` divides the size by the entity's scale: the
         // preview is the same size whatever the player's scale.
         m.extra.model_scale = 0.0;
         // The render state: still, facing out, the head toward the cursor.
         m.previous = m.position;
-        m.body_yaw = 180.0 + x_angle * 20.0;
+        m.body_yaw = 180.0 + x_angle * 20.0 + turn.unwrap_or(0.0);
         m.previous_body_yaw = m.body_yaw;
         m.head_yaw = m.body_yaw + x_angle * 20.0;
         m.previous_head_yaw = m.head_yaw;
@@ -921,12 +960,6 @@ impl Game<'_> {
         // `WingsLayer` draws through `RenderTypes.armorCutoutNoCull`: the
         // wings' faces show from both sides (the elytra texture is empty on
         // the face that looks at the body).
-        let wings_start = verts.len();
-        self.player_elytra_geometry(&m, chest, camera, 1.0, 240 | 240 << 8, &mut verts);
-        let wings = wings_start..verts.len();
-        self.shoulder_parrots_geometry(&m, camera, 1.0, 240 | 240 << 8, &mut verts);
-        self.held_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, None, &mut verts);
-        self.head_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, &mut verts);
         let height = if m.extra.crouching { 1.5 } else { 1.8 };
         // PictureInPictureRenderer: the box centre, (size, size, -size);
         // then the translation and Rz(pi) * Rx(y_angle * 20 degrees).
@@ -935,6 +968,15 @@ impl Game<'_> {
             * glam::Mat4::from_translation(glam::Vec3::new(0.0, height / 2.0 + offset_y, 0.0))
             * glam::Mat4::from_rotation_z(std::f32::consts::PI)
             * glam::Mat4::from_rotation_x((y_angle * 20.0).to_radians());
+        let wings_start = verts.len();
+        self.player_elytra_geometry(&m, chest, camera, 1.0, 240 | 240 << 8, &mut verts);
+        if let Some(extra) = extra {
+            extra(gui, &mut verts);
+        }
+        let wings = wings_start..verts.len();
+        self.shoulder_parrots_geometry(&m, camera, 1.0, 240 | 240 << 8, &mut verts);
+        self.held_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, None, &mut verts);
+        self.head_item_geometry(&m, camera, 1.0, 240 | 240 << 8, false, &mut verts);
         let fire = self
             .player
             .as_ref()
@@ -1359,7 +1401,8 @@ pub(super) fn player_preview_quads_no_cull(
             continue;
         }
         let n = n.normalize_or_zero();
-        let shade = if index * 4 >= flame_start {
+        // Flames and what has no normal (a particle) are unlit.
+        let shade = if index * 4 >= flame_start || q[0].normal == [0; 4] {
             1.0
         } else {
             entity_in_ui_shade(-n)

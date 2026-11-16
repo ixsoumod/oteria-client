@@ -145,7 +145,7 @@ def window_game_scenario(m, client, resources, work):
 
     window_home = work / 'window-home'
     window_home.mkdir()
-    (window_home / 'horizon-extras.txt').write_text('agentControl:true\n')
+    (window_home / 'oteria-extras.txt').write_text('agentControl:true\n')
     own = work / 'launcher' / ('game-control.sock' if os.name == 'posix' else 'game-control.json')
     games = [start(window_home)]
     try:
@@ -182,7 +182,7 @@ def no_ai_scenario(launcher, env, home):
                          'clientInfo': {'name': 'launcher_mcp_e2e', 'version': '1'}})
     r = run('no-ai', 'on')
     assert r.returncode == 0, r
-    assert 'noAi:true' in (home / 'horizon-extras.txt').read_text()
+    assert 'noAi:true' in (home / 'oteria-extras.txt').read_text()
     try:
         m.call('links')
         raise AssertionError('links ran under No AI')

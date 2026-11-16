@@ -24,7 +24,7 @@ use std::{
 pub fn cache_dir() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_default()
-        .join(".horizon-cache/resourcepacks")
+        .join(".oteria-cache/resourcepacks")
 }
 pub fn packs_dir() -> PathBuf {
     std::env::current_dir()

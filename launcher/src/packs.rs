@@ -7,7 +7,7 @@
 //! - Shader packs: `shaderpacks/`, Horizon's own (a folder with `horizon-shaders.toml`, or a
 //!   `.hshader`) and those in the `shaders/` format (a `.zip`, or a folder with `shaders/`), as
 //!   the game's Shader Packs page lists them (`shader_pack_list`). One at most is on:
-//!   `pickedShaderPack` in `horizon-graphics.txt`.
+//!   `pickedShaderPack` in `oteria-graphics.txt`.
 //!
 //! Every other line of both files is written back as it was.
 use std::fs;
@@ -15,7 +15,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const OPTIONS: &str = "options.txt";
-const GRAPHICS: &str = "horizon-graphics.txt";
+const GRAPHICS: &str = "oteria-graphics.txt";
 const SHADER_MANIFEST: &str = "horizon-shaders.toml";
 const SHADER_PACKAGE: &str = "hshader";
 

@@ -23,7 +23,7 @@ fn with_game(test: impl FnOnce(&mut Game<'_>)) {
         std::path::PathBuf::from(std::env::var_os("HORIZON_HOME").unwrap())
             .join(format!("h182-{:?}", std::thread::current().id())),
     );
-    // A fixed name: no generated horizon-player.txt in the working directory.
+    // A fixed name: no generated oteria-player.txt in the working directory.
     options.player_name = Some("H182".into());
     options.execution_role = crate::game::execution_role::ExecutionRole::IntegratedServer;
     let mut game = Game::new(

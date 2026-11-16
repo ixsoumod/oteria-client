@@ -197,7 +197,7 @@ pub struct Settings {
     pub quit_shortcuts: bool,
     /// On macOS, turn Control-click into a right click.
     pub ctrl_click_emulates_right_click: bool,
-    /// Horizon's own graphics settings (`horizon-graphics.txt`, not options.txt).
+    /// Horizon's own graphics settings (`oteria-graphics.txt`, not options.txt).
     pub horizon: crate::graphics::Graphics,
     /// The graphics API the game started with: `Options.preferredGraphicsBackendFromStartup`.
     pub startup_api: crate::graphics::GraphicsApi,
@@ -208,7 +208,7 @@ pub struct Settings {
     pub fullbright_held: bool,
     /// Controller settings (`horizon-controller.txt`, Horizon's own).
     pub controller: crate::gamepad::PadSettings,
-    /// Horizon's optional extras (`horizon-extras.txt`), all off by default.
+    /// Horizon's optional extras (`oteria-extras.txt`), all off by default.
     pub extras: crate::extras::Extras,
     /// The Horizon mods turned on (`horizon-mods.txt`), all off by default.
     pub mods: crate::mod_list::ModList,
@@ -405,9 +405,20 @@ impl Settings {
                 ..Self::default()
             },
         };
-        // Horizon's own key bindings live in horizon-extras.txt, not in options.txt.
+        // Horizon's own key bindings live in oteria-extras.txt, not in options.txt.
         let emote = settings.extras.emote_key.clone();
         settings.keys.set("key.emote", &emote);
+        // Oteria's inspect key is kept with its cosmetics (`knifeInspectKey`).
+        let inspect = settings.extras.pvp.skins.inspect_key.clone();
+        settings.keys.set("key.oteria.inspect", &inspect);
+        // And its zoom's with the zoom (`oteriaZoomKey`).
+        let zoom = settings.extras.pvp.zoom.key.clone();
+        settings.keys.set("key.oteria.zoom", &zoom);
+        // And the music's with the music (`musicPlayKey`...).
+        let m = settings.extras.pvp.music.clone();
+        settings.keys.set("key.oteria.music.play", &m.play_key);
+        settings.keys.set("key.oteria.music.next", &m.next_key);
+        settings.keys.set("key.oteria.music.previous", &m.previous_key);
         // `Options.load`: `sharePresence` decides what the friends service posts.
         crate::social::set_share_presence(crate::social::SharePresence::of(
             settings.file.int("sharePresence").clamp(0, 2) as u8,
@@ -692,6 +703,11 @@ impl Settings {
         };
         // Horizon's own bindings aren't in options.txt.
         next.keys.set("key.emote", self.keys.get("key.emote"));
+        next.keys.set("key.oteria.inspect", self.keys.get("key.oteria.inspect"));
+        next.keys.set("key.oteria.zoom", self.keys.get("key.oteria.zoom"));
+        for key in ["key.oteria.music.play", "key.oteria.music.next", "key.oteria.music.previous"] {
+            next.keys.set(key, self.keys.get(key));
+        }
         Ok(next)
     }
     /// The `options.txt` text (Options.save).
@@ -708,6 +724,11 @@ impl Settings {
             self.controller.save(dir);
             let mut extras = self.extras.clone();
             extras.emote_key = self.keys.get("key.emote").to_owned();
+            extras.pvp.skins.inspect_key = self.keys.get("key.oteria.inspect").to_owned();
+            extras.pvp.zoom.key = self.keys.get("key.oteria.zoom").to_owned();
+            extras.pvp.music.play_key = self.keys.get("key.oteria.music.play").to_owned();
+            extras.pvp.music.next_key = self.keys.get("key.oteria.music.next").to_owned();
+            extras.pvp.music.previous_key = self.keys.get("key.oteria.music.previous").to_owned();
             extras.save(dir);
             horizon_hooks::settings::engine::save_own(dir, &[crate::extras::FILE]);
             self.mods.save(&crate::logging::shared_dir(dir));
@@ -986,7 +1007,7 @@ mod tests {
         assert_eq!(s.fov, 90.0);
         assert!(!s.serialize().contains("threeDSkinLayers"));
         assert!(crate::extras::Extras::parse(&s.extras.serialize()).three_d_skin_layers);
-        // Once horizon-extras.txt has its own line, a stale options.txt one is ignored.
+        // Once oteria-extras.txt has its own line, a stale options.txt one is ignored.
         fs::write(dir.join(crate::extras::FILE), "threeDSkinLayers:false\n").unwrap();
         assert!(
             !Settings::load(&dir.join("options.txt"))
@@ -1031,7 +1052,7 @@ mod tests {
             Settings::load(&options).keys.get("key.emote"),
             "key.keyboard.b"
         );
-        // Rebound in Controls: saved to horizon-extras.txt, and options.txt stays vanilla's.
+        // Rebound in Controls: saved to oteria-extras.txt, and options.txt stays vanilla's.
         let mut s = Settings::load(&options);
         s.keys.set("key.emote", "key.keyboard.g");
         s.save(&options);
@@ -1082,7 +1103,7 @@ mod tests {
             Settings::load(&options).keys.get("key.emote"),
             "key.keyboard.h"
         );
-        // Once horizon-extras.txt has its own line, a stale options.txt one is ignored.
+        // Once oteria-extras.txt has its own line, a stale options.txt one is ignored.
         fs::write(dir.join(crate::extras::FILE), "emoteKey:key.keyboard.k\n").unwrap();
         fs::write(&options, "version:4000\nkey_key.emote:key.keyboard.h\n").unwrap();
         assert_eq!(

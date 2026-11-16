@@ -87,6 +87,12 @@ impl Cooldowns {
         let remaining = *end as f32 - (self.tick_count as f32 + partial_tick);
         (remaining / duration).clamp(0.0, 1.0)
     }
+    /// The ticks left on the group's entry (0 when it has none).
+    pub fn remaining_ticks(&self, group: &str, partial_tick: f32) -> f32 {
+        self.entries
+            .get(group)
+            .map_or(0.0, |(_, end)| (*end as f32 - (self.tick_count as f32 + partial_tick)).max(0.0))
+    }
     /// `isOnCooldown`: whether the group still has time to run.
     pub fn is_on_cooldown(&self, group: &str) -> bool {
         self.percent(group, 0.0) > 0.0

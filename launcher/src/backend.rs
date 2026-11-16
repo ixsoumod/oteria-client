@@ -2662,7 +2662,7 @@ pub fn game_home() -> PathBuf {
 }
 
 /// Whether No AI is on: every AI feature hidden and off (`horizon_platform::no_ai`, kept in the
-/// game's `horizon-extras.txt` so the game reads the same switch).
+/// game's `oteria-extras.txt` so the game reads the same switch).
 pub fn no_ai() -> bool {
     horizon_platform::no_ai::is_on(&game_home())
 }
@@ -2759,7 +2759,7 @@ pub fn vulkan_start_crashed<S: AsRef<str>>(lines: impl IntoIterator<Item = S>) -
 }
 
 /// The game's graphics settings file in its home (the game's `graphics.rs`).
-const GRAPHICS_FILE: &str = "horizon-graphics.txt";
+const GRAPHICS_FILE: &str = "oteria-graphics.txt";
 
 /// The graphics API (the game's setting name, and its label) Auto switches to after a native
 /// crash at the Vulkan renderer's start: DirectX 12 on Windows (#746), OpenGL on Linux, where

@@ -65,7 +65,7 @@ static PLAYER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// Makes [`player_dir`] return `dir` for the rest of the run (`--player-dir`), creating it.
 /// What is a player's own goes there: `options.txt` and the settings files beside it,
-/// `logs/`, `crash-reports/`, `horizon-player.txt`, `servers.dat`, `hotbar.nbt` and
+/// `logs/`, `crash-reports/`, `oteria-player.txt`, `servers.dat`, `hotbar.nbt` and
 /// `screenshots/`. What the game folder's players share stays in it: saves, resource and
 /// shader packs, mods and their config, caches.
 pub fn set_player_dir(dir: PathBuf) {

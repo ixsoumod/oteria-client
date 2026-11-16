@@ -40,7 +40,7 @@ fn player_home(home: &Path) {
     put(&home.join("saves/World/region/r.0.0.mca"), "region");
     put(&home.join("saves/Other/level.dat"), "other");
     put(&home.join("options.txt"), "fov:90\n");
-    put(&home.join("horizon-player.txt"), "name:Player123\n");
+    put(&home.join("oteria-player.txt"), "name:Player123\n");
     put(&home.join("resourcepacks/faithful.zip"), "pack");
     put(&home.join("logs/latest.log"), "log");
     put(&home.join("sessions/a.json"), "token");
@@ -105,7 +105,7 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     let empty_files: Vec<PathBuf> = files(&empty.home).into_keys().collect();
     assert_eq!(
         empty_files,
-        [PathBuf::from("horizon-player.txt"), "options.txt".into()]
+        [PathBuf::from("oteria-player.txt"), "options.txt".into()]
     );
     let copied = files(&copy.home);
     for kept in [
@@ -176,7 +176,7 @@ fn an_instance_follows_the_players_answers() {
     let root = scratch("follow");
     let (main, own) = (root.join("main"), root.join("own"));
     put(&main.join("options.txt"), "fov:90\n");
-    put(&main.join("horizon-player.txt"), "name:Player123\n");
+    put(&main.join("oteria-player.txt"), "name:Player123\n");
     put(&main.join("telemetry/consent.json"), r#"{"version":1}"#);
     horizon_platform::no_ai::set(&main, true).unwrap();
     put(&own.join("options.txt"), "fov:70\n");
@@ -186,7 +186,7 @@ fn an_instance_follows_the_players_answers() {
         "fov:70\n"
     );
     assert_eq!(
-        fs::read_to_string(own.join("horizon-player.txt")).unwrap(),
+        fs::read_to_string(own.join("oteria-player.txt")).unwrap(),
         "name:Player123\n"
     );
     assert_eq!(

@@ -113,22 +113,6 @@ mod copper_golems;
 #[cfg(test)]
 mod core_tests;
 mod cosmetics;
-/// Oteria's menu on Right Shift (`Screen::OteriaMenu`).
-mod oteria_menu;
-mod oteria_boost;
-/// The Cosmetics page of Oteria's menu.
-mod oteria_cosmetics;
-/// The Host page of Oteria's menu: sharing the world being played.
-mod oteria_host;
-/// Oteria's butterfly knife: swords drawn as it, and its inspect.
-mod oteria_knife;
-mod oteria_mods;
-mod oteria_profiles;
-mod oteria_sky;
-/// Oteria's voice chat, on Simple Voice Chat's protocol.
-mod oteria_voice;
-/// The voice chat's menu, in Oteria's menu.
-mod oteria_voice_ui;
 mod creaking;
 mod creative_hotbar;
 mod creative_screen;
@@ -178,6 +162,32 @@ mod frames;
 #[cfg(feature = "friends")]
 mod friends;
 mod held_items;
+mod oteria_barrel;
+mod oteria_boost;
+/// The Cosmetics page of Oteria's menu.
+mod oteria_cosmetics;
+/// The Host page of Oteria's menu: sharing the world being played.
+mod oteria_host;
+mod oteria_keyboard;
+/// Oteria's butterfly knife: swords drawn as it, and its inspect.
+mod oteria_knife;
+mod oteria_knife_rig;
+/// Oteria's menu on Right Shift (`Screen::OteriaMenu`).
+mod oteria_menu;
+mod oteria_mods;
+mod oteria_music;
+mod oteria_profiles;
+mod oteria_skins;
+mod oteria_showcase;
+mod oteria_sky;
+mod oteria_tiers;
+/// Oteria's voice chat, on Simple Voice Chat's protocol.
+mod oteria_voice;
+/// The voice chat's menu, in Oteria's menu.
+mod oteria_voice_ui;
+mod oteria_wear;
+mod oteria_zoom;
+mod oteria_pvp;
 #[cfg(test)]
 mod setblock_order_tests;
 // Without Play with Friends: nothing shared, no Friends button (game/friends_off.rs).
@@ -9396,6 +9406,7 @@ impl Game<'_> {
         // hitboxes (F3+G, F3+B).
         let mut lines = self.fishing_line(alpha, size);
         let mut g = self.debug_gizmos(alpha as f32, camera.to_array());
+        self.oteria_hitboxes(alpha as f32, &mut g);
         self.studio_camera_path(&mut g);
         lines.extend(g.lines);
         let on_top = g.on_top;
@@ -9555,6 +9566,12 @@ impl Game<'_> {
             glam::Mat4::IDENTITY
         } else {
             self.spinning_matrix(camera_alpha as f32)
+        };
+        // Oteria's barrel roll: the camera rolled with the plane.
+        let spin = if title {
+            spin
+        } else {
+            self.barrel_matrix(camera_alpha as f32) * spin
         };
         let terrain_distance = self.terrain_distance();
         let distance = (terrain_distance * 16) as f32;
@@ -9829,6 +9846,8 @@ impl Game<'_> {
             glint_ticks: self.glint_frame.scroll_ticks(),
             clouds: (!title
                 && self.dim == Dim::Overworld
+                // Oteria's aurora sky has no clouds in front of it.
+                && !(self.settings.extras.pvp.environment.enabled && self.settings.extras.pvp.environment.sky)
                 && horizon_client::clouds::visible(&self.settings.clouds, sky.cloud_color[3]))
             .then(|| self.gui.atlas.sprites.get("horizon/white"))
             .flatten()
@@ -9924,6 +9943,10 @@ impl Game<'_> {
         // Renderer encoding and GPU waiting belong to render, not prepare.
         drop(prepare);
         let debug_passes = self.debug_lists_gpu_passes();
+        let blur = self.motion_blur_share();
+        let secret = self.settings.extras.pvp.secret.effect;
+        let environment = self.environment_frame(frame.distance);
+        oteria_wear::sync(&self.settings.extras.pvp.skins);
         let result = match self.renderer.as_mut() {
             Some(renderer) => {
                 renderer.set_pass_timing(debug_passes || self.gpu_passes);
@@ -9933,6 +9956,9 @@ impl Game<'_> {
                 } else {
                     horizon_client::debug_overlay::GPU_TIMING_GAP
                 });
+                renderer.set_motion_blur(blur);
+                renderer.set_secret_effect(secret);
+                renderer.set_environment(environment);
                 horizon_client::spans::time("renderer", || renderer.render(&frame))
             }
             None => Err("renderer".into()),
@@ -10576,7 +10602,9 @@ impl Game<'_> {
                     // MouseHandler.onScroll: the hotbar (or the spectator
                     // menu) takes the wheel only when no screen is open; a
                     // book, lectern, sign or prompt drawn over gameplay is one.
+                    // Oteria's zoom takes the wheel while its key is held (`oteria_zoom`).
                     if self.hotbar_takes_wheel()
+                        && !self.oteria_zoom_wheel(d)
                         && !self.native_wheel_event(d)
                         && let Some((wheel, (horizontal_steps, vertical_steps))) = self
                             .mouse
@@ -12550,7 +12578,7 @@ pub fn run_with() -> Result<()> {
     activity::client_started(&options);
     // Snapshots of derived tables live in the game folder, never beside the
     // shared resources.
-    Behaviours::set_cache_dir(std::env::current_dir()?.join(".horizon-cache"));
+    Behaviours::set_cache_dir(std::env::current_dir()?.join(".oteria-cache"));
     if !synchronous_startup(&options) {
         return run_loading(options, early_settings, vanilla_root, None, started);
     }

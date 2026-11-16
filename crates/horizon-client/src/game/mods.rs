@@ -204,7 +204,7 @@ fn content_root_at(
     }
     let overlay = {
         let _step = horizon_client::spans::startup::step("mods.overlay");
-        mod_content::resource_root(root, &mods, &here.join(".horizon-cache"))
+        mod_content::resource_root(root, &mods, &here.join(".oteria-cache"))
     };
     match overlay {
         Ok(out) => {

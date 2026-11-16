@@ -2,12 +2,12 @@
 //! companion, agent control through the control socket, `horizon-ctl`, its MCP server and the
 //! launcher's). The launcher and the game both read and write it here, so they always agree.
 //!
-//! It is the `noAi` line of the game's `horizon-extras.txt`, in the game's home (the folder
+//! It is the `noAi` line of the game's `oteria-extras.txt`, in the game's home (the folder
 //! with `options.txt`). Missing means off: AI features are available. See docs/agent-control.md.
 use std::{fs, io, path::Path};
 
 /// The game's extras file, beside `options.txt`.
-pub const FILE: &str = "horizon-extras.txt";
+pub const FILE: &str = "oteria-extras.txt";
 /// The key No AI is kept under there.
 pub const KEY: &str = "noAi";
 /// The one line every AI surface answers with while No AI is on.

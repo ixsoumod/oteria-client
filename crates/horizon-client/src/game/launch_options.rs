@@ -146,6 +146,13 @@ impl Options {
                 .and_then(|()| std::env::set_current_dir(&dir))
                 .map_err(|e| format!("game folder {}: {e}", dir.display()))?;
         }
+        if let Ok(here) = std::env::current_dir() {
+            rename_horizon_files(&here);
+        }
+        let player = horizon_client::logging::player_dir();
+        if std::env::current_dir().is_ok_and(|here| here != player) {
+            rename_horizon_files(&player);
+        }
         // Vanilla's quick play (Main, QuickPlay.joinSingleplayerWorld): only a
         // world that exists opens; else the title screen. --world also creates one.
         if let Some(world) = o.quick_play.take() {
@@ -228,7 +235,7 @@ impl Options {
             match arg.as_str() {
                 "--help" | "-h" => {
                     println!(
-                        "Oteria — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --timeout-seconds N     Exit with an error after N seconds (testing; default 120 with --frames, else none)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain), write its report to benchmarks/ and quit\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --transfers SETTINGS    A dedicated server takes a proxy's hand-over requests (server.toml [transfer], docs/server.md)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Oteria's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
+                        "Oteria — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --timeout-seconds N     Exit with an error after N seconds (testing; default 120 with --frames, else none)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain), write its report to benchmarks/ and quit\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --transfers SETTINGS    A dedicated server takes a proxy's hand-over requests (server.toml [transfer], docs/server.md)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in oteria-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, oteria-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Oteria's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
                         horizon_core::VANILLA_VERSION
                     );
                     return Ok(None);
@@ -395,5 +402,51 @@ mod tests {
             limit(&["--frames", "10", "--timeout-seconds", "30"]),
             secs(30)
         );
+    }
+}
+
+/// Oteria's own names for the files Horizon kept in the game folder (`horizon-extras.txt` became
+/// `oteria-extras.txt`...): a folder from an earlier build is renamed once, so its settings, its
+/// offline name and its cache carry over. A file already there under the new name wins.
+pub(super) const RENAMED_FILES: [(&str, &str); 6] = [
+    ("horizon-extras.txt", "oteria-extras.txt"),
+    ("horizon-graphics.txt", "oteria-graphics.txt"),
+    ("horizon-player.txt", "oteria-player.txt"),
+    ("horizon-pad.txt", "oteria-pad.txt"),
+    ("horizon.txt", "oteria.txt"),
+    (".horizon-cache", ".oteria-cache"),
+];
+
+pub(super) fn rename_horizon_files(dir: &std::path::Path) {
+    for (old, new) in RENAMED_FILES {
+        let (from, to) = (dir.join(old), dir.join(new));
+        if from.exists() && !to.exists() {
+            if let Err(e) = std::fs::rename(&from, &to) {
+                eprintln!("Oteria: could not rename {} to {new}: {e}", from.display());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod renamed_files_tests {
+    use super::*;
+
+    #[test]
+    fn horizon_files_take_oteria_names_once() {
+        let dir = std::env::temp_dir().join(format!("oteria-renamed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".horizon-cache")).unwrap();
+        std::fs::write(dir.join("horizon-extras.txt"), "zoom:true\n").unwrap();
+        std::fs::write(dir.join("horizon-player.txt"), "name:Old\n").unwrap();
+        std::fs::write(dir.join("oteria-player.txt"), "name:New\n").unwrap();
+        rename_horizon_files(&dir);
+        assert_eq!(std::fs::read_to_string(dir.join("oteria-extras.txt")).unwrap(), "zoom:true\n");
+        assert!(!dir.join("horizon-extras.txt").exists());
+        assert!(dir.join(".oteria-cache").is_dir());
+        // The new name already there is kept; the old file is left alone.
+        assert_eq!(std::fs::read_to_string(dir.join("oteria-player.txt")).unwrap(), "name:New\n");
+        assert!(dir.join("horizon-player.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

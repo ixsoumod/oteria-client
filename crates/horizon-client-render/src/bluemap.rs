@@ -50,13 +50,13 @@ const CHANGE_GAP: Duration = Duration::from_millis(250);
 const SKIRT: i32 = 8;
 
 /// Where the player names the servers' maps (`Settings::servers`), beside
-/// `horizon-graphics.txt`: kept out of the graphics settings, which shared
+/// `oteria-graphics.txt`: kept out of the graphics settings, which shared
 /// instances and modpacks carry, as a map the client asks for tiles around
 /// the player (where they stand, which server) is the player's to name, not
 /// a pack's.
 pub const SERVERS_FILE: &str = "horizon-bluemap.txt";
 /// The player's BlueMap settings: `blueMapRadius:<chunks>` (or `<blocks>b`)
-/// and `blueMapAutoDetect:true` in `horizon-graphics.txt`, and
+/// and `blueMapAutoDetect:true` in `oteria-graphics.txt`, and
 /// `blueMap:<server address> <map URL> [<level>=<map id> ...]` per server in
 /// `SERVERS_FILE`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -116,7 +116,7 @@ impl Settings {
             .filter_map(|(_, value)| Self::parse_server(value))
             .collect()
     }
-    /// What goes in `horizon-graphics.txt` (the servers don't).
+    /// What goes in `oteria-graphics.txt` (the servers don't).
     pub fn serialize(&self) -> String {
         format!(
             "blueMapRadius:{}\nblueMapAutoDetect:{}\n",

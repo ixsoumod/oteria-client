@@ -75,11 +75,21 @@ pub const MAPPINGS: &[(&str, &str, &str)] = &[
     ("key.debug.improvedTransparency", "key.keyboard.x", "debug"),
 ];
 /// Horizon's own key mappings: bound in Controls like the vanilla ones, but kept in
-/// `horizon-extras.txt` (`emoteKey`), never in `options.txt`, which stays exactly vanilla's
+/// `oteria-extras.txt` (`emoteKey`), never in `options.txt`, which stays exactly vanilla's
 /// (`MAPPINGS` is what the options parity harness compares with the pinned client).
 pub const HORIZON_MAPPINGS: &[(&str, &str, &str)] = &[
     // The emote wheel (docs/cosmetics.md), on a key vanilla leaves free.
     ("key.emote", "key.keyboard.b", "multiplayer"),
+    // Oteria: the held weapon's inspect (the butterfly knife's, `game/oteria_knife.rs`).
+    ("key.oteria.inspect", "key.keyboard.grave.accent", "oteria"),
+    // Oteria's zoom (`game/oteria_zoom.rs`): no key until the player picks one.
+    ("key.oteria.zoom", "key.keyboard.unknown", "oteria"),
+    // Super Secret Settings (`game/oteria_pvp.rs`): another effect at random; Shift turns it off.
+    ("key.oteria.secret", "key.keyboard.unknown", "oteria"),
+    // Oteria's music (`game/oteria_music.rs`): no keys until the player picks them.
+    ("key.oteria.music.play", "key.keyboard.unknown", "oteria"),
+    ("key.oteria.music.next", "key.keyboard.unknown", "oteria"),
+    ("key.oteria.music.previous", "key.keyboard.unknown", "oteria"),
 ];
 /// Every mapping the game binds: vanilla's in `Options.keyMappings` order, then Horizon's.
 pub fn all_mappings() -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str)> {
@@ -90,7 +100,7 @@ pub fn is_toggle(name: &str) -> bool {
     matches!(name, "key.sneak" | "key.sprint" | "key.use" | "key.attack")
 }
 /// KeyMapping.Category sort order.
-pub const CATEGORIES: [&str; 8] = [
+pub const CATEGORIES: [&str; 9] = [
     "movement",
     "misc",
     "multiplayer",
@@ -99,6 +109,8 @@ pub const CATEGORIES: [&str; 8] = [
     "creative",
     "spectator",
     "debug",
+    // Oteria's own keys, last.
+    "oteria",
 ];
 
 /// InputConstants key names <-> winit physical keys.
@@ -368,7 +380,7 @@ impl KeyBinds {
             .map(|(n, _, _)| (*n, self.get(n).to_owned()))
             .collect()
     }
-    /// Horizon's own bindings, for `horizon-extras.txt`.
+    /// Horizon's own bindings, for `oteria-extras.txt`.
     pub fn horizon_saved(&self) -> Vec<(&'static str, String)> {
         HORIZON_MAPPINGS
             .iter()

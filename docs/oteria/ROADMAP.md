@@ -144,9 +144,8 @@ Des jeux de réglages qu'on change en un clic : « PvP » (FPS max, HUD PvP), «
 
 ## File d'attente
 
-- **Tier Tagger** (comme le mod Fabric `tiertagger`) : le tier PvP de chaque joueur (MCTiers et autres listes) à
-  côté de son pseudo, au-dessus de sa tête et dans la liste des joueurs, avec le mode de jeu choisi. Demandé le
-  12 novembre 2026, à faire après le chat vocal et Mouse Tweaks.
+- **Tier Tagger** : fait le 14 novembre 2026 (tuile Tier Tagger, `game/oteria_tiers.rs`), avec MCTiers seulement.
+  Reste à voir : d'autres listes (PvPTiers, SubTiers) et l'icône du mode de jeu à côté du tier.
 
 ## Idées en plus
 

@@ -1,11 +1,11 @@
 //! Horizon's optional extras (minimap, lighting, inventory tools): their
-//! settings, kept in `horizon-extras.txt` next to `options.txt` so that file
+//! settings, kept in `oteria-extras.txt` next to `options.txt` so that file
 //! stays exactly vanilla's, and the logic behind them. Every extra is off by
 //! default; see `docs/extras.md`. Horizon's own switches outside the Extras page
 //! (No AI, Agent Control) are kept here too.
 use std::{collections::VecDeque, fs, path::Path};
 
-pub const FILE: &str = "horizon-extras.txt";
+pub const FILE: &str = "oteria-extras.txt";
 /// The name the options screen uses while the sort key waits for a key.
 pub const SORT_KEY: &str = "horizon.sort";
 /// The 3D skin layers line, here and in the `options.txt` that held it first.

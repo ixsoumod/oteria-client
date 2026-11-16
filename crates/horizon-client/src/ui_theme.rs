@@ -17,7 +17,7 @@ use std::{cell::RefCell, collections::HashMap, path::Path};
 /// (`key:value` lines), so vanilla's options file stays exactly as vanilla
 /// writes it.
 pub fn preference(dir: &Path, key: &str) -> Option<String> {
-    let text = std::fs::read_to_string(dir.join("horizon.txt")).ok()?;
+    let text = std::fs::read_to_string(dir.join("oteria.txt")).ok()?;
     text.lines().find_map(|l| {
         let (k, v) = l.split_once(':')?;
         (k.trim() == key).then(|| v.trim().to_owned())
@@ -25,7 +25,7 @@ pub fn preference(dir: &Path, key: &str) -> Option<String> {
 }
 /// Set (or with None remove) one preference, keeping the others.
 pub(crate) fn set_preference(dir: &Path, key: &str, value: Option<&str>) {
-    let text = std::fs::read_to_string(dir.join("horizon.txt")).unwrap_or_default();
+    let text = std::fs::read_to_string(dir.join("oteria.txt")).unwrap_or_default();
     let mut lines: Vec<String> = text
         .lines()
         .filter(|l| l.split_once(':').is_none_or(|(k, _)| k.trim() != key))
@@ -36,7 +36,7 @@ pub(crate) fn set_preference(dir: &Path, key: &str, value: Option<&str>) {
     }
     let mut out = lines.join("\n");
     out.push('\n');
-    let _ = std::fs::write(dir.join("horizon.txt"), out);
+    let _ = std::fs::write(dir.join("oteria.txt"), out);
 }
 
 /// The overlays' palette (`menu_style`) in the HUD's colour encoding, plus the
@@ -178,6 +178,8 @@ enum Key {
     Glyph(Face, u16, u16),
     /// A quarter disc (`false`) or a 1px quarter ring of this radius in pixels.
     Corner(u16, bool),
+    /// An icon (its name's hash) this many pixels square.
+    Icon(u64, u16),
 }
 #[derive(Clone, Copy)]
 struct Cached {
@@ -317,6 +319,31 @@ impl Cache {
         }
         made
     }
+    /// Icon `name` (`oteria_icons`) `n` pixels square, from its 128 px master averaged down.
+    fn icon(&mut self, atlas: &HudAtlas, name: &str, n: u16) -> Option<Rect> {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        name.rsplit('/').next().unwrap_or(name).hash(&mut h);
+        let key = Key::Icon(h.finish(), n);
+        if let Some(c) = self.entries.get(&key) {
+            return c.rect;
+        }
+        let (side, alpha) = icon_alpha(crate::oteria_icon_masters::master(name)?)?;
+        let n32 = u32::from(n);
+        let out = resample(&alpha, side, n32 as usize);
+        let rect = self.upload(atlas, n32, n32, &out);
+        if rect.is_some() {
+            self.entries.insert(
+                key,
+                Cached {
+                    rect,
+                    left: 0.0,
+                    top: 0.0,
+                },
+            );
+        }
+        rect
+    }
     fn corner(&mut self, atlas: &HudAtlas, r: u16, ring: bool) -> Option<Rect> {
         let key = Key::Corner(r, ring);
         if let Some(c) = self.entries.get(&key) {
@@ -355,6 +382,67 @@ impl Cache {
         }
         rect
     }
+}
+
+/// A master icon's alpha (0 to 1) and its side, from its PNG.
+fn icon_alpha(png_bytes: &[u8]) -> Option<(usize, Vec<f32>)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    if w != h || w == 0 {
+        return None;
+    }
+    let channels = info.color_type.samples();
+    let depth = if info.bit_depth == png::BitDepth::Sixteen { 2 } else { 1 };
+    let stride = channels * depth;
+    let alpha_at = match info.color_type {
+        png::ColorType::GrayscaleAlpha | png::ColorType::Rgba => (channels - 1) * depth,
+        _ => return None,
+    };
+    Some((
+        w,
+        (0..w * h)
+            .map(|i| f32::from(buf[i * stride + alpha_at]) / 255.0)
+            .collect(),
+    ))
+}
+
+/// `alpha` (`from` square) averaged down to `to` square: each pixel the share of the master it
+/// covers.
+fn resample(alpha: &[f32], from: usize, to: usize) -> Vec<f32> {
+    let k = from as f32 / to as f32;
+    // Each output column's (or row's) sources and their weights.
+    let spans: Vec<Vec<(usize, f32)>> = (0..to)
+        .map(|o| {
+            let (a, b) = (o as f32 * k, (o + 1) as f32 * k);
+            let mut out = Vec::new();
+            let mut i = a.floor() as usize;
+            while (i as f32) < b && i < from {
+                let w = (b.min(i as f32 + 1.0) - a.max(i as f32)).max(0.0);
+                if w > 0.0 {
+                    out.push((i, w / k));
+                }
+                i += 1;
+            }
+            out
+        })
+        .collect();
+    let mut rows = vec![0.0; from * to];
+    for y in 0..from {
+        for (x, span) in spans.iter().enumerate() {
+            rows[y * to + x] = span.iter().map(|&(i, w)| alpha[y * from + i] * w).sum();
+        }
+    }
+    let mut out = vec![0.0; to * to];
+    for (y, span) in spans.iter().enumerate() {
+        for x in 0..to {
+            out[y * to + x] = span.iter().map(|&(i, w)| rows[i * to + x] * w).sum::<f32>();
+        }
+    }
+    out
 }
 
 /// One frame of design-system drawing, in dp: the
@@ -446,6 +534,22 @@ impl<'a> Ui<'a> {
             self.corner_quad(rect, x1 - r, y1 - r, r, (true, true), color);
             self.corner_quad(rect, x0, y1 - r, r, (false, true), color);
         }
+    }
+    /// Icon `name` (`oteria_icons`), `size` dp square, centred on (`cx`, `cy`), tinted `color`:
+    /// drawn at its exact pixels, sharp at any scale.
+    pub fn icon(&mut self, name: &str, cx: f32, cy: f32, size: f32, color: u32) {
+        let n = (size * self.density).round().clamp(1.0, 512.0);
+        let (x0, y0) = (
+            (cx * self.density - n / 2.0).round(),
+            (cy * self.density - n / 2.0).round(),
+        );
+        let atlas = self.atlas;
+        let found = with_cache(atlas, |c| c.icon(atlas, name, n as u16));
+        let Some(rect) = found.or_else(|| atlas.sprites.get(name).copied()) else {
+            return;
+        };
+        let s = self.scale;
+        self.batch.rect_uv(x0 / s, y0 / s, n / s, n / s, rect, color);
     }
     /// A filled rectangle with rounded corners.
     pub fn rounded(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: u32) {

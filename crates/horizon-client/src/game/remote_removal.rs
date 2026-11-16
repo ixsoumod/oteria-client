@@ -20,6 +20,8 @@ impl Game<'_> {
             // Before the crystals go: the dragon's beam index follows them.
             self.remove_remote_dragon(id);
             self.crystals.retain(|c| c.id != id as u32);
+            // Oteria's Crystal Optimizer: a crystal broken ahead of the server is gone for good.
+            self.oteria_crystal_removed(id as u32);
             self.remove_remote_object(id as u32);
             self.remove_remote_small_projectiles(id as u32);
             self.persist.uuids.remove(&(id as u32));

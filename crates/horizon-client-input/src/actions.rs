@@ -96,6 +96,12 @@ actions! {
     DebugLightmapTexture, "key.debug.lightmapTexture", None;
     DebugImprovedTransparency, "key.debug.improvedTransparency", None;
     Emote, "key.emote", Some(KeyCode::KeyB);
+    OteriaInspect, "key.oteria.inspect", Some(KeyCode::Backquote);
+    OteriaZoom, "key.oteria.zoom", None;
+    OteriaSecret, "key.oteria.secret", None;
+    OteriaMusicPlay, "key.oteria.music.play", None;
+    OteriaMusicNext, "key.oteria.music.next", None;
+    OteriaMusicPrevious, "key.oteria.music.previous", None;
     HotbarPrevious, "pad.hotbarPrevious", None;
     HotbarNext, "pad.hotbarNext", None;
     Radial, "pad.radial", None;

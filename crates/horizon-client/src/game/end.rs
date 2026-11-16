@@ -1200,7 +1200,9 @@ impl Game<'_> {
         };
         let uv = [r.u0, r.v0, r.u1, r.v1];
         let partial = self.clock.fraction() as f32;
-        for crystal in &self.crystals {
+        // Oteria's Crystal Optimizer with Keep render: the broken ones still drawn.
+        let kept = self.oteria_kept_crystals();
+        for crystal in self.crystals.iter().chain(&kept) {
             let feet = glam::DVec3::new(crystal.position.x, crystal.position.y, crystal.position.z);
             let rel = feet - camera;
             if rel.length_squared() > 256.0 * 256.0 {

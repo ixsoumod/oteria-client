@@ -99,6 +99,7 @@ pub mod packs;
 pub mod name_badge;
 pub mod oteria_art;
 pub mod oteria_icons;
+pub mod oteria_icon_masters;
 pub mod pad_cursor;
 pub mod pad_glyph;
 pub mod paged_maps;

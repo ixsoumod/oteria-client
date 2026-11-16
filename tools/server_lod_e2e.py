@@ -56,7 +56,7 @@ def far_terrain(bins, out, port, name, wanted, seconds):
     game = Game(name, bins / f'horizon-ctl{EXE}', lab.RESOURCES)
     for folder in (game.work, game.work / 'home'):
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / 'horizon-graphics.txt').write_text(f'lodDistance:{CLIENT_LOD}\n')
+        (folder / 'oteria-graphics.txt').write_text(f'lodDistance:{CLIENT_LOD}\n')
     try:
         game.pid = game.raw('launch', '--offscreen', '--no-pause')['pid']
         game.raw('connect', f'127.0.0.1:{port}', name)

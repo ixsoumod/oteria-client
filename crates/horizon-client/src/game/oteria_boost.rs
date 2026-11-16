@@ -1,5 +1,5 @@
 //! Boost, the rocket of Oteria's menu: a performance mode. Turned on, it saves the video
-//! settings as they are (`options.txt`'s and `horizon-graphics.txt`'s, in `oteria-boost/` next
+//! settings as they are (`options.txt`'s and `oteria-graphics.txt`'s, in `oteria-boost/` next
 //! to them, so a restart while on still knows them) and puts on the Performance preset with
 //! smooth lighting off. Turned off, it puts back exactly what was saved. Nothing here reaches the
 //! server.

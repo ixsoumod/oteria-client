@@ -498,7 +498,10 @@ impl Game<'_> {
         if let Some(e) = eye {
             self.particles.camera = e;
         }
-        let (rain, _) = self.weather_levels(1.0);
+        // What the player sees and hears: the weather changer's (`view_weather`), else the
+        // world's. Rain splashes, the rain sound and the blocks' rain effects (drips from
+        // leaves...) follow it, as the sky does; gameplay keeps the world's.
+        let (rain, _) = self.view_weather(1.0);
         let marker = marker_particle_target(self.mode, self.stack_in(self.selected));
         let marker_options = |state| {
             // BlockMarker: the particle sprite, untinted.

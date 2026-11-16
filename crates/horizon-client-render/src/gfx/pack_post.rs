@@ -5005,7 +5005,7 @@ impl PackPost {
         terrain: &mut TerrainDraw<'_>,
         frame: &super::Frame,
     ) {
-        // Opt-in only (`horizon-graphics.txt` shadowCache). Off: always redraw, drop any cache.
+        // Opt-in only (`oteria-graphics.txt` shadowCache). Off: always redraw, drop any cache.
         if !frame.shadow_cache {
             self.shadow_cache = ShadowCache::default();
             self.draw_shadow_pass(device, queue, encoder, terrain);

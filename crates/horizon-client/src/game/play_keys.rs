@@ -32,8 +32,14 @@ impl Game<'_> {
         if self.sort_key_press(key)
             || horizon_client::keybinds::key_name(key)
                 .is_some_and(|name| self.hud_editor_key_press(name))
-            || horizon_client::keybinds::key_name(raw).is_some_and(|name| self.voice_key_press(name))
-            || horizon_client::keybinds::key_name(raw).is_some_and(|name| self.knife_key_press(name))
+            || horizon_client::keybinds::key_name(raw)
+                .is_some_and(|name| self.voice_key_press(name))
+            || horizon_client::keybinds::key_name(raw)
+                .is_some_and(|name| self.knife_key_press(name))
+            || horizon_client::keybinds::key_name(raw)
+                .is_some_and(|name| self.music_key_press(name))
+            || horizon_client::keybinds::key_name(raw)
+                .is_some_and(|name| self.oteria_secret_key_press(name))
         {
             return Ok(());
         }

@@ -8,7 +8,7 @@
 //! `Claim::here`, decided by the service), and three switches:
 //! Show my cosmetics (the account's, on the service), Hide
 //! other players' cosmetics and Hide other players' trails and auras (the game's
-//! `horizon-extras.txt`, `horizon_cosmetics::prefs`, also in its settings).
+//! `oteria-extras.txt`, `horizon_cosmetics::prefs`, also in its settings).
 //!
 //! It opens on the outfit kept on disk (`wardrobe::Saved`), so it shows offline and when the
 //! service fails; a change shows at once and waits on disk until the service takes it. The talking

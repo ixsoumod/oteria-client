@@ -1,0 +1,47 @@
+[package]
+name = "oteria-launcher"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Oteria Client's distribution chain: OteriaSetup.exe, the launcher and updater.exe"
+build = "build.rs"
+
+# Its own workspace, as launcher/ is: the game's workspace never builds it.
+[workspace]
+
+[lib]
+name = "oteria_dist"
+path = "src/lib.rs"
+
+[[bin]]
+name = "OteriaLauncher"
+path = "src/bin/launcher.rs"
+
+[[bin]]
+name = "updater"
+path = "src/bin/updater.rs"
+
+[[bin]]
+name = "oteria-launcher-setup"
+path = "src/bin/setup.rs"
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sha1 = "0.10"
+# Downloads from GitHub Releases (rustls: no OpenSSL to ship).
+ureq = { version = "2", default-features = false, features = ["tls"] }
+zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+strip = true
+opt-level = 3

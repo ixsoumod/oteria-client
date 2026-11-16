@@ -669,6 +669,8 @@ impl Game<'_> {
         }
         layouts.end_frame();
         self.name_tag_layouts = layouts;
+        // Oteria's music: the lyrics floating in the air.
+        patches.extend(self.music_lyrics_geometry(camera, out));
         self.map_patches.extend(patches);
     }
     /// The lines of one name tag, `o` from the camera: the text at
@@ -699,6 +701,49 @@ impl Game<'_> {
             Marks::default(),
             None,
         )
+    }
+
+    /// One line of text in the world at `o` from the camera, centred there, its rows along
+    /// `right` and down `-up` (unit vectors, each text pixel `unit` blocks): turned any way,
+    /// not to the camera as a name tag. Returns the glyph pixels the atlas still needs.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn oriented_text_quads(
+        &self,
+        o: glam::DVec3,
+        text: &Text,
+        alpha: u32,
+        unit: f32,
+        (right, up): (glam::Vec3, glam::Vec3),
+        layer: u32,
+        light: u32,
+        out: &mut Vec<Vertex>,
+    ) -> Vec<horizon_client::font::Patch> {
+        let mut batch = HudBatch::new([1, 1]);
+        batch.name_tag(
+            &self.gui.atlas,
+            text,
+            0.0,
+            alpha.min(255) << 24 | 0xFF_FFFF,
+            0,
+        );
+        let o = o.as_vec3();
+        let (r, u) = (right * unit, up * unit);
+        // Text space: x right, y down; the line's middle (4 pixels down) at `o`.
+        let at = |x: f32, y: f32| o + r * x - u * (y - 4.0);
+        for quad in batch.vertices.as_chunks::<6>().0 {
+            for v in [quad[5], quad[2], quad[1], quad[0]] {
+                out.push(Vertex {
+                    normal: [0; 4],
+                    pos: at(v.pos[0], v.pos[1]).to_array(),
+                    uv: v.uv,
+                    layer,
+                    color: v.color,
+                    light,
+                    glint_uv: [0.0, 0.0],
+                });
+            }
+        }
+        batch.patches
     }
 
     /// [`Self::name_tag_quads`], with Horizon's marks on the last line (the name): the Horizon
@@ -737,6 +782,15 @@ impl Game<'_> {
         let mut batch = HudBatch::new([1, 1]);
         let last = lines.len().saturating_sub(1);
         for (n, (text, lift)) in lines.iter().enumerate() {
+            // Tier Tagger's tag, before the name: "HT3 | Name".
+            let tagged;
+            let text = match marks.tier.filter(|_| n == last) {
+                Some(tag) => {
+                    tagged = tier_prefix(tag).append(text.clone());
+                    &tagged
+                }
+                None => text,
+            };
             let o = (o + glam::DVec3::new(0.0, *lift, 0.0)).as_vec3();
             let (r, u) = (right.as_vec3() * unit, up.as_vec3() * unit);
             // Text space: x right, y down (scale 0.025, -0.025).
@@ -835,6 +889,21 @@ impl Game<'_> {
         }
         // Glyphs rasterized on first use (Unifont's) upload with the frame.
         batch.patches
+    }
+}
+
+/// Tier Tagger's tag as text before a name: its game mode's icon (an atlas object in the text,
+/// as `{"object": "atlas"}` components draw), the tier in its colour, then a grey bar.
+pub(super) fn tier_prefix(tag: super::oteria_tiers::TierTag) -> Text {
+    let tier = Text::colored(tag.label, tag.colour).append(Text::colored(" | ", 0xAA_AAAA));
+    match tag.icon {
+        Some(sprite) => {
+            let icon = serde_json::json!({"object": "atlas", "atlas": "minecraft:gui", "sprite": sprite, "color": "white"});
+            horizon_client::component::to_text(&icon, &mut |_| Text::empty())
+                .append(Text::literal(" "))
+                .append(tier)
+        }
+        None => tier,
     }
 }
 
@@ -960,6 +1029,8 @@ pub(super) struct Marks {
     /// The voice chat's icon after the name (talking, sound off, not connected): a sprite of
     /// the GUI atlas (`oteria_voice`).
     pub voice: Option<&'static str>,
+    /// Tier Tagger's tag before the name, `(text, 0xRRGGBB)` (`oteria_tiers`).
+    pub tier: Option<super::oteria_tiers::TierTag>,
     /// How high the cosmetics drawn on their body get above the neck, in model pixels: the tag
     /// goes up over a tall one (`cosmetic_lift`).
     pub top: Option<f32>,

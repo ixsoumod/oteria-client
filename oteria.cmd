@@ -24,4 +24,6 @@ if not exist "%OTERIA_DIR%" mkdir "%OTERIA_DIR%"
 
 rem HORIZON_HOME: logs, crash reports, telemetry consent and recordings (not in %APPDATA%\horizon).
 set "HORIZON_HOME=%OTERIA_DIR%\home"
-start "" /D "%ROOT%" "%EXE%" --game-dir "%OTERIA_DIR%" %*
+rem Player name on offline-mode servers (a --name given on the command line wins).
+set "OTERIA_NAME=Ixsou_mod"
+start "" /D "%ROOT%" "%EXE%" --game-dir "%OTERIA_DIR%" --name "%OTERIA_NAME%" %*

@@ -14,12 +14,14 @@ pub enum Icon {
     Slot(usize),
     /// A sprite by its atlas name (`mob_effect/speed`), 18 pixels square.
     Sprite(String),
+    /// An item by its id (`minecraft:ender_pearl`), drawn as in the inventory.
+    Item(std::sync::Arc<str>),
 }
 impl Icon {
     pub fn size(&self) -> f32 {
         match self {
             Icon::None => 0.0,
-            Icon::Armour(_) | Icon::Slot(_) => 16.0,
+            Icon::Armour(_) | Icon::Slot(_) | Icon::Item(_) => 16.0,
             Icon::Sprite(_) => 18.0,
         }
     }
@@ -34,6 +36,8 @@ pub struct Line {
     /// The widest of its texts, in GUI pixels.
     pub text_width: f32,
     pub colour: u32,
+    /// A thin bar under the text, this full (0 to 1): a cooldown's time left.
+    pub bar: Option<f32>,
 }
 /// Padding inside a widget's box.
 pub const PAD: f32 = 2.0;
@@ -48,7 +52,12 @@ impl Line {
             text: Text::literal(text),
             detail: None,
             colour: 0xFFFF_FFFF,
+            bar: None,
         }
+    }
+    pub fn with_bar(mut self, full: f32) -> Self {
+        self.bar = Some(full.clamp(0.0, 1.0));
+        self
     }
     pub fn with_detail(mut self, detail: String, width: &dyn Fn(&str) -> f32) -> Self {
         self.text_width = self.text_width.max(width(&detail));
@@ -379,9 +388,17 @@ pub enum WidgetId {
     Speed,
     /// Oteria's minimap (`game/extras.rs`): placed and sized in the editor as the others.
     Minimap,
+    /// Oteria's music player (`game/oteria_music.rs`): the song, its cover and its controls.
+    Music,
+    /// The items cooling down.
+    Cooldowns,
+    /// The totems carried and popped.
+    Totems,
+    /// The healing splash potions carried.
+    Pots,
 }
 impl WidgetId {
-    pub const ALL: [WidgetId; 14] = [
+    pub const ALL: [WidgetId; 18] = [
         WidgetId::Armour,
         WidgetId::Effects,
         WidgetId::Held,
@@ -396,6 +413,10 @@ impl WidgetId {
         WidgetId::Reach,
         WidgetId::Speed,
         WidgetId::Minimap,
+        WidgetId::Music,
+        WidgetId::Cooldowns,
+        WidgetId::Totems,
+        WidgetId::Pots,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -413,6 +434,10 @@ impl WidgetId {
             WidgetId::Reach => "reach",
             WidgetId::Speed => "speed",
             WidgetId::Minimap => "minimap",
+            WidgetId::Music => "music",
+            WidgetId::Cooldowns => "cooldowns",
+            WidgetId::Totems => "totems",
+            WidgetId::Pots => "pots",
         }
     }
     pub fn index(self) -> usize {
@@ -441,7 +466,7 @@ impl Default for Place {
 pub const SCALES: (u8, u8) = (50, 250);
 /// Every widget's place.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Layout(pub [Place; 14]);
+pub struct Layout(pub [Place; 18]);
 impl Layout {
     pub fn get(&self, id: WidgetId) -> Place {
         self.0[id.index()]

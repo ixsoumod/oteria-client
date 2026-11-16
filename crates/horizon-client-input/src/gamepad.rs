@@ -291,6 +291,7 @@ pub const ACTIONS: &[(&str, Option<Button>)] = &[
     ("key.smoothCamera", None),
     // Horizon's emote wheel: no button is free by default; the stick's cursor picks.
     ("key.emote", None),
+    ("key.oteria.inspect", None),
     ("key.fullscreen", None),
     ("key.socialInteractions", None),
     ("key.quickActions", None),

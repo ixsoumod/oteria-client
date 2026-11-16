@@ -214,7 +214,7 @@ fn end_portal_rotation(into_end: bool, [yaw, pitch]: [f32; 2], spawn: [f32; 2]) 
     };
     [yaw, pitch.clamp(-90.0, 90.0)]
 }
-/// A waiting entity as `horizon_portal_arrivals.dat` keeps it.
+/// A waiting entity as `oteria_portal_arrivals.dat` keeps it.
 fn arrival_tag(a: &Arrival) -> Tag {
     let p = &a.plan;
     Tag::compound([
@@ -1405,9 +1405,14 @@ impl Game<'_> {
     // ---- persistence ----
 
     fn arrivals_path(&self) -> std::path::PathBuf {
-        self.world_root
-            .join("data")
-            .join("horizon_portal_arrivals.dat")
+        let data = self.world_root.join("data");
+        // Worlds saved by an earlier build keep Horizon's name: renamed on first use.
+        let old = data.join("horizon_portal_arrivals.dat");
+        let new = data.join("oteria_portal_arrivals.dat");
+        if old.is_file() && !new.exists() {
+            let _ = std::fs::rename(&old, &new);
+        }
+        new
     }
     /// The waiting entities of the open world (read once).
     pub(super) fn load_portal_arrivals(&mut self) {

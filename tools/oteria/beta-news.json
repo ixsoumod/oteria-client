@@ -1,0 +1,23 @@
+{
+  "news": [
+    {
+      "tag": "Bêta",
+      "date": "16/11/2026",
+      "title": "Bienvenue dans la bêta d'Oteria",
+      "body": "Merci de tester ! Le launcher se met à jour tout seul. Au premier lancement, il prépare le jeu à partir de ton Minecraft: Java Edition 26.3."
+    },
+    {
+      "tag": "PvP",
+      "date": "16/11/2026",
+      "title": "Les mods PvP sont intégrés",
+      "body": "Crystal et Anchor Optimizer, hitboxes en couleurs, compteurs de totems et de potions, Pop Counter : tout s'active en jeu avec Maj droit."
+    },
+    {
+      "tag": "Cosmétiques",
+      "date": "15/11/2026",
+      "title": "Couteaux, capes, ailes et auras",
+      "body": "Des couteaux animés en première personne et une page Cosmétiques avec des capes en tissu, des ailes et des auras."
+    }
+  ],
+  "servers": []
+}

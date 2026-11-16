@@ -140,6 +140,7 @@ impl Game<'_> {
     /// 30-tick emitter) and its sound, heard here only (`playLocalSound`),
     /// and the player's own rumble.
     pub(super) fn totem_event(&mut self, target: TrackingTarget, body: Body) {
+        self.oteria_totem_popped(target);
         self.particles.tracking_emitter_for(
             ParticleOptions::simple(ParticleType::TotemOfUndying),
             target,

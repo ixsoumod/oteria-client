@@ -50,7 +50,7 @@ fn sha512(bytes: &[u8]) -> String {
 fn home(name: &str) -> PathBuf {
     let home = scratch(name);
     put(&home.join("options.txt"), b"lang:fr_ch\n");
-    put(&home.join("horizon-graphics.txt"), b"preset:high\n");
+    put(&home.join("oteria-graphics.txt"), b"preset:high\n");
     put(&home.join("servers.dat"), b"\x0a\x00\x00\x00");
     put(&home.join("resourcepacks/Glass.zip"), b"glass pack");
     put(&home.join("resourcepacks/Own.zip"), b"own pack");
@@ -69,7 +69,7 @@ fn home(name: &str) -> PathBuf {
         "screenshots/a.png",
         "backups/b.zip",
         "mod-browser/checks-1/x/check.json",
-        "horizon-player.txt",
+        "oteria-player.txt",
         "session.json",
         "usercache.json",
         "resourcepacks/.DS_Store",
@@ -130,7 +130,7 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
     assert_eq!(
         names(&out),
         [
-            "horizon-graphics.txt",
+            "oteria-graphics.txt",
             "horizon-mods/coords/horizon-mod.toml",
             "options.txt",
             "resourcepacks/Glass.zip",
@@ -181,7 +181,7 @@ fn an_mrpack_lists_what_modrinth_serves_and_carries_the_rest() {
         names(&out),
         [
             "modrinth.index.json",
-            "overrides/horizon-graphics.txt",
+            "overrides/oteria-graphics.txt",
             "overrides/horizon-mods/coords/horizon-mod.toml",
             "overrides/options.txt",
             "overrides/resourcepacks/Own.zip",

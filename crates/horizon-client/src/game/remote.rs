@@ -1659,7 +1659,7 @@ impl Game<'_> {
     /// `LocalPlayer.isShiftKeyDown` (and so `isSecondaryUseActive`): the input as of the player's
     /// last tick (`input.keyPresses`, what the last ServerboundPlayerInputPacket said), not the key
     /// now: a sneak pressed in the frame of a click acts from the next tick, as on the server.
-    fn remote_shift_down(&self) -> bool {
+    pub(super) fn remote_shift_down(&self) -> bool {
         self.remote
             .as_ref()
             .is_some_and(|r| r.last_input & SHIFT_INPUT != 0)
@@ -5598,7 +5598,7 @@ impl Game<'_> {
     /// texel, built once per (skin, slim) from the decoded image the skin
     /// downloader still holds (`horizon_client::mobs::skin_layers`). `None`
     /// while the option is off or the image is not in memory yet.
-    fn skin_3d_model(
+    pub(super) fn skin_3d_model(
         &self,
         kind: &std::sync::Arc<horizon_client::mobs::MobType>,
         skin: &str,
@@ -5710,6 +5710,16 @@ impl Game<'_> {
                 self.store_skin(OFFLINE.into(), rgba.to_vec());
             }
             capes.insert(local, OFFLINE.into());
+        }
+        // Oteria's skin (`oteria_skins`), worn on this client in place of the account's.
+        if let Some((skin, is_slim)) = self.skins_override() {
+            resolved.retain(|(u, _)| *u != local);
+            resolved.push((local, skin));
+            if is_slim {
+                slim.insert(local);
+            } else {
+                slim.remove(&local);
+            }
         }
         // PlayerInfo.getSkin: the downloaded skin and its model, else the
         // profile's default skin (DefaultPlayerSkin.get), slim or wide.
@@ -8305,6 +8315,8 @@ impl Game<'_> {
             if spectator {
                 return true;
             }
+            // Oteria's Anchor Optimizer: the anchor's explosion (or charge) at once.
+            self.oteria_anchor_predict(hit.pos, hand == Hand::Main, held.as_ref(), seq);
             // Only a predicted placement (predict_place) marks a cell whose
             // resend plays a place sound: an empty hand or a non-block item
             // places nothing (BlockItem.place is where the sound comes from).
@@ -9586,6 +9598,8 @@ impl Game<'_> {
             // VehicleEntity.hurtServer, ItemFrame and ArmorStand hurtServer,
             // a painting broken or an EndCrystal hurtServer: the server decides.
             self.send(S::Attack(play::Attack { id: hit.id }));
+            // Oteria's Crystal Optimizer: a crystal the blow breaks goes at once.
+            self.oteria_crystal_attacked(hit.id);
             self.reset_attack_strength();
         } else if let Some((i, distance, _)) = self.mob_hit()
             && self.before_block(distance)

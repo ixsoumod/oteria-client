@@ -60,6 +60,7 @@ impl Game<'_> {
         self.update_minimap();
         self.voice_frame();
         self.knife_frame();
+        self.barrel_frame(elapsed.as_secs_f32());
         // For mods (`render.frame-stats`, `native_frame_rate`).
         let now = self.extras_now();
         self.extras.fps.record(now, elapsed.as_secs_f32() * 1000.0);
@@ -172,7 +173,12 @@ impl Game<'_> {
         self.native_minimap_now().or_else(|| {
             let e = &self.settings.extras;
             let m = e.pvp.minimap;
-            let scale = f32::from(e.pvp.layout.get(horizon_client::pvp_hud::WidgetId::Minimap).scale);
+            let scale = f32::from(
+                e.pvp
+                    .layout
+                    .get(horizon_client::pvp_hud::WidgetId::Minimap)
+                    .scale,
+            );
             e.minimap.then(|| NativeMinimap {
                 corner: e.minimap_corner,
                 // Its side at 100% is the map image's; the HUD editor scales it.
@@ -235,12 +241,13 @@ impl Game<'_> {
             rgba: self.extras.minimap.image.clone(),
         });
     }
-    /// A mod's zoom in effect (`native_zoom`): (factor, smooth, turning
-    /// scale); none is 1.
+    /// A mod's zoom in effect (`native_zoom`), else Oteria's (`oteria_zoom`):
+    /// (factor, smooth, turning scale); none is 1.
     fn zoom_now(&self) -> (f32, bool, f64) {
-        self.native_zoom_now().map_or((1.0, true, 1.0), |z| {
-            (z.factor, z.smooth, f64::from(z.turn))
-        })
+        match self.native_zoom_now() {
+            Some(z) => (z.factor, z.smooth, f64::from(z.turn)),
+            None => self.oteria_zoom_now().unwrap_or((1.0, true, 1.0)),
+        }
     }
     /// The field-of-view modifier target, divided by a smooth zoom.
     pub(super) fn zoomed_fov_target(&self, vanilla: f32) -> f32 {
@@ -304,9 +311,12 @@ impl Game<'_> {
         }
         self.draw_pvp_hud(batch, &mut corners);
         if let Some(rect) = map_box {
-            self.pvp.boxes.push((horizon_client::pvp_hud::WidgetId::Minimap, rect));
+            self.pvp
+                .boxes
+                .push((horizon_client::pvp_hud::WidgetId::Minimap, rect));
         }
         self.draw_voice_hud(batch);
+        self.draw_music_hud(batch, &mut corners);
         self.native_hud(batch, &mut corners);
         // The layers crates registered (`horizon_hooks::hud`): none, no canvas.
         let layers = horizon_hooks::hud::engine::all();
@@ -327,15 +337,28 @@ impl Game<'_> {
             .split('_')
             .map(|w| {
                 let mut c = w.chars();
-                c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
+                c.next()
+                    .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                    .unwrap_or_default()
             })
             .collect::<Vec<_>>()
             .join(" ");
         let name = horizon_client::lang::get_or(&key, &pretty);
         let atlas = &self.gui.atlas;
         let tw = HudBatch::text_width(atlas, &name);
-        let ty = if y + h + 12.0 <= batch.height { y + h + 2.0 } else { y - 10.0 };
-        batch.text(atlas, &name, (x + (w - tw) / 2.0).round(), ty, horizon_client::hud::rgba(255, 255, 255, 255), true);
+        let ty = if y + h + 12.0 <= batch.height {
+            y + h + 2.0
+        } else {
+            y - 10.0
+        };
+        batch.text(
+            atlas,
+            &name,
+            (x + (w - tw) / 2.0).round(),
+            ty,
+            horizon_client::hud::rgba(255, 255, 255, 255),
+            true,
+        );
     }
     /// The height the status effect icons take at the top right
     /// (`Hud.extractEffects`: beneficial at y 1, harmful at y 26).

@@ -37,6 +37,13 @@ pub const TELEMETRY: &str = "";
 /// outage doesn't break discovery (`HORIZON_STUN_SERVERS` overrides them).
 pub const STUN_SERVERS: &[&str] = &["stun.cloudflare.com:3478", "stun.l.google.com:19302"];
 
+/// MCTiers' public API: Oteria's Tier Tagger asks it for players' PvP tiers (off by default).
+pub const MCTIERS_API: &str = "https://mctiers.net/api/v2";
+
+/// LRCLIB's public API: Oteria's Music tile asks it for the synced lyrics of the song playing
+/// (off by default).
+pub const LRCLIB_API: &str = "https://lrclib.net/api";
+
 /// Play with Friends' troubleshooting page, shown to hosts nobody can reach.
 pub const FRIENDS_HELP: &str =
     "https://github.com/horizon-rust/horizon/blob/main/docs/play-with-friends.md#troubleshooting";

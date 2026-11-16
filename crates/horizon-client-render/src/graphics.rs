@@ -1,10 +1,10 @@
 //! Horizon's own graphics settings, beyond vanilla's options: kept in
-//! `horizon-graphics.txt` next to `options.txt` so that file stays exactly
+//! `oteria-graphics.txt` next to `options.txt` so that file stays exactly
 //! vanilla's. Every default reproduces vanilla's rendering; only choices the
 //! player makes here depart from it.
 use std::{fs, path::Path};
 
-pub const FILE: &str = "horizon-graphics.txt";
+pub const FILE: &str = "oteria-graphics.txt";
 /// Written beside it before a window's HDR output is switched on, naming the graphics driver it
 /// starts on ([`hdr_marker_text`]), and removed once the first HDR frame is presented. Found at
 /// the next start, it means HDR output took the game down there: HDR output is held back on
@@ -605,7 +605,7 @@ impl GpuCullingMode {
         GpuCullingMode::On,
         GpuCullingMode::Auto,
     ];
-    /// The value in `horizon-graphics.txt`: `true` and `false` as the switch wrote them.
+    /// The value in `oteria-graphics.txt`: `true` and `false` as the switch wrote them.
     pub fn key(self) -> &'static str {
         match self {
             Self::Off => "false",

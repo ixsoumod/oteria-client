@@ -1,6 +1,6 @@
 //! The settings store (docs/layers.md, "Platform registries"): a crate above the engine keeps its
 //! own settings as `key:value` lines in the game folder, next to `options.txt`, which stays
-//! exactly vanilla's. Its lines go in `horizon-extras.txt` (a setting that moved out of the
+//! exactly vanilla's. Its lines go in `oteria-extras.txt` (a setting that moved out of the
 //! engine's extras keeps its key there, so players keep their choice) or in a file of its own.
 //!
 //! The engine routes the lines when it loads and saves the player's settings, never per frame.
@@ -14,7 +14,7 @@ use crate::registry::Registry;
 /// One crate's settings. The values live in the crate (statics); the engine only hands it its
 /// lines and asks for them back.
 pub trait Store: Sync {
-    /// Its file in the game folder: `horizon-extras.txt`, or its own `horizon-<name>.txt` that the
+    /// Its file in the game folder: `oteria-extras.txt`, or its own `horizon-<name>.txt` that the
     /// engine doesn't write.
     fn file(&self) -> &'static str;
     /// Whether a line's key is this store's.
@@ -194,15 +194,15 @@ mod tests {
 
     #[test]
     fn each_store_reads_only_its_own_lines() {
-        let zoom = Switch::new("horizon-extras.txt", "zoom");
-        let pad = Switch::new("horizon-pad.txt", "rumble");
+        let zoom = Switch::new("oteria-extras.txt", "zoom");
+        let pad = Switch::new("oteria-pad.txt", "rumble");
         let stores: [&dyn Store; 2] = [&zoom, &pad];
         let mut asked = Vec::new();
         load_into(&stores, &mut |file| {
             asked.push(file.to_owned());
             match file {
                 // The engine's own lines, and a key the store's name merely starts.
-                "horizon-extras.txt" => Some("fps:true\nzoom : true\nzoomLevel:4\n".into()),
+                "oteria-extras.txt" => Some("fps:true\nzoom : true\nzoomLevel:4\n".into()),
                 _ => Some("zoom:true\nrumble:maybe\n".into()),
             }
         });
@@ -211,52 +211,52 @@ mod tests {
         assert!(!pad.on());
         assert_eq!(
             asked,
-            ["horizon-extras.txt", "horizon-pad.txt"],
+            ["oteria-extras.txt", "oteria-pad.txt"],
             "each file read once"
         );
     }
 
     #[test]
     fn a_shared_file_gets_the_stores_lines_after_the_engines() {
-        let zoom = Switch::new("horizon-extras.txt", "zoom");
-        let pad = Switch::new("horizon-pad.txt", "rumble");
+        let zoom = Switch::new("oteria-extras.txt", "zoom");
+        let pad = Switch::new("oteria-pad.txt", "rumble");
         let stores: [&dyn Store; 2] = [&zoom, &pad];
         let mut text = "fps:true\n".to_owned();
-        assert!(append_lines(&stores, "horizon-extras.txt", &mut text));
+        assert!(append_lines(&stores, "oteria-extras.txt", &mut text));
         assert_eq!(text, "fps:true\nzoom:false\n");
         zoom.set(true);
         let mut text = String::new();
-        assert!(!append_lines(&stores, "horizon-extras.txt", &mut text));
+        assert!(!append_lines(&stores, "oteria-extras.txt", &mut text));
         assert_eq!(text, "zoom:true\n");
     }
 
     #[test]
     fn own_files_appear_once_changed_and_keep_lines_nobody_owns() {
         let dir = scratch("own-files");
-        let pad = Switch::new("horizon-pad.txt", "rumble");
-        let zoom = Switch::new("horizon-extras.txt", "zoom");
+        let pad = Switch::new("oteria-pad.txt", "rumble");
+        let zoom = Switch::new("oteria-extras.txt", "zoom");
         let stores: [&dyn Store; 2] = [&pad, &zoom];
-        save_files(&stores, &dir, &["horizon-extras.txt"]);
+        save_files(&stores, &dir, &["oteria-extras.txt"]);
         assert!(
-            !dir.join("horizon-pad.txt").exists(),
+            !dir.join("oteria-pad.txt").exists(),
             "defaults make no file"
         );
         assert!(
-            !dir.join("horizon-extras.txt").exists(),
+            !dir.join("oteria-extras.txt").exists(),
             "the engine writes that one"
         );
         pad.set(true);
-        save_files(&stores, &dir, &["horizon-extras.txt"]);
+        save_files(&stores, &dir, &["oteria-extras.txt"]);
         assert_eq!(
-            fs::read_to_string(dir.join("horizon-pad.txt")).unwrap(),
+            fs::read_to_string(dir.join("oteria-pad.txt")).unwrap(),
             "rumble:true\n"
         );
         // Another build's line stays; the store's own line is rewritten, not repeated.
-        fs::write(dir.join("horizon-pad.txt"), "rumble:true\ndeadzone:0.2\n").unwrap();
+        fs::write(dir.join("oteria-pad.txt"), "rumble:true\ndeadzone:0.2\n").unwrap();
         pad.set(false);
-        save_files(&stores, &dir, &["horizon-extras.txt"]);
+        save_files(&stores, &dir, &["oteria-extras.txt"]);
         assert_eq!(
-            fs::read_to_string(dir.join("horizon-pad.txt")).unwrap(),
+            fs::read_to_string(dir.join("oteria-pad.txt")).unwrap(),
             "rumble:false\ndeadzone:0.2\n"
         );
         let _ = fs::remove_dir_all(dir);
