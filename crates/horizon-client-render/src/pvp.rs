@@ -779,13 +779,9 @@ pub struct Tweaks {
     pub clear_water: bool,
     /// Lava fog as with Fire Resistance (vanilla's clearest), without the effect.
     pub clear_lava: bool,
-    /// A small elytra under the crosshair while one is worn (Oteria's Elytra Indicator).
+    /// A small elytra under the crosshair while one is worn (Oteria's Elytra Indicator); placed
+    /// and sized in the HUD editor (`pvp_hud::WidgetId::Elytra`).
     pub elytra_indicator: bool,
-    /// The elytra icon's place, stored centred on [`ELYTRA_CENTER`] (0 either way: no offset).
-    pub elytra_offset_x: u8,
-    pub elytra_offset_y: u8,
-    /// The elytra icon's size, in percent of its usual one.
-    pub elytra_size: u8,
     /// Tints the elytra icon; `None` follows the crosshair's colour, or white without one.
     pub elytra_colour: Option<Colour>,
     /// The time of day this player sees, `None` for the world's. Never sent to the server.
@@ -804,10 +800,6 @@ impl Default for Tweaks {
             clear_water: false,
             clear_lava: false,
             elytra_indicator: false,
-            // Centred (no offset), save for the 6 px down vanilla's ElytraIndicator draws at.
-            elytra_offset_x: ELYTRA_CENTER as u8,
-            elytra_offset_y: (ELYTRA_CENTER + 6) as u8,
-            elytra_size: 100,
             elytra_colour: None,
             time: None,
             weather: None,
@@ -817,10 +809,6 @@ impl Default for Tweaks {
 pub const FIRE_LOWER: (u8, u8) = (0, 80);
 pub const SHIELD_SIZES: (u8, u8) = (50, 100);
 pub const TOTEM_SIZES: (u8, u8) = (25, 100);
-/// The elytra icon's offset sliders are stored centred on this value (GUI pixels either way).
-pub const ELYTRA_CENTER: i32 = 40;
-pub const ELYTRA_OFFSETS: (u8, u8) = (0, 80);
-pub const ELYTRA_SIZES: (u8, u8) = (50, 200);
 impl Tweaks {
     /// `colour` as the glint shaders read it: `0` for vanilla's, else `0xFF` alpha over RGB in
     /// little-endian bytes (`unpack4x8unorm`'s order).
@@ -925,14 +913,29 @@ pub struct Pvp {
     pub saturation: Saturation,
 }
 
-/// Oteria's AppleSkin, after the Fabric mod AppleSkin (MIT): what vanilla's hunger bar and
-/// tooltips don't already tell the player (`game/pvp.rs`, `game/stations.rs`). Off by default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Oteria's AppleSkin, after the Fabric mod AppleSkin (public domain, `THIRD_PARTY_NOTICES.md`):
+/// what vanilla's bars and tooltips don't tell the player (`game/appleskin.rs`). Off by default;
+/// once on, each part is on as in AppleSkin's own defaults.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Saturation {
-    /// A duplicate of the hunger icons, tinted up to the player's saturation.
-    pub overlay: bool,
+    /// The saturation's gold outlines over the hunger icons.
+    pub enabled: bool,
+    /// The food in hand: the hunger, saturation and health it would give, flashing on the bars.
+    pub held: bool,
+    /// The exhaustion bar behind the hunger icons.
+    pub exhaustion: bool,
     /// Hunger and saturation points on food items' tooltips.
     pub tooltip: bool,
+}
+impl Default for Saturation {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            held: true,
+            exhaustion: true,
+            tooltip: true,
+        }
+    }
 }
 
 /// Oteria's Crystal Optimizer, after Marlow's Crystal Optimizer (MIT): an End crystal this
@@ -1573,16 +1576,17 @@ impl Pvp {
             "clearWater" => t.clear_water = flag(value, t.clear_water),
             "clearLava" => t.clear_lava = flag(value, t.clear_lava),
             "elytraIndicator" => t.elytra_indicator = flag(value, t.elytra_indicator),
-            "elytraOffsetX" => t.elytra_offset_x = num(value, ELYTRA_OFFSETS, t.elytra_offset_x),
-            "elytraOffsetY" => t.elytra_offset_y = num(value, ELYTRA_OFFSETS, t.elytra_offset_y),
-            "elytraSize" => t.elytra_size = num(value, ELYTRA_SIZES, t.elytra_size),
             "elytraColour" => {
                 t.elytra_colour = match value {
                     "off" => None,
                     v => Colour::parse(v).or(t.elytra_colour),
                 }
             }
-            "oteriaSaturation" => self.saturation.overlay = flag(value, self.saturation.overlay),
+            "oteriaSaturation" => self.saturation.enabled = flag(value, self.saturation.enabled),
+            "oteriaSaturationHeld" => self.saturation.held = flag(value, self.saturation.held),
+            "oteriaSaturationExhaustion" => {
+                self.saturation.exhaustion = flag(value, self.saturation.exhaustion)
+            }
             "oteriaSaturationTooltip" => {
                 self.saturation.tooltip = flag(value, self.saturation.tooltip)
             }
@@ -1866,20 +1870,18 @@ impl Pvp {
             c.indicator, c.sounds, c.rules
         );
         let _ = writeln!(out, "elytraIndicator:{}", self.tweaks.elytra_indicator);
-        let _ = write!(
+        let _ = writeln!(
             out,
-            "elytraOffsetX:{}\nelytraOffsetY:{}\nelytraSize:{}\nelytraColour:{}\n",
-            self.tweaks.elytra_offset_x,
-            self.tweaks.elytra_offset_y,
-            self.tweaks.elytra_size,
+            "elytraColour:{}",
             self.tweaks
                 .elytra_colour
                 .map_or_else(|| "off".into(), Colour::save),
         );
+        let s = &self.saturation;
         let _ = write!(
             out,
-            "oteriaSaturation:{}\noteriaSaturationTooltip:{}\n",
-            self.saturation.overlay, self.saturation.tooltip,
+            "oteriaSaturation:{}\noteriaSaturationHeld:{}\noteriaSaturationExhaustion:{}\noteriaSaturationTooltip:{}\n",
+            s.enabled, s.held, s.exhaustion, s.tooltip,
         );
         let off = |c: Option<Colour>| c.map_or_else(|| "off".into(), Colour::save);
         let lines: [(&str, String); 24] = [
@@ -2162,15 +2164,14 @@ opts! {
         "Single player and the worlds you open to LAN fight by 1.8.9's rules: no attack cooldown or sweep, 1.8 weapon damage, Strength, Sharpness and critical hits. Servers you join keep their own rules.";
     ElytraIndicator, "elytra_indicator", "Elytra indicator",
         "A small elytra under the crosshair while you wear one, with how worn it is.";
-    ElytraOffsetX, "elytra_offset_x", "Horizontal offset",
-        "Moves the elytra icon left or right from its usual spot, in GUI pixels.";
-    ElytraOffsetY, "elytra_offset_y", "Vertical offset",
-        "Moves the elytra icon up or down from its usual spot, in GUI pixels.";
-    ElytraSize, "elytra_size", "Size", "The elytra icon's size, in percent of its usual one.";
     ElytraColour, "elytra_colour", "Colour",
-        "Tints the elytra icon. Auto follows your crosshair's colour, or white without a custom one.";
-    Saturation, "saturation", "Saturation overlay",
-        "A duplicate of the hunger bar, tinted up to your saturation, as AppleSkin does.";
+        "Tints the elytra icon. Off follows your crosshair's colour, or white without a custom one. Move and size it in Edit HUD.";
+    Saturation, "saturation", "AppleSkin",
+        "Your saturation as gold outlines over the hunger bar, as AppleSkin shows it.";
+    SaturationHeld, "saturation_held", "Food in hand",
+        "Holding food, the hunger, saturation and health it would give you flash on the bars.";
+    SaturationExhaustion, "saturation_exhaustion", "Exhaustion",
+        "A bar behind the hunger icons fills as you tire; once full, you lose a point of saturation, or of hunger.";
     SaturationTooltip, "saturation_tooltip", "Food values in tooltips",
         "Hunger and saturation points shown on food items' tooltips, as AppleSkin does.";
     Voice, "voice", "Voice chat",
@@ -2402,7 +2403,6 @@ impl Opt {
             Opt::FireLower => (FIRE_LOWER, "%"),
             Opt::ShieldSize => (SHIELD_SIZES, "%"),
             Opt::TotemSize => (TOTEM_SIZES, "%"),
-            Opt::ElytraSize => (ELYTRA_SIZES, "%"),
             Opt::VoiceVolume | Opt::VoiceMic => (VOICE_PERCENT, "%"),
             Opt::VoiceThreshold => (VOICE_THRESHOLD, ""),
             Opt::ZoomLevel => (ZOOM_LEVELS, "x"),
@@ -2427,7 +2427,6 @@ impl Opt {
             Opt::FireLower => p.tweaks.fire_lower,
             Opt::ShieldSize => p.tweaks.shield_size,
             Opt::TotemSize => p.tweaks.totem_size,
-            Opt::ElytraSize => p.tweaks.elytra_size,
             Opt::VoiceVolume => p.voice.volume,
             Opt::VoiceMic => p.voice.mic,
             Opt::VoiceThreshold => p.voice.threshold,
@@ -2445,9 +2444,6 @@ impl Opt {
     pub fn slider(self) -> Option<(u32, u32)> {
         match self {
             Opt::ClockTime => Some(DAY_TICKS),
-            Opt::ElytraOffsetX | Opt::ElytraOffsetY => {
-                Some((u32::from(ELYTRA_OFFSETS.0), u32::from(ELYTRA_OFFSETS.1)))
-            }
             _ => None,
         }
     }
@@ -2455,22 +2451,15 @@ impl Opt {
     pub fn slider_value(self, p: &Pvp) -> Option<u32> {
         match self {
             Opt::ClockTime => Some(u32::from(p.clock.time)),
-            Opt::ElytraOffsetX => Some(u32::from(p.tweaks.elytra_offset_x)),
-            Opt::ElytraOffsetY => Some(u32::from(p.tweaks.elytra_offset_y)),
             _ => None,
         }
     }
     /// Sets a slider option, kept between its ends.
     pub fn set_slider(self, p: &mut Pvp, v: u32) {
-        let Some((lo, hi)) = self.slider() else {
-            return;
-        };
-        let v = v.clamp(lo, hi);
-        match self {
-            Opt::ClockTime => p.clock.time = v as u16,
-            Opt::ElytraOffsetX => p.tweaks.elytra_offset_x = v as u8,
-            Opt::ElytraOffsetY => p.tweaks.elytra_offset_y = v as u8,
-            _ => {}
+        if let Some((lo, hi)) = self.slider()
+            && self == Opt::ClockTime
+        {
+            p.clock.time = v.clamp(lo, hi) as u16;
         }
     }
     /// Sets a number option, kept within its range.
@@ -2490,7 +2479,6 @@ impl Opt {
             Opt::FireLower => &mut p.tweaks.fire_lower,
             Opt::ShieldSize => &mut p.tweaks.shield_size,
             Opt::TotemSize => &mut p.tweaks.totem_size,
-            Opt::ElytraSize => &mut p.tweaks.elytra_size,
             Opt::VoiceVolume => &mut p.voice.volume,
             Opt::VoiceMic => &mut p.voice.mic,
             Opt::VoiceThreshold => &mut p.voice.threshold,
@@ -2588,15 +2576,12 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
             ClearWater,
             ClearLava,
             ElytraIndicator,
-            ElytraOffsetX,
-            ElytraOffsetY,
-            ElytraSize,
             ElytraColour,
         ]
         .map(Ok),
     );
     rows.push(Err("horizon.pvp.header.saturation"));
-    rows.extend([Saturation, SaturationTooltip].map(Ok));
+    rows.extend([Saturation, SaturationHeld, SaturationExhaustion, SaturationTooltip].map(Ok));
     rows.push(Err("horizon.pvp.header.view"));
     rows.extend([ViewTime, ViewWeather].map(Ok));
     rows.push(Err("horizon.pvp.header.chat"));
@@ -2709,8 +2694,8 @@ impl Opt {
             ChatTimestamps | ChatCompact | ChatCopy | ChatSearch => None,
             CombatFeel | CombatIndicator | CombatSounds | CombatRules => None,
             ElytraIndicator | Voice | Saturation => None,
-            ElytraOffsetX | ElytraOffsetY | ElytraSize | ElytraColour => Some(ElytraIndicator),
-            SaturationTooltip => Some(Saturation),
+            ElytraColour => Some(ElytraIndicator),
+            SaturationHeld | SaturationExhaustion | SaturationTooltip => Some(Saturation),
             MapShape | MapBiome | MapRotate | MapZoom => None,
             Sky => None,
             SkyPack => Some(Sky),
@@ -2788,7 +2773,9 @@ impl Opt {
             Opt::CombatSounds => p.combat.sounds,
             Opt::CombatRules => p.combat.rules,
             Opt::ElytraIndicator => p.tweaks.elytra_indicator,
-            Opt::Saturation => p.saturation.overlay,
+            Opt::Saturation => p.saturation.enabled,
+            Opt::SaturationHeld => p.saturation.held,
+            Opt::SaturationExhaustion => p.saturation.exhaustion,
             Opt::SaturationTooltip => p.saturation.tooltip,
             Opt::MouseRmb => p.mouse.rmb,
             Opt::MapBiome => p.minimap.biome,
@@ -2878,13 +2865,6 @@ impl Opt {
             },
             Opt::ShieldSize => format!("{}%", p.tweaks.shield_size),
             Opt::TotemSize => format!("{}%", p.tweaks.totem_size),
-            Opt::ElytraOffsetX => {
-                format!("{:+}px", i32::from(p.tweaks.elytra_offset_x) - ELYTRA_CENTER)
-            }
-            Opt::ElytraOffsetY => {
-                format!("{:+}px", i32::from(p.tweaks.elytra_offset_y) - ELYTRA_CENTER)
-            }
-            Opt::ElytraSize => format!("{}%", p.tweaks.elytra_size),
             Opt::ElytraColour => match p.tweaks.elytra_colour {
                 Some(colour) => colour.label(),
                 None => crate::lang::get_or("Off", "Off"),
@@ -3057,11 +3037,10 @@ impl Opt {
             Opt::ClearWater => t.clear_water = !t.clear_water,
             Opt::ClearLava => t.clear_lava = !t.clear_lava,
             Opt::ElytraIndicator => t.elytra_indicator = !t.elytra_indicator,
-            Opt::ElytraOffsetX => t.elytra_offset_x = step_by(t.elytra_offset_x, ELYTRA_OFFSETS, 4, back),
-            Opt::ElytraOffsetY => t.elytra_offset_y = step_by(t.elytra_offset_y, ELYTRA_OFFSETS, 4, back),
-            Opt::ElytraSize => t.elytra_size = step_by(t.elytra_size, ELYTRA_SIZES, 10, back),
             Opt::ElytraColour => t.elytra_colour = solid_or_off(t.elytra_colour),
-            Opt::Saturation => p.saturation.overlay = !p.saturation.overlay,
+            Opt::Saturation => p.saturation.enabled = !p.saturation.enabled,
+            Opt::SaturationHeld => p.saturation.held = !p.saturation.held,
+            Opt::SaturationExhaustion => p.saturation.exhaustion = !p.saturation.exhaustion,
             Opt::SaturationTooltip => p.saturation.tooltip = !p.saturation.tooltip,
             Opt::MouseRmb => p.mouse.rmb = !p.mouse.rmb,
             Opt::Sky => p.sky.enabled = !p.sky.enabled,

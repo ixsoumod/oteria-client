@@ -374,6 +374,7 @@ impl Game<'_> {
     /// Once per frame: the crystals' return, the deaths after pops, the pots thrown.
     pub(super) fn oteria_pvp_frame(&mut self) {
         self.oteria_crystal_tick();
+        self.appleskin_frame();
         let now = self.started.elapsed().as_secs_f64();
         // Pots carried: one fewer is one thrown.
         let pots: u32 = self

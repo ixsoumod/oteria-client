@@ -12,6 +12,10 @@ pub const SHIRT: &str = "gui/sprites/oteria_shirt";
 /// Elytra Indicator's icon, 16 texels square (from the ElytraIndicator mod, MIT:
 /// `THIRD_PARTY_NOTICES.md`), white and see-through: drawn in the crosshair's colour.
 pub const ELYTRA: &str = "gui/sprites/oteria_elytra";
+/// AppleSkin's icons (public domain: `THIRD_PARTY_NOTICES.md`), the top 81x45 texels of its
+/// `icons.png`: the saturation outlines (row 0), the exhaustion bar (row 18).
+pub const APPLESKIN: &str = "gui/sprites/oteria_appleskin";
+pub const APPLESKIN_SIZE: (u32, u32) = (81, 45);
 
 /// Oteria's butterfly knife (`game/oteria_knife.rs`): its 64x64 texture, read by the hand
 /// renderer, and the Cosmetics page's 192x96 picture of it
@@ -108,7 +112,11 @@ fn private_path(file: &str) -> Option<std::path::PathBuf> {
     dirs.into_iter().flatten().map(|d| d.join(file)).find(|p| p.is_file())
 }
 
-const ART: [(&str, &[u8]); 6] = [
+const ART: [(&str, &[u8]); 7] = [
+    (
+        APPLESKIN,
+        include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_appleskin.png"),
+    ),
     (
         KNIFE,
         include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_balisong.png"),
@@ -175,6 +183,10 @@ mod tests {
             // The knife's texture and picture are in colour, at their own sizes.
             if name == KNIFE || name == KNIFE_PREVIEW {
                 assert_eq!((w, h), if name == KNIFE { (64, 64) } else { (192, 96) }, "{name}");
+                continue;
+            }
+            if name == APPLESKIN {
+                assert_eq!((w, h), APPLESKIN_SIZE);
                 continue;
             }
             // The mod menu's icons are 32 texels square too, their small ones 20.

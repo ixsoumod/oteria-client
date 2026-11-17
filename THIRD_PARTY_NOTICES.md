@@ -385,6 +385,17 @@ OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+## AppleSkin
+
+`crates/horizon-client/assets/horizon/textures/gui/oteria_appleskin.png` is the top 81x45 texels of the
+`icons.png` of the Fabric mod AppleSkin 3.0.10 (`appleskin`, by squeek502), and Oteria's AppleSkin
+(`crates/horizon-client/src/game/appleskin.rs`) draws what that mod draws. AppleSkin is released into the public
+domain under the Unlicense:
+
+> This is free and unencumbered software released into the public domain. Anyone is free to copy, modify,
+> publish, use, compile, sell, or distribute this software, either in source code form or as a compiled binary,
+> for any purpose, commercial or non-commercial, and by any means.
+
 ## ElytraIndicator
 
 `crates/horizon-client/assets/horizon/textures/gui/oteria_elytra.png`, the icon Oteria's Elytra Indicator draws

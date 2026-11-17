@@ -2772,13 +2772,14 @@ impl Game<'_> {
             return;
         }
         lines.splice(1..1, after_name);
-        // Oteria's AppleSkin: the hunger and saturation a food item restores, after its own
-        // tooltip lines (`ConsumableComponent`'s nutrition and saturation modifier).
-        if self.settings.extras.pvp.saturation.tooltip
-            && let Some((nutrition, modifier)) =
+        // Oteria's AppleSkin: the hunger and saturation a food item restores (`FoodProperties`),
+        // after its own tooltip lines.
+        let apple = self.settings.extras.pvp.saturation;
+        if apple.enabled
+            && apple.tooltip
+            && let Some((nutrition, saturation)) =
                 self.items().get(&stack.item).and_then(|info| info.food)
         {
-            let saturation = nutrition as f32 * modifier * 2.0;
             let text = horizon_client::lang::get_or(
                 "oteria.appleskin.tooltip",
                 "+%s Hunger, +%s Saturation",

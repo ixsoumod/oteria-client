@@ -191,6 +191,7 @@ mod oteria_voice_ui;
 mod oteria_wear;
 mod oteria_zoom;
 mod oteria_pvp;
+mod appleskin;
 #[cfg(test)]
 mod setblock_order_tests;
 // Without Play with Friends: nothing shared, no Friends button (game/friends_off.rs).
@@ -6131,15 +6132,12 @@ impl Game<'_> {
                 // The rows draw in one pass here, so a mod's `player_health`
                 // layer stands for the armor, food and air rows too.
                 self.gui_layer("minecraft:player_health", &mut batch, |g, batch| {
+                    // AppleSkin's exhaustion goes behind the hunger icons, the rest over them.
+                    if vehicle_hearts == 0 {
+                        g.draw_appleskin_under(batch, wi, hi);
+                    }
                     hud_layout::paint(batch, &g.gui.atlas, &draws);
-                    g.draw_saturation_overlay(
-                        batch,
-                        wi,
-                        hi,
-                        inputs.food,
-                        inputs.saturation,
-                        vehicle_hearts,
-                    );
+                    g.draw_appleskin_over(batch, &draws, inputs.max_health);
                 });
                 // Hud.playAirBubblePoppedSound: Player.playSound (PLAYERS), heard
                 // by this client only.

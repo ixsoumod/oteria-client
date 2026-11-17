@@ -137,8 +137,11 @@ pub(super) static TILES: [Tile; 46] = [
     tile!("oteria.mod.cooldowns", "Cooldowns", icon::CLOCK, Hud, hud!(HudCooldownsCorner), e => e.pvp.hud.cooldowns),
     tile!("oteria.mod.totems", "Totem Counter", icon::CROWN, Hud, hud!(HudTotemsCorner), e => e.pvp.hud.totems),
     tile!("oteria.mod.pots", "Pot Counter", icon::FLASK, Hud, hud!(HudPotsCorner), e => e.pvp.hud.pots),
-    tile!("oteria.mod.saturation", "Saturation", icon::FLASK, Hud,
-        &[Item::Pvp(Opt::SaturationTooltip)], e => e.pvp.saturation.overlay),
+    tile!("oteria.mod.saturation", "AppleSkin", icon::FLASK, Hud, &[
+        Item::Pvp(Opt::SaturationHeld),
+        Item::Pvp(Opt::SaturationExhaustion),
+        Item::Pvp(Opt::SaturationTooltip),
+    ], e => e.pvp.saturation.enabled),
     tile!("oteria.mod.crystal", "Crystal Optimizer", icon::SPARKLES, Pvp,
         &[Item::Pvp(Opt::CrystalKeep)], e => e.pvp.crystal.enabled),
     tile!("oteria.mod.anchor", "Anchor Optimizer", icon::BULB, Pvp,
@@ -241,12 +244,8 @@ pub(super) static TILES: [Tile; 46] = [
         Item::Pvp(Opt::BarrelSwitch),
         Item::Pvp(Opt::BarrelSensitivity),
     ], e => e.pvp.barrel.enabled),
-    tile!("oteria.mod.elytra", "Elytra Indicator", icon::FEATHER, Pvp, &[
-        Item::Pvp(Opt::ElytraOffsetX),
-        Item::Pvp(Opt::ElytraOffsetY),
-        Item::Pvp(Opt::ElytraSize),
-        Item::Pvp(Opt::ElytraColour),
-    ], e => e.pvp.tweaks.elytra_indicator),
+    tile!("oteria.mod.elytra", "Elytra Indicator", icon::FEATHER, Pvp,
+        &[Item::Pvp(Opt::ElytraColour)], e => e.pvp.tweaks.elytra_indicator),
     tile!("oteria.mod.voice", "Voice Chat", icon::MICROPHONE, Utility,
         &[
             Item::Pvp(Opt::VoiceMenuKey),

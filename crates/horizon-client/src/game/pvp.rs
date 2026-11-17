@@ -50,6 +50,9 @@ pub(super) struct PvpState {
     pub(super) boxes: Vec<(pvp_hud::WidgetId, [f32; 4])>,
     /// The HUD editor, while it is open.
     pub(super) editor: Option<super::hud_editor::HudEditor>,
+    /// The Elytra Indicator's box this frame, for the HUD editor.
+    pub(super) elytra_box: Option<[f32; 4]>,
+    pub(super) appleskin: super::appleskin::AppleSkin,
     /// The open chat's box holds a chat search's query (Ctrl+F).
     pub(super) chat_search: bool,
     /// What the chat box held when the search borrowed it.
@@ -87,18 +90,16 @@ impl Game<'_> {
     pub(super) fn custom_crosshair(&self) -> bool {
         self.settings.extras.pvp.crosshair.custom
     }
-    /// The custom crosshair, centred where vanilla's 15x15 sprite is (`Hud.extractCrosshair`):
-    /// its outline in black, then the shape, inverting what is under it when its colour is
-    /// `Inverted`. The runs are cached, so a frame only adds their quads.
-    /// Elytra Indicator: its icon just under the crosshair while an elytra is worn, in the
-    /// custom crosshair's colour (else white), as the ElytraIndicator mod draws it.
-    pub(super) fn draw_elytra_indicator(&self, batch: &mut HudBatch, w: i32, h: i32) {
+    /// Elytra Indicator: its icon while an elytra is worn, as the ElytraIndicator mod draws it,
+    /// in its own colour, else the custom crosshair's, else white. It sits just under the
+    /// crosshair until the player moves it in the HUD editor, which also sizes it
+    /// (`WidgetId::Elytra`); the editor shows it without an elytra too, so it can be moved.
+    pub(super) fn draw_elytra_indicator(&mut self, batch: &mut HudBatch, w: i32, h: i32) {
         let pvp = &self.settings.extras.pvp;
-        if !pvp.tweaks.elytra_indicator
-            || self.armor[1]
-                .as_ref()
-                .is_none_or(|s| &*s.item != "minecraft:elytra")
-        {
+        let worn = self.armor[1]
+            .as_ref()
+            .is_some_and(|s| &*s.item == "minecraft:elytra");
+        if !pvp.tweaks.elytra_indicator || !worn && !self.hud_editing() {
             return;
         }
         let Some(r) = self
@@ -121,52 +122,19 @@ impl Game<'_> {
             }
             None => rgba(255, 255, 255, 255),
         };
-        let size = 16.0 * f32::from(pvp.tweaks.elytra_size) / 100.0;
-        let dx = (i32::from(pvp.tweaks.elytra_offset_x) - horizon_client::pvp::ELYTRA_CENTER) as f32;
-        let dy = (i32::from(pvp.tweaks.elytra_offset_y) - horizon_client::pvp::ELYTRA_CENTER) as f32;
-        batch.rect_uv(
-            w as f32 / 2.0 - size / 2.0 + dx,
-            h as f32 / 2.0 + dy,
-            size,
-            size,
-            r,
-            colour,
-        );
-    }
-    /// AppleSkin's saturation overlay (after the Fabric mod, MIT): a duplicate of the hunger
-    /// bar's icons, tinted gold up to as many as the player's saturation covers, so it is
-    /// visible at a glance over vanilla's own bar (`Hud.extractFood`).
-    pub(super) fn draw_saturation_overlay(
-        &self,
-        batch: &mut HudBatch,
-        w: i32,
-        h: i32,
-        food: i32,
-        saturation: f32,
-        vehicle_hearts: i32,
-    ) {
-        if !self.settings.extras.pvp.saturation.overlay || vehicle_hearts != 0 {
-            return;
-        }
-        let Some(r) = self
-            .gui
-            .atlas
-            .sprites
-            .get("gui/sprites/hud/food_full")
-            .copied()
-        else {
-            return;
+        let place = pvp.layout.get(pvp_hud::WidgetId::Elytra);
+        let size = 16.0 * f32::from(place.scale) / 100.0;
+        let (x, y) = match place.at {
+            Some(at) => pvp_hud::from_fractions(at, (size, size), (w as f32, h as f32)),
+            // 6 px under the crosshair's middle, as the mod.
+            None => ((w as f32 / 2.0 - size / 2.0).floor(), (h / 2 + 6) as f32),
         };
-        let (x_right, y) = (w / 2 + 91, h - 39);
-        let points = (saturation.round() as i32).clamp(0, food.clamp(0, 20));
-        for n in 0..10 {
-            if n * 2 + 1 > points {
-                continue;
-            }
-            let x = (x_right - n * 8 - 9) as f32;
-            batch.rect_uv(x, y as f32, 9.0, 9.0, r, rgba(255, 221, 64, 130));
-        }
+        batch.rect_uv(x, y, size, size, r, colour);
+        self.pvp.elytra_box = Some([x, y, size, size]);
     }
+    /// The custom crosshair, centred where vanilla's 15x15 sprite is (`Hud.extractCrosshair`):
+    /// its outline in black, then the shape, inverting what is under it when its colour is
+    /// `Inverted`. The runs are cached, so a frame only adds their quads.
     pub(super) fn draw_custom_crosshair(&mut self, batch: &mut HudBatch, w: i32, h: i32) {
         let mut c = self.settings.extras.pvp.crosshair;
         if let Some(hover) = c.hover
@@ -384,6 +352,12 @@ impl Game<'_> {
         if self.player.is_none() || !hud.any() {
             // The editor frames only what was drawn.
             self.pvp.boxes.clear();
+            self.pvp.boxes.extend(
+                self.pvp
+                    .elytra_box
+                    .take()
+                    .map(|r| (pvp_hud::WidgetId::Elytra, r)),
+            );
             return;
         }
         // What each widget shows, read before its cache is borrowed.
@@ -794,6 +768,7 @@ impl Game<'_> {
                 boxes.push((W::Keys, rect));
             }
         }
+        boxes.extend(self.pvp.elytra_box.take().map(|r| (W::Elytra, r)));
         self.pvp.boxes = boxes;
     }
     /// Where a widget of `size` goes at its `place`'s scale: where the player put it, else in

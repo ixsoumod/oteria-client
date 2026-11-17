@@ -396,9 +396,11 @@ pub enum WidgetId {
     Totems,
     /// The healing splash potions carried.
     Pots,
+    /// Oteria's Elytra Indicator: under the crosshair until the player moves it.
+    Elytra,
 }
 impl WidgetId {
-    pub const ALL: [WidgetId; 18] = [
+    pub const ALL: [WidgetId; 19] = [
         WidgetId::Armour,
         WidgetId::Effects,
         WidgetId::Held,
@@ -417,6 +419,7 @@ impl WidgetId {
         WidgetId::Cooldowns,
         WidgetId::Totems,
         WidgetId::Pots,
+        WidgetId::Elytra,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -438,6 +441,7 @@ impl WidgetId {
             WidgetId::Cooldowns => "cooldowns",
             WidgetId::Totems => "totems",
             WidgetId::Pots => "pots",
+            WidgetId::Elytra => "elytra",
         }
     }
     pub fn index(self) -> usize {
@@ -466,7 +470,7 @@ impl Default for Place {
 pub const SCALES: (u8, u8) = (50, 250);
 /// Every widget's place.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Layout(pub [Place; 18]);
+pub struct Layout(pub [Place; 19]);
 impl Layout {
     pub fn get(&self, id: WidgetId) -> Place {
         self.0[id.index()]
