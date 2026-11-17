@@ -1,7 +1,7 @@
 //! LevelLoadingScreen: "Loading terrain..." over the chunk status map and
 //! the server's load progress while a world opens or a portal is crossed.
 use crate::{
-    hud::{HudAtlas, HudBatch},
+    hud::{HudAtlas, HudBatch, rgba},
     text::Text,
 };
 
@@ -412,12 +412,15 @@ fn fill_corners(batch: &mut HudBatch, atlas: &HudAtlas, [x0, y0, x1, y1]: [i32; 
     batch.fill(atlas, left as f32, top as f32, w, h, color);
 }
 
-/// `LoadingOverlay.extractRenderState`, with Oteria's own branding: fills the
-/// frame with `BRAND_BACKGROUND` (red, or black when `darkMojangStudiosBackground`
-/// is set), draws Oteria's logo (square, `oteria_art::LOGO`) in place of
-/// Mojang's wordmark, and the progress bar at 83.25% of the height
-/// (`extractProgressBar`, unfaded, exactly as wide as vanilla's logo slot),
-/// with the stage's line above it.
+/// `LoadingOverlay.extractRenderState`, with Oteria's own branding: the
+/// translucent in-world menu background (`ui::menu_background`) in place of
+/// Mojang's opaque red/black, blurring whatever is behind it when the
+/// renderer's menu blur applies (`Game::menu_blur`) instead of hiding it,
+/// darkened a little further when `darkMojangStudiosBackground` is set,
+/// Oteria's logo (square, `oteria_art::LOGO`) in place of Mojang's wordmark,
+/// and the progress bar at 83.25% of the height (`extractProgressBar`,
+/// unfaded, exactly as wide as vanilla's logo slot), with the stage's line
+/// above it.
 pub fn draw_loading_overlay(
     batch: &mut HudBatch,
     atlas: &HudAtlas,
@@ -426,7 +429,10 @@ pub fn draw_loading_overlay(
     dark: bool,
 ) {
     let (w, h) = (batch.width, batch.height);
-    batch.fill(atlas, 0.0, 0.0, w, h, brand_background(dark));
+    crate::ui::menu_background(batch, atlas, 0.0, 0.0, w, h, true);
+    if dark {
+        batch.fill(atlas, 0.0, 0.0, w, h, rgba(0, 0, 0, 60));
+    }
     let (_, y, half_width, logo_height) = logo_layout(w, h);
     if let Some(r) = atlas.sprites.get(crate::oteria_art::LOGO).copied() {
         let x = (w as i32) / 2 - logo_height / 2;

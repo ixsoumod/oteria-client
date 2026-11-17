@@ -97,9 +97,12 @@ impl Game<'_> {
             .collect()
     }
     /// `Screen.extractBlurredBackground` over the panorama or the world and
-    /// HUD, when `menuBackgroundBlurriness` is at least 1.
+    /// HUD, when `menuBackgroundBlurriness` is at least 1. Oteria also blurs
+    /// behind its own pack-reload overlay (`draw_loading_overlay`), which
+    /// vanilla has no reason to: its loading screen is always opaque.
     pub(super) fn menu_blur(&self) -> Option<f32> {
         let blurred = self.remote_loading()
+            || self.pack_reload.is_some()
             || self.title.as_ref().is_some_and(|t| {
                 matches!(self.screen, Screen::Options | Screen::Win)
                     || !matches!(t.mode, horizon_client::title::Mode::Main)
