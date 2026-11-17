@@ -15,6 +15,7 @@
 
 pub mod install;
 pub mod manifest;
+pub mod microsoft;
 pub mod mojang;
 pub mod paths;
 pub mod player;

@@ -124,6 +124,7 @@ struct Report {
     xbox: bool,
     minecraft: Option<bool>,
     owns: Option<bool>,
+    launcher_code: Option<bool>,
 }
 
 fn main() {
@@ -214,6 +215,7 @@ fn run(client_id: &str, check_only: bool) -> Report {
     say!("    En attente de ta connexion (un point toutes les {interval} s ; Ctrl+C pour annuler)...");
     let started = Instant::now();
     let mut wait = interval;
+    let ms_refresh: String;
     let ms_access = loop {
         std::thread::sleep(Duration::from_secs(wait));
         print!(".");
@@ -237,7 +239,10 @@ fn run(client_id: &str, check_only: bool) -> Report {
             Body::Form(form),
         ) {
             Ok((200, v)) => match field(&v, "access_token") {
-                Some(t) => break t,
+                Some(t) => {
+                    ms_refresh = field(&v, "refresh_token").unwrap_or_default();
+                    break t;
+                }
                 None => {
                     ko("Microsoft n'a pas donné de jeton");
                     return rep;
@@ -418,7 +423,79 @@ fn run(client_id: &str, check_only: bool) -> Report {
         Ok((s, _)) => ko(&format!("profil illisible (HTTP {s})")),
         Err(e) => ko(&e),
     }
+
+    step(
+        6,
+        "Le code du launcher (le même que celui d'Oteria Launcher)",
+    );
+    rep.launcher_code = Some(launcher_code(client_id, &ms_access, &ms_refresh));
     rep
+}
+
+/// Runs the launcher's own sign-in code (`oteria_dist::microsoft`) on this sign-in: the refresh
+/// grant, the session for the game, and the Credential Manager. Nothing of the player's is kept:
+/// the Credential Manager test uses an entry of its own.
+fn launcher_code(client_id: &str, access: &str, refresh: &str) -> bool {
+    use oteria_dist::microsoft::{self, MsTokens};
+    let mut all_ok = true;
+    // 1. The session, as Add account makes it (the game must be owned).
+    let tokens = MsTokens {
+        access: access.to_owned(),
+        refresh: refresh.to_owned(),
+    };
+    match microsoft::sign_in_with(tokens, true) {
+        Ok(signed) => {
+            let json: Value =
+                serde_json::from_str(&signed.session.game_json()).unwrap_or(Value::Null);
+            let complete = ["name", "uuid", "access_token"]
+                .iter()
+                .all(|k| json[*k].is_string())
+                && json["user_type"] == "msa";
+            if complete {
+                ok(&format!(
+                    "session pour le jeu : {} (le JSON a les champs attendus)",
+                    signed.session.name
+                ));
+            } else {
+                ko("le JSON de la session n'a pas les champs attendus");
+                all_ok = false;
+            }
+        }
+        Err(e) => {
+            ko(&format!("session : {e}"));
+            all_ok = false;
+        }
+    }
+    // 2. The refresh grant, as every later start makes it.
+    match microsoft::refresh(client_id, refresh).and_then(|t| microsoft::sign_in_with(t, false)) {
+        Ok(signed) => ok(&format!(
+            "renouvellement par jeton de rafraîchissement : {}",
+            signed.session.name
+        )),
+        Err(e) => {
+            ko(&format!("renouvellement : {e}"));
+            all_ok = false;
+        }
+    }
+    // 3. The Credential Manager, with an entry of its own.
+    let key = "oteria-msa-test";
+    match microsoft::store_refresh(key, "essai") {
+        Ok(()) => {
+            let back = microsoft::load_refresh(key);
+            microsoft::forget(key);
+            if back.as_deref() == Some("essai") && microsoft::load_refresh(key).is_none() {
+                ok("Gestionnaire d'identifiants de Windows : écrit, relu, effacé");
+            } else {
+                ko("Gestionnaire d'identifiants : la valeur relue n'est pas la bonne");
+                all_ok = false;
+            }
+        }
+        Err(e) => {
+            ko(&e);
+            all_ok = false;
+        }
+    }
+    all_ok
 }
 
 fn xsts_error(code: u64) -> String {
@@ -449,6 +526,9 @@ fn summary(r: &Report, check_only: bool) {
     }
     if let Some(o) = r.owns {
         say!("Le compte possède Minecraft       : {}", yes(o));
+    }
+    if let Some(l) = r.launcher_code {
+        say!("Code du launcher (session, trousseau) : {}", yes(l));
     }
 }
 

@@ -17,12 +17,16 @@ use eframe::egui::{
     self, epaint::RectShape, text::LayoutJob, Align2, Color32, CornerRadius, Margin, Pos2, Rect,
     Sense, Stroke, StrokeKind, TextFormat, TextureHandle, Vec2,
 };
+use oteria_dist::microsoft::{self, DeviceCode, Poll, Session, SignedIn};
+use oteria_dist::state::AccountRef;
 use oteria_dist::ui::{self, c, Icons};
 use oteria_dist::{install, paths, player, CheckReport, NewsItem, Progress, State};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const SIDE_W: f32 = 100.0;
@@ -111,12 +115,52 @@ impl Download {
     }
 }
 
+/// Which kind of account the "add an account" page is about.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Microsoft,
+    Local,
+}
+
+/// Where a Microsoft sign-in is.
+enum MsFlow {
+    Idle,
+    /// Asking Microsoft for a code.
+    Starting,
+    /// The player has to type `code` at `uri`.
+    Waiting {
+        code: String,
+        uri: String,
+        expires_at: u64,
+    },
+    /// Signed in: the account's name.
+    Done(String),
+    Failed(String),
+}
+
+/// What the sign-in thread reports.
+enum MsEvent {
+    Code(DeviceCode),
+    Done(Result<SignedIn, String>),
+}
+
 struct Launcher {
     home: PathBuf,
     game_dir: PathBuf,
     state: State,
-    /// The chosen local account's name.
+    /// The chosen account's name.
     name: String,
+    /// The chosen account.
+    current: Option<AccountRef>,
+    /// A Minecraft session for the chosen Microsoft account, renewed in the background.
+    session: Option<Session>,
+    session_rx: Option<Receiver<Result<Session, String>>>,
+    /// Play was pressed and waits for the session: the server to join, if any.
+    pending_launch: Option<Option<String>>,
+    add_kind: Kind,
+    ms_flow: MsFlow,
+    ms_rx: Option<Receiver<MsEvent>>,
+    ms_cancel: Arc<AtomicBool>,
     skin: Option<ui::Skin>,
     logo: TextureHandle,
     icons: Icons,
@@ -164,7 +208,10 @@ impl Launcher {
             state.account = state.accounts.first().cloned();
             let _ = state.save(&home);
         }
-        let name = state.current_account().unwrap_or("Player").to_owned();
+        let current = state.current();
+        let name = current
+            .as_ref()
+            .map_or("Player".to_owned(), |a| a.name.clone());
         let skin = player::worn_skin(&game_dir).and_then(|p| ui::Skin::load(&p));
         let logo = ui::svg_texture(ctx, "logo", ui::LOGO_SVG, 192, false)
             .or_else(|| ui::texture_from_png(ctx, "logo", ui::LOGO_PNG))
@@ -195,6 +242,18 @@ impl Launcher {
             game_dir,
             state,
             name,
+            current,
+            session: None,
+            session_rx: None,
+            pending_launch: None,
+            add_kind: if microsoft::client_id().is_some() {
+                Kind::Microsoft
+            } else {
+                Kind::Local
+            },
+            ms_flow: MsFlow::Idle,
+            ms_rx: None,
+            ms_cancel: Arc::new(AtomicBool::new(false)),
             skin,
             logo,
             page,
@@ -233,6 +292,11 @@ impl Launcher {
         }
         me.log(&format!("démarrage v{}", oteria_dist::LAUNCHER_VERSION));
         me.start_check();
+        me.prefetch_session();
+        if std::env::var_os("OTERIA_LAUNCHER_MS").is_some() {
+            me.add_kind = Kind::Microsoft;
+            me.start_sign_in();
+        }
         me
     }
 
@@ -253,8 +317,46 @@ impl Launcher {
         let mut state = State::load(&self.home);
         change(&mut state);
         let _ = state.save(&self.home);
-        self.name = state.current_account().unwrap_or("Player").to_owned();
+        let before = self.current.as_ref().map(|a| a.id.clone());
+        self.current = state.current();
+        self.name = self
+            .current
+            .as_ref()
+            .map_or("Player".to_owned(), |a| a.name.clone());
         self.state = state;
+        if self.current.as_ref().map(|a| a.id.clone()) != before {
+            self.session = None;
+            self.prefetch_session();
+        }
+    }
+
+    /// The chosen Microsoft account's UUID.
+    fn ms_uuid(&self) -> Option<String> {
+        let a = self.current.as_ref()?;
+        a.microsoft
+            .then(|| a.id.trim_start_matches("ms:").to_owned())
+    }
+
+    /// Gets a Minecraft session for the chosen Microsoft account in the background, so Play
+    /// finds it ready.
+    fn prefetch_session(&mut self) {
+        let Some(uuid) = self.ms_uuid() else { return };
+        if self.session_rx.is_some()
+            || self
+                .session
+                .as_ref()
+                .is_some_and(|s| s.uuid == uuid && s.fresh())
+        {
+            return;
+        }
+        let Some(client_id) = microsoft::client_id() else {
+            return;
+        };
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(microsoft::session_for(&client_id, &uuid));
+        });
+        self.session_rx = Some(rx);
     }
 
     /// `updater.exe`: beside this launcher, else in the install folder.
@@ -433,8 +535,42 @@ impl Launcher {
         }
     }
 
-    /// Starts the installed client right away, with no console window.
+    /// Play: starts the game right away for a local account; for a Microsoft one, with its
+    /// session, which is usually already there.
     fn launch(&mut self, server: Option<&str>) {
+        if self.state.client_dir(&self.home).is_none() {
+            self.phase = Phase::NeedDownload { update: false };
+            return;
+        }
+        let Some(uuid) = self.ms_uuid() else {
+            self.start_game(server, None);
+            return;
+        };
+        if let Some(session) = self.session.clone().filter(|s| s.uuid == uuid && s.fresh()) {
+            self.start_game(server, Some(session));
+            return;
+        }
+        // The session is not there yet (or too old): wait for it, then start.
+        self.pending_launch = Some(server.map(str::to_owned));
+        self.phase = Phase::Launching {
+            since: Instant::now(),
+        };
+        self.notice = Some(("Connexion à Microsoft…".into(), Color32::WHITE));
+        self.prefetch_session();
+        if self.session_rx.is_none() {
+            // No way to ask (no client ID): say so.
+            self.pending_launch = None;
+            self.phase = Phase::Ready;
+            self.notice = Some((
+                "Cette version du launcher n'a pas de connexion Microsoft.".into(),
+                c::BAD,
+            ));
+        }
+    }
+
+    /// Starts the installed client, with no console window; with a Microsoft session it goes
+    /// through the game's standard input, never the command line.
+    fn start_game(&mut self, server: Option<&str>, session: Option<Session>) {
         let clicked = Instant::now();
         let Some(dir) = self.state.client_dir(&self.home) else {
             self.phase = Phase::NeedDownload { update: false };
@@ -452,14 +588,16 @@ impl Launcher {
         cmd.current_dir(&dir)
             .arg("--game-dir")
             .arg(&self.game_dir)
-            .arg("--name")
-            .arg(&self.name)
             .arg("--resources")
             .arg(self.state.resources_dir(&self.home))
             .env("HORIZON_HOME", self.game_dir.join("home"))
-            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        if session.is_some() {
+            cmd.arg("--session-stdin").stdin(Stdio::piped());
+        } else {
+            cmd.arg("--name").arg(&self.name).stdin(Stdio::null());
+        }
         if let Some(s) = server {
             cmd.arg("--server").arg(s);
         }
@@ -467,7 +605,11 @@ impl Launcher {
             cmd.args(extra.split_whitespace());
         }
         match cmd.spawn() {
-            Ok(child) => {
+            Ok(mut child) => {
+                if let (Some(s), Some(mut stdin)) = (&session, child.stdin.take()) {
+                    use std::io::Write as _;
+                    let _ = stdin.write_all(s.game_json().as_bytes());
+                }
                 self.log(&format!(
                     "jeu lancé (pid {}) en {} ms après le clic",
                     child.id(),
@@ -488,6 +630,9 @@ impl Launcher {
 
     /// Stops the game this launcher started.
     fn stop_game(&mut self) {
+        if self.pending_launch.take().is_some() {
+            self.notice = Some(("Lancement annulé.".into(), Color32::WHITE));
+        }
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -515,6 +660,8 @@ impl Launcher {
             }
         }
         self.poll_download();
+        self.poll_session();
+        self.poll_sign_in();
         match &self.phase {
             Phase::SelfUpdating {
                 since,
@@ -541,7 +688,9 @@ impl Launcher {
                     self.phase = Phase::Ready;
                 }
             }
-            Phase::Launching { since } if since.elapsed() > Duration::from_millis(2500) => {
+            Phase::Launching { since }
+                if self.child.is_some() && since.elapsed() > Duration::from_millis(2500) =>
+            {
                 self.phase = Phase::Running;
                 if self.state.close_on_launch {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -574,6 +723,120 @@ impl Launcher {
         }
     }
 
+    /// The session fetched in the background arrived: keep it, and start the game if Play waits.
+    fn poll_session(&mut self) {
+        let Some(rx) = &self.session_rx else { return };
+        let Ok(result) = rx.try_recv() else { return };
+        self.session_rx = None;
+        match result {
+            Ok(session) => {
+                self.log(&format!("session Microsoft prête pour {}", session.name));
+                self.session = Some(session.clone());
+                if let Some(server) = self.pending_launch.take() {
+                    self.start_game(server.as_deref(), Some(session));
+                }
+            }
+            Err(e) => {
+                self.log(&format!("session Microsoft refusée : {e}"));
+                if self.pending_launch.take().is_some() {
+                    self.phase = Phase::Ready;
+                }
+                self.notice = Some((e, c::BAD));
+            }
+        }
+    }
+
+    /// Starts a Microsoft sign-in: a code to type at microsoft.com/link, then the account.
+    fn start_sign_in(&mut self) {
+        let Some(client_id) = microsoft::client_id() else {
+            self.ms_flow =
+                MsFlow::Failed("Cette version du launcher n'a pas de connexion Microsoft.".into());
+            return;
+        };
+        self.ms_cancel.store(true, Ordering::Relaxed);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.ms_cancel = cancel.clone();
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<SignedIn, String> {
+                let code = microsoft::device_code(&client_id)?;
+                let _ = tx.send(MsEvent::Code(code.clone()));
+                let mut wait = code.interval;
+                let tokens = loop {
+                    let until = Instant::now() + Duration::from_secs(wait);
+                    while Instant::now() < until {
+                        if cancel.load(Ordering::Relaxed) {
+                            return Err("Connexion annulée.".into());
+                        }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    if microsoft::now() > code.expires_at {
+                        return Err("Le code a expiré. Recommence.".into());
+                    }
+                    match microsoft::poll(&client_id, &code)? {
+                        Poll::Pending => {}
+                        Poll::SlowDown => wait += 5,
+                        Poll::Done(tokens) => break tokens,
+                    }
+                };
+                // An account is added only if it owns the game.
+                let signed = microsoft::sign_in_with(tokens, true)?;
+                microsoft::store_refresh(&signed.session.uuid, &signed.refresh)?;
+                Ok(signed)
+            })();
+            if !cancel.load(Ordering::Relaxed) {
+                let _ = tx.send(MsEvent::Done(result));
+            }
+        });
+        self.ms_rx = Some(rx);
+        self.ms_flow = MsFlow::Starting;
+    }
+
+    fn cancel_sign_in(&mut self) {
+        self.ms_cancel.store(true, Ordering::Relaxed);
+        self.ms_rx = None;
+        self.ms_flow = MsFlow::Idle;
+    }
+
+    fn poll_sign_in(&mut self) {
+        let Some(rx) = &self.ms_rx else { return };
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                MsEvent::Code(code) => {
+                    // The page opens by itself: the player asked for this sign-in.
+                    if std::env::var_os("OTERIA_NO_BROWSER").is_none() {
+                        let _ = install::quiet_command("cmd")
+                            .args(["/c", "start", "", &code.verification_uri])
+                            .spawn();
+                    }
+                    self.ms_flow = MsFlow::Waiting {
+                        code: code.user_code.clone(),
+                        uri: code.verification_uri.clone(),
+                        expires_at: code.expires_at,
+                    };
+                }
+                MsEvent::Done(Ok(signed)) => {
+                    self.log(&format!(
+                        "compte Microsoft ajouté : {}",
+                        signed.session.name
+                    ));
+                    let (uuid, name) = (signed.session.uuid.clone(), signed.session.name.clone());
+                    self.session = Some(signed.session);
+                    self.update_state(|s| s.add_ms_account(&uuid, &name));
+                    self.ms_flow = MsFlow::Done(name);
+                    self.ms_rx = None;
+                    return;
+                }
+                MsEvent::Done(Err(e)) => {
+                    self.log(&format!("connexion Microsoft échouée : {e}"));
+                    self.ms_flow = MsFlow::Failed(e);
+                    self.ms_rx = None;
+                    return;
+                }
+            }
+        }
+    }
+
     /// The updater that replaces this launcher runs from a copy: it may replace itself too.
     fn updater_for_self_update(&self) -> PathBuf {
         let src = self.updater();
@@ -592,6 +855,7 @@ impl Launcher {
                 .as_ref()
                 .is_some_and(|d| d.stage == "download" && d.fraction > 0.35),
             "self-update" => matches!(self.phase, Phase::SelfUpdating { .. }),
+            "ms-code" => matches!(self.ms_flow, MsFlow::Waiting { .. }),
             "running" => matches!(self.phase, Phase::Running),
             _ => {
                 !matches!(self.phase, Phase::Checking | Phase::Downloading) && self.auto.is_empty()
@@ -653,6 +917,14 @@ fn gib(bytes: u64) -> String {
 
 fn mib(bytes: u64) -> String {
     format!("{:.0}", bytes as f64 / (1u64 << 20) as f64)
+}
+
+fn kind_label(a: &AccountRef) -> &'static str {
+    if a.microsoft {
+        "Compte Microsoft"
+    } else {
+        "Compte local"
+    }
 }
 
 fn open_folder(dir: &Path) {
@@ -1165,6 +1437,9 @@ impl Launcher {
             ),
             Phase::Downloading => ("INSTALLATION…", String::new(), false, false),
             Phase::Ready => ("JOUER", game, true, false),
+            Phase::Launching { .. } if self.child.is_none() => {
+                ("ANNULER", "Connexion à Microsoft…".to_owned(), true, true)
+            }
             Phase::Launching { .. } | Phase::Running => {
                 ("ARRÊTER LE JEU", "Le jeu est ouvert".into(), true, true)
             }
@@ -1530,7 +1805,8 @@ impl Launcher {
             return;
         }
         let p = ui.painter().clone();
-        let accounts = self.state.accounts.clone();
+        let accounts = self.state.all_accounts();
+        let current = self.current.as_ref().map(|a| a.id.clone());
         let w = 290.0;
         let h = 52.0 + accounts.len() as f32 * 54.0 + 12.0 + 2.0 * 46.0 + 8.0;
         // Right-aligned under the chip.
@@ -1551,7 +1827,7 @@ impl Launcher {
         caption(&p, r.min + Vec2::new(20.0, 22.0), "VOS COMPTES");
         let mut y = r.top() + 48.0;
         let mut picked = None;
-        for (i, name) in accounts.iter().enumerate() {
+        for (i, account) in accounts.iter().enumerate() {
             let row = Rect::from_min_size(Pos2::new(r.left() + 6.0, y), Vec2::new(w - 12.0, 50.0));
             let resp = ui.interact(row, ui.id().with(("menu-account", i)), Sense::click());
             if resp.hovered() {
@@ -1566,7 +1842,7 @@ impl Launcher {
                 &p,
                 Pos2::new(row.left() + 54.0, row.top() + 18.0),
                 Align2::LEFT_CENTER,
-                name,
+                &account.name,
                 ui::semi(14.5),
                 c::TEXT,
             );
@@ -1574,11 +1850,11 @@ impl Launcher {
                 &p,
                 Pos2::new(row.left() + 54.0, row.top() + 36.0),
                 Align2::LEFT_CENTER,
-                "Compte local",
+                kind_label(account),
                 ui::regular(12.0),
                 c::MUTED,
             );
-            if name == &self.name {
+            if Some(&account.id) == current.as_ref() {
                 self.icons.draw(
                     &p,
                     "check-lg",
@@ -1588,7 +1864,7 @@ impl Launcher {
                 );
             }
             if resp.clicked() {
-                picked = Some(name.clone());
+                picked = Some(account.id.clone());
             }
             y += 54.0;
         }
@@ -1631,8 +1907,8 @@ impl Launcher {
             }
             y += 46.0;
         }
-        if let Some(name) = picked {
-            self.update_state(|s| s.account = Some(name));
+        if let Some(id) = picked {
+            self.update_state(|s| s.account = Some(id));
             self.menu_open = false;
         }
         if go.is_some() {
@@ -1646,24 +1922,27 @@ impl Launcher {
         let top = self.page_title(&p, body, "Ajouter un compte");
         let left_w = (body.width() * 0.46).min(520.0);
 
-        // The kinds of account: Microsoft is not open yet, a local one is just a name.
+        // The kinds of account: Microsoft (the real one) or a local name.
         let tile = 150.0;
+        let has_microsoft = microsoft::client_id().is_some();
         let kinds = [
-            ("windows", "Compte Microsoft", false),
-            ("person-fill", "Compte local", true),
+            ("windows", "Compte Microsoft", Kind::Microsoft),
+            ("person-fill", "Compte local", Kind::Local),
         ];
-        for (i, (icon, label, on)) in kinds.into_iter().enumerate() {
+        for (i, (icon, label, kind)) in kinds.into_iter().enumerate() {
             let t = Rect::from_min_size(
                 Pos2::new(body.left() + i as f32 * (tile + 18.0), top + 8.0),
                 Vec2::splat(tile),
             );
-            surface(&p, t, c::RAISED);
+            let resp = ui.interact(t, ui.id().with(("kind", i)), Sense::click());
+            let on = self.add_kind == kind;
+            surface(&p, t, if resp.hovered() { c::HOVER } else { c::RAISED });
             self.icons.draw(
                 &p,
                 icon,
                 t.center(),
                 54.0,
-                if on { Color32::WHITE } else { c::FAINT },
+                if on { Color32::WHITE } else { c::MUTED },
             );
             if on {
                 p.rect_stroke(
@@ -1686,25 +1965,29 @@ impl Launcher {
                 ui::semi(14.5),
                 if on { c::TEXT } else { c::MUTED },
             );
-            if !on {
+            if kind == Kind::Microsoft && !has_microsoft {
                 ui::text(
                     &p,
                     Pos2::new(t.left(), t.bottom() + 30.0),
                     Align2::LEFT_TOP,
-                    "Bientôt",
+                    "Indisponible ici",
                     ui::regular(12.5),
                     c::FAINT,
                 );
+            }
+            if resp.clicked() {
+                self.add_kind = kind;
             }
         }
 
         // The accounts already there.
         let list_top = top + 8.0 + tile + 78.0;
         caption(&p, Pos2::new(body.left() + 4.0, list_top), "COMPTES");
-        let accounts = self.state.accounts.clone();
+        let accounts = self.state.all_accounts();
+        let current = self.current.as_ref().map(|a| a.id.clone());
         let mut picked = None;
-        let mut removed = None;
-        for (i, name) in accounts.iter().enumerate() {
+        let mut removed: Option<AccountRef> = None;
+        for (i, account) in accounts.iter().enumerate() {
             let row = Rect::from_min_size(
                 Pos2::new(body.left(), list_top + 26.0 + i as f32 * 58.0),
                 Vec2::new(left_w, 52.0),
@@ -1723,7 +2006,7 @@ impl Launcher {
                 &p,
                 Pos2::new(row.left() + 58.0, row.top() + 19.0),
                 Align2::LEFT_CENTER,
-                name,
+                &account.name,
                 ui::semi(14.5),
                 c::TEXT,
             );
@@ -1731,11 +2014,10 @@ impl Launcher {
                 &p,
                 Pos2::new(row.left() + 58.0, row.top() + 37.0),
                 Align2::LEFT_CENTER,
-                "Compte local",
+                kind_label(account),
                 ui::regular(12.0),
                 c::MUTED,
             );
-            let chosen = name == &self.name;
             if accounts.len() > 1 {
                 let bin = Rect::from_center_size(
                     Pos2::new(row.right() - 24.0, row.center().y),
@@ -1750,10 +2032,10 @@ impl Launcher {
                     if b.hovered() { c::BAD_HOVER } else { c::FAINT },
                 );
                 if b.clicked() {
-                    removed = Some(name.clone());
+                    removed = Some(account.clone());
                 }
             }
-            if chosen {
+            if Some(&account.id) == current.as_ref() {
                 let x = row.right() - if accounts.len() > 1 { 62.0 } else { 26.0 };
                 self.icons.draw(
                     &p,
@@ -1764,16 +2046,19 @@ impl Launcher {
                 );
             }
             if resp.clicked() && removed.is_none() {
-                picked = Some(name.clone());
+                picked = Some(account.id.clone());
             }
         }
-        if let Some(name) = removed {
-            self.update_state(|s| s.remove_account(&name));
-        } else if let Some(name) = picked {
-            self.update_state(|s| s.account = Some(name));
+        if let Some(account) = removed {
+            if account.microsoft {
+                microsoft::forget(account.id.trim_start_matches("ms:"));
+            }
+            self.update_state(|s| s.remove_account(&account.id));
+        } else if let Some(id) = picked {
+            self.update_state(|s| s.account = Some(id));
         }
 
-        // The form.
+        // The form on the right.
         let divider_x = body.left() + left_w + 28.0;
         p.line_segment(
             [
@@ -1784,18 +2069,26 @@ impl Launcher {
         );
         let fx = divider_x + 36.0;
         let fw = body.right() - fx;
-        caption(&p, Pos2::new(fx, body.top() + 14.0), "COMPTE LOCAL");
+        match self.add_kind {
+            Kind::Local => self.local_form(ui, &p, body, fx, fw),
+            Kind::Microsoft => self.microsoft_form(ui, &p, body, fx, fw),
+        }
+    }
+
+    /// The form for a local account: a name.
+    fn local_form(&mut self, ui: &mut egui::Ui, p: &egui::Painter, body: Rect, fx: f32, fw: f32) {
+        caption(p, Pos2::new(fx, body.top() + 14.0), "COMPTE LOCAL");
         let row = Rect::from_min_size(Pos2::new(fx, body.top() + 40.0), Vec2::new(fw, 66.0));
-        surface(&p, row, c::PANEL);
+        surface(p, row, c::PANEL);
         self.icons.draw(
-            &p,
+            p,
             "shuffle",
             Pos2::new(row.left() + 26.0, row.center().y),
             20.0,
             c::TEXT,
         );
         ui::text(
-            &p,
+            p,
             Pos2::new(row.left() + 54.0, row.top() + 22.0),
             Align2::LEFT_CENTER,
             "Nom aléatoire",
@@ -1803,7 +2096,7 @@ impl Launcher {
             c::TEXT,
         );
         ui::text(
-            &p,
+            p,
             Pos2::new(row.left() + 54.0, row.top() + 43.0),
             Align2::LEFT_CENTER,
             "Choisis un nom pour ton compte local.",
@@ -1830,9 +2123,9 @@ impl Launcher {
             self.account_input = player::generate(nanos / 1000);
             self.account_error = None;
         }
-        caption(&p, Pos2::new(fx, body.top() + 134.0), "NOM D'UTILISATEUR");
+        caption(p, Pos2::new(fx, body.top() + 134.0), "NOM D'UTILISATEUR");
         let field = Rect::from_min_size(Pos2::new(fx, body.top() + 160.0), Vec2::new(fw, 48.0));
-        surface(&p, field, c::PANEL);
+        surface(p, field, c::PANEL);
         let inner = Rect::from_center_size(field.center(), Vec2::new(field.width() - 28.0, 26.0));
         let edit = ui.put(
             inner,
@@ -1849,7 +2142,7 @@ impl Launcher {
         }
         if let Some(e) = &self.account_error {
             ui::text(
-                &p,
+                p,
                 Pos2::new(fx, field.bottom() + 12.0),
                 Align2::LEFT_TOP,
                 e,
@@ -1885,6 +2178,207 @@ impl Launcher {
                 }
             }
         }
+    }
+
+    /// The form for a Microsoft account: a code to type at microsoft.com/link.
+    fn microsoft_form(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &egui::Painter,
+        body: Rect,
+        fx: f32,
+        fw: f32,
+    ) {
+        caption(p, Pos2::new(fx, body.top() + 14.0), "COMPTE MICROSOFT");
+        let has_id = microsoft::client_id().is_some();
+        let row = Rect::from_min_size(Pos2::new(fx, body.top() + 40.0), Vec2::new(fw, 66.0));
+        surface(p, row, c::PANEL);
+        self.icons.draw(
+            p,
+            "windows",
+            Pos2::new(row.left() + 26.0, row.center().y),
+            20.0,
+            c::TEXT,
+        );
+        ui::text(
+            p,
+            Pos2::new(row.left() + 54.0, row.top() + 22.0),
+            Align2::LEFT_CENTER,
+            "Connexion Microsoft",
+            ui::semi(14.5),
+            c::TEXT,
+        );
+        let line = if has_id {
+            "Joue en ligne avec ton skin et rejoins les serveurs."
+        } else {
+            "Cette version du launcher n'a pas de connexion Microsoft."
+        };
+        ui::text(
+            p,
+            Pos2::new(row.left() + 54.0, row.top() + 43.0),
+            Align2::LEFT_CENTER,
+            line,
+            ui::regular(12.5),
+            c::MUTED,
+        );
+        let waiting = matches!(self.ms_flow, MsFlow::Starting | MsFlow::Waiting { .. });
+        let go = Rect::from_min_size(
+            Pos2::new(row.right() - 168.0, row.center().y - 19.0),
+            Vec2::new(154.0, 38.0),
+        );
+        if button(
+            ui,
+            &self.icons,
+            go,
+            None,
+            if waiting { "…" } else { "Se connecter" },
+            "ms-sign-in",
+            Look::Accent,
+            has_id && !waiting,
+        ) {
+            self.start_sign_in();
+        }
+
+        let y = row.bottom() + 24.0;
+        match &self.ms_flow {
+            MsFlow::Idle => {
+                ui::wrapped(
+                    p,
+                    Pos2::new(fx, y),
+                    "Une page Microsoft s'ouvre : tu y tapes un code, ton mot de passe ne passe jamais par Oteria. Le compte doit posséder Minecraft: Java Edition.",
+                    ui::regular(13.5),
+                    c::MUTED,
+                    fw,
+                    4,
+                );
+            }
+            MsFlow::Starting => {
+                ui::text(
+                    p,
+                    Pos2::new(fx, y),
+                    Align2::LEFT_TOP,
+                    "Demande d'un code à Microsoft…",
+                    ui::regular(13.5),
+                    c::MUTED,
+                );
+            }
+            MsFlow::Waiting {
+                code,
+                uri,
+                expires_at,
+            } => {
+                let (code, uri, left) = (
+                    code.clone(),
+                    uri.clone(),
+                    expires_at.saturating_sub(microsoft::now()),
+                );
+                let card = Rect::from_min_size(Pos2::new(fx, y), Vec2::new(fw, 196.0));
+                surface(p, card, c::PANEL);
+                ui::text(
+                    p,
+                    Pos2::new(card.center().x, card.top() + 28.0),
+                    Align2::CENTER_CENTER,
+                    "Ouvre microsoft.com/link et tape ce code :",
+                    ui::regular(13.5),
+                    c::MUTED,
+                );
+                let width = p
+                    .layout_no_wrap(code.clone(), ui::semi(40.0), Color32::WHITE)
+                    .size()
+                    .x
+                    + 4.0 * (code.len() as f32 - 1.0);
+                ui::spaced(
+                    p,
+                    Pos2::new(card.center().x - width / 2.0, card.top() + 54.0),
+                    &code,
+                    ui::semi(40.0),
+                    Color32::WHITE,
+                    4.0,
+                );
+                let b1 = Rect::from_min_size(
+                    Pos2::new(card.left() + 24.0, card.bottom() - 70.0),
+                    Vec2::new((card.width() - 60.0) / 2.0, 42.0),
+                );
+                let b2 = Rect::from_min_size(Pos2::new(b1.right() + 12.0, b1.top()), b1.size());
+                if button(
+                    ui,
+                    &self.icons,
+                    b1,
+                    Some("box-arrow-up-right"),
+                    "Ouvrir la page",
+                    "ms-open",
+                    Look::Quiet,
+                    true,
+                ) {
+                    let _ = install::quiet_command("cmd")
+                        .args(["/c", "start", "", &uri])
+                        .spawn();
+                }
+                if button(
+                    ui,
+                    &self.icons,
+                    b2,
+                    Some("clipboard"),
+                    "Copier le code",
+                    "ms-copy",
+                    Look::Quiet,
+                    true,
+                ) {
+                    ui.ctx().copy_text(code.clone());
+                }
+                ui::text(
+                    p,
+                    Pos2::new(card.center().x, card.bottom() - 16.0),
+                    Align2::CENTER_CENTER,
+                    &format!(
+                        "En attente de ta connexion… ({} min {:02} s)",
+                        left / 60,
+                        left % 60
+                    ),
+                    ui::regular(12.5),
+                    c::FAINT,
+                );
+                let cancel = Rect::from_min_size(
+                    Pos2::new(fx, card.bottom() + 16.0),
+                    Vec2::new(150.0, 40.0),
+                );
+                if button(
+                    ui,
+                    &self.icons,
+                    cancel,
+                    None,
+                    "Annuler",
+                    "ms-cancel",
+                    Look::Quiet,
+                    true,
+                ) {
+                    self.cancel_sign_in();
+                }
+            }
+            MsFlow::Done(name) => {
+                ui::wrapped(
+                    p,
+                    Pos2::new(fx, y),
+                    &format!("Connecté : {name}. Ce compte est maintenant celui du jeu."),
+                    ui::medium(14.0),
+                    c::GOOD,
+                    fw,
+                    3,
+                );
+            }
+            MsFlow::Failed(e) => {
+                ui::wrapped(
+                    p,
+                    Pos2::new(fx, y),
+                    e,
+                    ui::medium(14.0),
+                    c::BAD_HOVER,
+                    fw,
+                    4,
+                );
+            }
+        }
+        let _ = body;
     }
 
     // ----- Settings ---------------------------------------------------------------------------

@@ -1,5 +1,24 @@
-//! `state.json` in the install folder: what is installed and where updates come from.
+//! `state.json` in the install folder: what is installed, where updates come from, and the
+//! accounts. A Microsoft account's refresh token is not here: it is in Windows' Credential
+//! Manager (`microsoft::store_refresh`), so this file holds nothing secret.
 use std::path::{Path, PathBuf};
+
+/// A Microsoft account that signed in: its Minecraft profile.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MsAccount {
+    /// The profile UUID, without dashes.
+    pub uuid: String,
+    pub name: String,
+}
+
+/// An account as the launcher lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountRef {
+    /// What `State::account` holds: the name of a local account, `ms:<uuid>` for a Microsoft one.
+    pub id: String,
+    pub name: String,
+    pub microsoft: bool,
+}
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -17,9 +36,11 @@ pub struct State {
     pub resources: Option<PathBuf>,
     /// Close the launcher once the game has started (Settings).
     pub close_on_launch: bool,
-    /// The local (offline) accounts: player names. The game is started with the chosen one.
+    /// The local (offline) accounts: player names.
     pub accounts: Vec<String>,
-    /// The chosen account, one of `accounts`.
+    /// The Microsoft accounts that signed in.
+    pub ms_accounts: Vec<MsAccount>,
+    /// The chosen account: see [`AccountRef::id`].
     pub account: Option<String>,
 }
 
@@ -70,12 +91,34 @@ impl State {
         dir.join(crate::paths::CLIENT_EXE).is_file().then_some(dir)
     }
 
+    /// Every account: the Microsoft ones first.
+    pub fn all_accounts(&self) -> Vec<AccountRef> {
+        let ms = self.ms_accounts.iter().map(|a| AccountRef {
+            id: format!("ms:{}", a.uuid),
+            name: a.name.clone(),
+            microsoft: true,
+        });
+        let local = self.accounts.iter().map(|n| AccountRef {
+            id: n.clone(),
+            name: n.clone(),
+            microsoft: false,
+        });
+        ms.chain(local).collect()
+    }
+
     /// The chosen account, else the first, else none.
-    pub fn current_account(&self) -> Option<&str> {
-        self.account
-            .as_deref()
-            .filter(|a| self.accounts.iter().any(|x| x == a))
-            .or_else(|| self.accounts.first().map(String::as_str))
+    pub fn current(&self) -> Option<AccountRef> {
+        let all = self.all_accounts();
+        let chosen = self
+            .account
+            .as_ref()
+            .and_then(|id| all.iter().find(|a| &a.id == id));
+        chosen.or_else(|| all.first()).cloned()
+    }
+
+    /// The Microsoft account with this UUID.
+    pub fn ms_account(&self, uuid: &str) -> Option<&MsAccount> {
+        self.ms_accounts.iter().find(|a| a.uuid == uuid)
     }
 
     /// Adds a local account and chooses it.
@@ -92,13 +135,30 @@ impl State {
         Ok(())
     }
 
-    /// Removes an account, never the last one; the first one left is chosen if it was chosen.
-    pub fn remove_account(&mut self, name: &str) {
-        if self.accounts.len() > 1 {
-            self.accounts.retain(|a| a != name);
-            if self.account.as_deref() == Some(name) {
-                self.account = self.accounts.first().cloned();
-            }
+    /// Adds a Microsoft account (or updates its name, when it changed) and chooses it.
+    pub fn add_ms_account(&mut self, uuid: &str, name: &str) {
+        match self.ms_accounts.iter_mut().find(|a| a.uuid == uuid) {
+            Some(a) => a.name = name.to_owned(),
+            None => self.ms_accounts.push(MsAccount {
+                uuid: uuid.to_owned(),
+                name: name.to_owned(),
+            }),
+        }
+        self.account = Some(format!("ms:{uuid}"));
+    }
+
+    /// Removes an account by its id, never the last one; the first one left is chosen if it was
+    /// the chosen one.
+    pub fn remove_account(&mut self, id: &str) {
+        if self.all_accounts().len() <= 1 {
+            return;
+        }
+        match id.strip_prefix("ms:") {
+            Some(uuid) => self.ms_accounts.retain(|a| a.uuid != uuid),
+            None => self.accounts.retain(|a| a != id),
+        }
+        if self.account.as_deref() == Some(id) {
+            self.account = self.all_accounts().first().map(|a| a.id.clone());
         }
     }
 }
@@ -113,13 +173,42 @@ mod tests {
         assert_eq!(s.add_account("Ixsou_mod"), Ok(()));
         assert_eq!(s.add_account("ixsou_MOD"), Err(AccountError::Exists));
         assert_eq!(s.add_account("a b"), Err(AccountError::Invalid));
+        assert_eq!(s.add_account("ms:abc"), Err(AccountError::Invalid));
         assert_eq!(s.add_account(""), Err(AccountError::Invalid));
         assert_eq!(s.add_account("Player12345"), Ok(()));
-        assert_eq!(s.current_account(), Some("Player12345"));
+        assert_eq!(s.current().unwrap().name, "Player12345");
         s.remove_account("Player12345");
-        assert_eq!(s.current_account(), Some("Ixsou_mod"));
+        assert_eq!(s.current().unwrap().name, "Ixsou_mod");
         // The last account stays.
         s.remove_account("Ixsou_mod");
         assert_eq!(s.accounts.len(), 1);
+    }
+
+    #[test]
+    fn a_microsoft_account_is_chosen_updated_and_removed_by_its_id() {
+        let mut s = State::default();
+        s.add_account("Local1").unwrap();
+        s.add_ms_account("069a79f4", "Alex");
+        let cur = s.current().unwrap();
+        assert!(cur.microsoft && cur.name == "Alex" && cur.id == "ms:069a79f4");
+        // Signing in again keeps one entry, with the name it has now.
+        s.add_ms_account("069a79f4", "Alex2");
+        assert_eq!(s.ms_accounts.len(), 1);
+        assert_eq!(s.current().unwrap().name, "Alex2");
+        // Microsoft accounts are listed first.
+        assert!(s.all_accounts()[0].microsoft);
+        s.remove_account("ms:069a79f4");
+        assert!(s.ms_accounts.is_empty());
+        assert_eq!(s.current().unwrap().name, "Local1");
+    }
+
+    #[test]
+    fn state_files_from_before_microsoft_accounts_still_load() {
+        let s: State = serde_json::from_str(
+            r#"{"launcher_version":"1.0.2","accounts":["Player1"],"account":"Player1"}"#,
+        )
+        .unwrap();
+        assert_eq!(s.current().unwrap().name, "Player1");
+        assert!(s.ms_accounts.is_empty());
     }
 }

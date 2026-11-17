@@ -177,6 +177,7 @@ const ICONS: &[(&str, &[u8])] = icon_files![
     "trash3",
     "box-seam",
     "plus-lg",
+    "clipboard",
     "newspaper",
     "hdd-network",
 ];
