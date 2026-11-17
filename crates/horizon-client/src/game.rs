@@ -6132,6 +6132,14 @@ impl Game<'_> {
                 // layer stands for the armor, food and air rows too.
                 self.gui_layer("minecraft:player_health", &mut batch, |g, batch| {
                     hud_layout::paint(batch, &g.gui.atlas, &draws);
+                    g.draw_saturation_overlay(
+                        batch,
+                        wi,
+                        hi,
+                        inputs.food,
+                        inputs.saturation,
+                        vehicle_hearts,
+                    );
                 });
                 // Hud.playAirBubblePoppedSound: Player.playSound (PLAYERS), heard
                 // by this client only.

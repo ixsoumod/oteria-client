@@ -110,20 +110,62 @@ impl Game<'_> {
         else {
             return;
         };
-        let colour = if pvp.crosshair.custom && pvp.crosshair.colour != Colour::Inverted {
-            let [_, r, g, b] = pvp.crosshair.colour.argb().to_be_bytes();
-            rgba(r, g, b, 255)
-        } else {
-            rgba(255, 255, 255, 255)
+        let colour = match pvp.tweaks.elytra_colour {
+            Some(c) => {
+                let [_, r, g, b] = c.argb().to_be_bytes();
+                rgba(r, g, b, 255)
+            }
+            None if pvp.crosshair.custom && pvp.crosshair.colour != Colour::Inverted => {
+                let [_, r, g, b] = pvp.crosshair.colour.argb().to_be_bytes();
+                rgba(r, g, b, 255)
+            }
+            None => rgba(255, 255, 255, 255),
         };
+        let size = 16.0 * f32::from(pvp.tweaks.elytra_size) / 100.0;
+        let dx = (i32::from(pvp.tweaks.elytra_offset_x) - horizon_client::pvp::ELYTRA_CENTER) as f32;
+        let dy = (i32::from(pvp.tweaks.elytra_offset_y) - horizon_client::pvp::ELYTRA_CENTER) as f32;
         batch.rect_uv(
-            (w / 2 - 8) as f32,
-            (h / 2 + 6) as f32,
-            16.0,
-            16.0,
+            w as f32 / 2.0 - size / 2.0 + dx,
+            h as f32 / 2.0 + dy,
+            size,
+            size,
             r,
             colour,
         );
+    }
+    /// AppleSkin's saturation overlay (after the Fabric mod, MIT): a duplicate of the hunger
+    /// bar's icons, tinted gold up to as many as the player's saturation covers, so it is
+    /// visible at a glance over vanilla's own bar (`Hud.extractFood`).
+    pub(super) fn draw_saturation_overlay(
+        &self,
+        batch: &mut HudBatch,
+        w: i32,
+        h: i32,
+        food: i32,
+        saturation: f32,
+        vehicle_hearts: i32,
+    ) {
+        if !self.settings.extras.pvp.saturation.overlay || vehicle_hearts != 0 {
+            return;
+        }
+        let Some(r) = self
+            .gui
+            .atlas
+            .sprites
+            .get("gui/sprites/hud/food_full")
+            .copied()
+        else {
+            return;
+        };
+        let (x_right, y) = (w / 2 + 91, h - 39);
+        let points = (saturation.round() as i32).clamp(0, food.clamp(0, 20));
+        for n in 0..10 {
+            if n * 2 + 1 > points {
+                continue;
+            }
+            let x = (x_right - n * 8 - 9) as f32;
+            batch.rect_uv(x, y as f32, 9.0, 9.0, r, rgba(255, 221, 64, 130));
+        }
     }
     pub(super) fn draw_custom_crosshair(&mut self, batch: &mut HudBatch, w: i32, h: i32) {
         let mut c = self.settings.extras.pvp.crosshair;

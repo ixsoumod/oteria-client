@@ -2772,6 +2772,21 @@ impl Game<'_> {
             return;
         }
         lines.splice(1..1, after_name);
+        // Oteria's AppleSkin: the hunger and saturation a food item restores, after its own
+        // tooltip lines (`ConsumableComponent`'s nutrition and saturation modifier).
+        if self.settings.extras.pvp.saturation.tooltip
+            && let Some((nutrition, modifier)) =
+                self.items().get(&stack.item).and_then(|info| info.food)
+        {
+            let saturation = nutrition as f32 * modifier * 2.0;
+            let text = horizon_client::lang::get_or(
+                "oteria.appleskin.tooltip",
+                "+%s Hunger, +%s Saturation",
+            )
+            .replacen("%s", &nutrition.to_string(), 1)
+            .replacen("%s", &format!("{saturation:.1}"), 1);
+            lines.push((horizon_client::text::Text::literal(text), rgba(255, 221, 64, 255)));
+        }
         let lines = Self::resolved(&lines);
         // The component's height does not depend on where it is drawn, so a
         // probe at the origin gives the box its extra height.
