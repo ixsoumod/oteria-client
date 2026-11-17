@@ -2,19 +2,20 @@
 //!
 //! On every start it asks `updater.exe check` what is new. A newer launcher is installed at once
 //! (`updater.exe self-update`, which restarts it); a newer client makes the main button
-//! « Télécharger la mise à jour » before it can say « Jouer ». The game is started directly from
-//! the installed client, with no console window, and can be stopped from the same button.
+//! « Mettre à jour » before it can say « Jouer ». The game is started directly from the
+//! installed client, with no console window, and can be stopped from the same button.
 //!
 //! Testing (`tools/oteria/dist_test.ps1`): `OTERIA_HOME`, `OTERIA_GAME_DIR` and
-//! `OTERIA_UPDATE_SOURCE` move everything to scratch folders; `OTERIA_LAUNCHER_PAGE` opens a page;
+//! `OTERIA_UPDATE_SOURCE` move everything to scratch folders; `OTERIA_LAUNCHER_PAGE`
+//! (`mods|market|news|settings|accounts`) opens a page, `OTERIA_LAUNCHER_MENU=1` the account menu;
 //! `OTERIA_LAUNCHER_AUTO=download,play,stop` presses the main button when it can;
 //! `OTERIA_LAUNCHER_SHOT` saves a screenshot once the window has settled
 //! (`OTERIA_LAUNCHER_SHOT_AT=downloading|running|self-update` picks the moment) and closes.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use eframe::egui::{
-    self, epaint::RectShape, Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind,
-    TextureHandle, Vec2,
+    self, epaint::RectShape, text::LayoutJob, Align2, Color32, CornerRadius, Margin, Pos2, Rect,
+    Sense, Stroke, StrokeKind, TextFormat, TextureHandle, Vec2,
 };
 use oteria_dist::ui::{self, c, Icons};
 use oteria_dist::{install, paths, player, CheckReport, NewsItem, Progress, State};
@@ -23,6 +24,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
+
+const SIDE_W: f32 = 100.0;
+const TOP_H: f32 = 72.0;
+/// The corner radius of every surface.
+const R: u8 = 8;
+/// The background picture's width over its height.
+const BG_ASPECT: f32 = 864.0 / 505.0;
+const BACKGROUND: &[u8] = include_bytes!("../../assets/background.jpg");
+const FULL_UV: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
 
 fn main() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
@@ -48,8 +58,8 @@ enum Page {
     Mods,
     Market,
     Settings,
-    /// Every news item ("Tout voir" on the Play page).
     News,
+    Accounts,
 }
 
 enum Phase {
@@ -78,33 +88,55 @@ enum Phase {
 
 struct Download {
     rx: Receiver<Progress>,
+    /// Whether this replaces an older client.
+    update: bool,
     stage: String,
     fraction: f32,
+    done: u64,
+    total: u64,
     note: String,
+}
+
+impl Download {
+    /// How far the whole installation is, from 0 to 1: each stage takes its share of the bar.
+    fn overall(&self) -> f32 {
+        let (lo, hi) = match self.stage.as_str() {
+            "download" => (0.0, 0.15),
+            "extract" => (0.15, 0.2),
+            "minecraft" => (0.2, 0.55),
+            "java" => (0.55, 0.65),
+            _ => (0.65, 1.0),
+        };
+        lo + (hi - lo) * self.fraction.clamp(0.0, 1.0)
+    }
 }
 
 struct Launcher {
     home: PathBuf,
     game_dir: PathBuf,
     state: State,
+    /// The chosen local account's name.
     name: String,
     skin: Option<ui::Skin>,
     logo: TextureHandle,
     icons: Icons,
-    /// The four sides of the title-screen panorama from the player's prepared resources; empty
-    /// before the client is installed.
-    panorama: Vec<TextureHandle>,
-    /// A transparent-to-dark ramp laid over the banner so its text stays readable.
-    scrim: TextureHandle,
+    background: TextureHandle,
+    /// Darkens the bottom of the banner, under the buttons.
+    hero_shade: TextureHandle,
+    /// Darkens the bottom of a news picture, under its title.
+    card_shade: TextureHandle,
     page: Page,
     phase: Phase,
     report: CheckReport,
     check_rx: Option<Receiver<CheckReport>>,
     download: Option<Download>,
     child: Option<Child>,
-    /// A message under the main button: (text, colour).
+    /// A message on the banner: (text, colour).
     notice: Option<(String, Color32)>,
     total_ram: Option<u64>,
+    menu_open: bool,
+    account_input: String,
+    account_error: Option<String>,
     auto: Vec<String>,
     shot: Option<PathBuf>,
     shot_at: String,
@@ -125,8 +157,14 @@ impl Launcher {
         ] {
             let _ = std::fs::remove_file(home.join(leftover));
         }
-        let state = State::load(&home);
-        let name = player::load_or_create(&game_dir);
+        let mut state = State::load(&home);
+        // The first account is the offline name the game already keeps.
+        if state.accounts.is_empty() {
+            state.accounts.push(player::load_or_create(&game_dir));
+            state.account = state.accounts.first().cloned();
+            let _ = state.save(&home);
+        }
+        let name = state.current_account().unwrap_or("Player").to_owned();
         let skin = player::worn_skin(&game_dir).and_then(|p| ui::Skin::load(&p));
         let logo = ui::svg_texture(ctx, "logo", ui::LOGO_SVG, 192, false)
             .or_else(|| ui::texture_from_png(ctx, "logo", ui::LOGO_PNG))
@@ -136,6 +174,7 @@ impl Launcher {
             Ok("market") => Page::Market,
             Ok("news") => Page::News,
             Ok("settings") => Page::Settings,
+            Ok("accounts") => Page::Accounts,
             _ => Page::Play,
         };
         let env_list = |k: &str| {
@@ -147,11 +186,11 @@ impl Launcher {
                 .collect::<Vec<_>>()
         };
         let updated = std::env::args().any(|a| a == "--updated");
-        let panorama = load_panorama(ctx, &state.resources_dir(&home));
         let mut me = Self {
             icons: Icons::load(ctx),
-            scrim: scrim_texture(ctx),
-            panorama,
+            background: ui::texture_from_png(ctx, "background", BACKGROUND).expect("background"),
+            hero_shade: ui::vramp_texture(ctx, "hero-shade", 0.0, 0.7),
+            card_shade: ui::vramp_texture(ctx, "card-shade", 0.1, 0.9),
             home,
             game_dir,
             state,
@@ -166,6 +205,9 @@ impl Launcher {
             child: None,
             notice: None,
             total_ram: memory::total(),
+            menu_open: std::env::var_os("OTERIA_LAUNCHER_MENU").is_some(),
+            account_input: std::env::var("OTERIA_LAUNCHER_INPUT").unwrap_or_default(),
+            account_error: None,
             auto: env_list("OTERIA_LAUNCHER_AUTO"),
             // A launcher restarted by its update takes its own picture (`…_AFTER_UPDATE`).
             shot: std::env::var_os(if updated {
@@ -204,6 +246,15 @@ impl Launcher {
             let ms = self.started.elapsed().as_millis();
             let _ = writeln!(f, "[+{ms} ms] {line}");
         }
+    }
+
+    /// Changes `state.json` from what is on disk (the updater writes it too), and keeps the result.
+    fn update_state(&mut self, change: impl FnOnce(&mut State)) {
+        let mut state = State::load(&self.home);
+        change(&mut state);
+        let _ = state.save(&self.home);
+        self.name = state.current_account().unwrap_or("Player").to_owned();
+        self.state = state;
     }
 
     /// `updater.exe`: beside this launcher, else in the install folder.
@@ -289,6 +340,7 @@ impl Launcher {
 
     fn start_download(&mut self) {
         self.log("téléchargement du client");
+        let update = matches!(self.phase, Phase::NeedDownload { update: true });
         let (tx, rx) = channel();
         let updater = self.updater();
         std::thread::spawn(move || {
@@ -323,15 +375,18 @@ impl Launcher {
         });
         self.download = Some(Download {
             rx,
+            update,
             stage: "download".into(),
             fraction: 0.0,
+            done: 0,
+            total: 0,
             note: String::new(),
         });
         self.notice = None;
         self.phase = Phase::Downloading;
     }
 
-    fn poll_download(&mut self, ctx: &egui::Context) {
+    fn poll_download(&mut self) {
         let Some(d) = &mut self.download else { return };
         let mut finished = None;
         while let Ok(p) = d.rx.try_recv() {
@@ -339,8 +394,13 @@ impl Launcher {
                 Progress::Stage { stage } => {
                     d.stage = stage;
                     d.fraction = 0.0;
+                    d.done = 0;
+                    d.total = 0;
+                    d.note.clear();
                 }
                 Progress::Bytes { done, total } => {
+                    d.done = done;
+                    d.total = total;
                     d.fraction = if total == 0 {
                         0.0
                     } else {
@@ -361,9 +421,6 @@ impl Launcher {
                 self.report.client_update = false;
                 self.notice = Some((format!("Oteria {v} est installé."), c::GOOD));
                 self.phase = Phase::Ready;
-                if self.panorama.is_empty() {
-                    self.panorama = load_panorama(ctx, &self.state.resources_dir(&self.home));
-                }
             }
             Some(Err(e)) => {
                 self.log(&format!("échec de l'installation : {e}"));
@@ -435,7 +492,7 @@ impl Launcher {
             let _ = child.kill();
             let _ = child.wait();
             self.log(&format!("jeu arrêté (pid {})", child.id()));
-            self.notice = Some(("Le jeu a été arrêté.".into(), c::MUTED));
+            self.notice = Some(("Le jeu a été arrêté.".into(), Color32::WHITE));
         }
         self.phase = Phase::Ready;
     }
@@ -457,7 +514,7 @@ impl Launcher {
                 self.on_report(r);
             }
         }
-        self.poll_download(ctx);
+        self.poll_download();
         match &self.phase {
             Phase::SelfUpdating {
                 since,
@@ -547,44 +604,6 @@ impl Launcher {
     }
 }
 
-/// The title-screen panorama's four sides from the prepared resources: the player's own copy of
-/// Minecraft's art, never shipped with Oteria. Empty when they are not there yet.
-fn load_panorama(ctx: &egui::Context, resources: &Path) -> Vec<TextureHandle> {
-    let dir = resources.join("assets/minecraft/textures/gui/title/background");
-    (0..4)
-        .map_while(|i| {
-            let face = image::open(dir.join(format!("panorama_{i}.png")))
-                .ok()?
-                .to_rgba8();
-            Some(ctx.load_texture(
-                format!("panorama-{i}"),
-                egui::ColorImage::from_rgba_unmultiplied(
-                    [face.width() as usize, face.height() as usize],
-                    face.as_raw(),
-                ),
-                egui::TextureOptions::LINEAR,
-            ))
-        })
-        .collect()
-}
-
-fn scrim_texture(ctx: &egui::Context) -> TextureHandle {
-    let w = 256;
-    let px = (0..w)
-        .map(|x| {
-            let t = x as f32 / (w - 1) as f32;
-            // Dark on the left, where the text is, clear past the middle.
-            let a = (1.0 - t / 0.7).clamp(0.0, 1.0).powf(1.3) * 0.88 + 0.12;
-            Color32::from_rgba_unmultiplied(6, 11, 20, (a * 255.0) as u8)
-        })
-        .collect();
-    ctx.load_texture(
-        "scrim",
-        egui::ColorImage::new([w, 1], px),
-        egui::TextureOptions::LINEAR,
-    )
-}
-
 /// The computer's memory and the game's, for the Settings page.
 mod memory {
     #[cfg(windows)]
@@ -632,22 +651,18 @@ fn gib(bytes: u64) -> String {
     format!("{:.1} Go", bytes as f64 / (1u64 << 30) as f64).replace('.', ",")
 }
 
+fn mib(bytes: u64) -> String {
+    format!("{:.0}", bytes as f64 / (1u64 << 20) as f64)
+}
+
 fn open_folder(dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
     let _ = Command::new("explorer").arg(dir).spawn();
 }
 
-fn tag_colour(tag: &str) -> Color32 {
-    let t = tag.to_lowercase();
-    if t.contains("pvp") {
-        Color32::from_rgb(0xe0, 0x5a, 0x47)
-    } else if t.contains("cosm") {
-        Color32::from_rgb(0xd9, 0x9a, 0x2b)
-    } else if t.contains("mise") {
-        c::GOOD
-    } else {
-        c::CYAN
-    }
+/// A dark translucent fill for buttons over a picture.
+fn over_picture(hovered: bool) -> Color32 {
+    Color32::from_rgba_unmultiplied(8, 12, 18, if hovered { 235 } else { 190 })
 }
 
 impl eframe::App for Launcher {
@@ -694,19 +709,18 @@ impl eframe::App for Launcher {
             .frame(egui::Frame::NONE.fill(c::BG))
             .show(ctx, |ui| {
                 let full = ui.max_rect();
-                let side_w = 112.0;
-                self.sidebar(
-                    ui,
-                    Rect::from_min_max(full.min, Pos2::new(full.left() + side_w, full.bottom())),
+                // The picture, very dark, behind everything.
+                cover(
+                    &ui.painter().clone(),
+                    full,
+                    0,
+                    &self.background,
+                    0.5,
+                    Color32::from_rgb(15, 19, 27),
                 );
-                let top = Rect::from_min_max(
-                    Pos2::new(full.left() + side_w, full.top()),
-                    Pos2::new(full.right(), full.top() + 80.0),
-                );
-                self.top_bar(ui, top);
                 let body = Rect::from_min_max(
-                    Pos2::new(top.left() + 28.0, top.bottom()),
-                    full.max - Vec2::new(24.0, 24.0),
+                    Pos2::new(full.left() + SIDE_W + 8.0, full.top() + TOP_H),
+                    full.max - Vec2::new(28.0, 24.0),
                 );
                 match self.page {
                     Page::Play => self.play_page(ui, body),
@@ -714,11 +728,20 @@ impl eframe::App for Launcher {
                     Page::Market => self.market_page(ui, body),
                     Page::Settings => self.settings_page(ui, body),
                     Page::News => self.news_page(ui, body),
+                    Page::Accounts => self.accounts_page(ui, body),
                 }
-                if let Phase::SelfUpdating { version, since, .. } = &self.phase {
-                    let (v, t) = (version.clone(), since.elapsed().as_secs_f32());
-                    self.self_update_overlay(ui, full, &v, t);
+                self.sidebar(
+                    ui,
+                    Rect::from_min_max(
+                        Pos2::new(full.left(), full.top() + TOP_H),
+                        Pos2::new(full.left() + SIDE_W, full.bottom()),
+                    ),
+                );
+                self.top_bar(ui, full);
+                if self.menu_open {
+                    self.account_menu(ui, full);
                 }
+                self.modal(ui, full);
             });
         let busy = matches!(
             self.phase,
@@ -737,6 +760,41 @@ impl eframe::App for Launcher {
 
 // ----- Pieces ----------------------------------------------------------------------------------
 
+/// Draws `tex` (`aspect` wide for 1 high) covering `r`, the part starting at `u0` (0 to 1) of
+/// what is left over when it is cropped sideways.
+fn cover(p: &egui::Painter, r: Rect, radius: u8, tex: &TextureHandle, u0: f32, tint: Color32) {
+    let aspect = r.width() / r.height();
+    let uv = if aspect < BG_ASPECT {
+        let w = aspect / BG_ASPECT;
+        let x = (1.0 - w) * u0;
+        Rect::from_min_max(Pos2::new(x, 0.0), Pos2::new(x + w, 1.0))
+    } else {
+        let h = BG_ASPECT / aspect;
+        let y = (1.0 - h) * 0.4;
+        Rect::from_min_max(Pos2::new(0.0, y), Pos2::new(1.0, y + h))
+    };
+    p.add(RectShape::filled(r, CornerRadius::same(radius), tint).with_texture(tex.id(), uv));
+}
+
+fn shade(p: &egui::Painter, r: Rect, radius: u8, tex: &TextureHandle) {
+    p.add(
+        RectShape::filled(r, CornerRadius::same(radius), Color32::WHITE)
+            .with_texture(tex.id(), FULL_UV),
+    );
+}
+
+fn surface(p: &egui::Painter, r: Rect, fill: Color32) {
+    p.rect_filled(r, CornerRadius::same(R), fill);
+}
+
+/// What a button looks like.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Look {
+    Quiet,
+    Accent,
+    OverPicture,
+}
+
 /// A flat button: an optional icon and a label. Returns whether it was clicked.
 fn button(
     ui: &mut egui::Ui,
@@ -745,6 +803,7 @@ fn button(
     icon: Option<&str>,
     label: &str,
     id: &str,
+    look: Look,
     enabled: bool,
 ) -> bool {
     let resp = ui.interact(
@@ -756,124 +815,188 @@ fn button(
             Sense::hover()
         },
     );
+    let hovered = enabled && resp.hovered();
     let p = ui.painter();
-    let fill = if !enabled {
-        c::PANEL
-    } else if resp.hovered() {
-        c::HOVER
-    } else {
-        c::RAISED
+    let (fill, fg) = match (look, enabled) {
+        (_, false) => (c::PANEL, c::FAINT),
+        (Look::Accent, true) => (
+            if hovered { c::ACCENT_HOVER } else { c::ACCENT },
+            Color32::WHITE,
+        ),
+        (Look::OverPicture, true) => (over_picture(hovered), Color32::WHITE),
+        (Look::Quiet, true) => (if hovered { c::HOVER } else { c::RAISED }, c::TEXT),
     };
-    ui::plate(p, r, 4, fill, c::BORDER);
-    let col = if enabled { c::TEXT } else { c::FAINT };
-    let g = p.layout_no_wrap(label.to_owned(), ui::semi(13.0), col);
-    let icon_w = if icon.is_some() { 24.0 } else { 0.0 };
+    surface(p, r, fill);
+    let g = p.layout_no_wrap(label.to_owned(), ui::semi(13.5), fg);
+    let icon_w = if icon.is_some() { 26.0 } else { 0.0 };
     let x0 = r.center().x - (g.size().x + icon_w) / 2.0;
     if let Some(name) = icon {
-        icons.draw(p, name, Pos2::new(x0 + 8.0, r.center().y), 17.0, col);
+        icons.draw(p, name, Pos2::new(x0 + 8.0, r.center().y), 16.0, fg);
     }
     p.galley(
         Pos2::new(x0 + icon_w, r.center().y - g.size().y / 2.0),
         g,
-        col,
+        fg,
     );
     enabled && resp.clicked()
 }
 
-/// A section title in small spaced capitals, with an icon.
-fn section_title(p: &egui::Painter, icons: &Icons, pos: Pos2, icon: &str, title: &str) {
-    icons.draw(p, icon, pos + Vec2::new(10.0, 10.0), 20.0, c::CYAN);
-    ui::spaced(
-        p,
-        pos + Vec2::new(28.0, 1.0),
-        title,
-        ui::semi(14.0),
-        c::TEXT,
-        1.2,
-    );
+/// A switch. Returns whether it was clicked.
+fn toggle(ui: &mut egui::Ui, r: Rect, on: bool, id: &str) -> bool {
+    let resp = ui.interact(r, ui.id().with(("toggle", id)), Sense::click());
+    let p = ui.painter();
+    let fill = if on {
+        c::ACCENT
+    } else {
+        Color32::from_rgb(0x2b, 0x36, 0x46)
+    };
+    p.rect_filled(r, CornerRadius::same(11), fill);
+    let x = if on {
+        r.right() - 12.0
+    } else {
+        r.left() + 12.0
+    };
+    p.circle_filled(Pos2::new(x, r.center().y), 8.0, Color32::WHITE);
+    resp.clicked()
 }
 
-/// Draws `tex` (`tex_aspect` wide for 1 high) covering `r` with rounded corners, the part
-/// starting at `u0` (0 to 1) of what is left over.
-fn cover(
-    p: &egui::Painter,
-    r: Rect,
-    radius: u8,
-    tex: &TextureHandle,
-    tex_aspect: f32,
-    u0: f32,
-    tint: Color32,
-) {
-    let aspect = r.width() / r.height();
-    let uv = if aspect < tex_aspect {
-        let w = aspect / tex_aspect;
-        let x = (1.0 - w) * u0;
-        Rect::from_min_max(Pos2::new(x, 0.0), Pos2::new(x + w, 1.0))
-    } else {
-        let h = tex_aspect / aspect;
-        let y = (1.0 - h) * 0.45;
-        Rect::from_min_max(Pos2::new(0.0, y), Pos2::new(1.0, y + h))
-    };
-    p.add(RectShape::filled(r, CornerRadius::same(radius), tint).with_texture(tex.id(), uv));
+/// A small caption in spaced capitals.
+fn caption(p: &egui::Painter, pos: Pos2, s: &str) -> Rect {
+    ui::spaced(p, pos, s, ui::semi(11.5), c::MUTED, 1.2)
+}
+
+/// "OTERIA" and "LAUNCHER" in one line, left-aligned on `pos` (the line's middle).
+fn wordmark(p: &egui::Painter, pos: Pos2) {
+    let mut job = LayoutJob::default();
+    job.append(
+        "OTERIA",
+        0.0,
+        TextFormat {
+            font_id: ui::semi(21.0),
+            color: c::TEXT,
+            ..Default::default()
+        },
+    );
+    job.append(
+        "LAUNCHER",
+        8.0,
+        TextFormat {
+            font_id: ui::regular(21.0),
+            color: c::MUTED,
+            ..Default::default()
+        },
+    );
+    let g = p.layout_job(job);
+    let at = Pos2::new(pos.x, pos.y - g.size().y / 2.0);
+    p.galley(at, g, c::TEXT);
 }
 
 impl Launcher {
-    fn sidebar(&mut self, ui: &mut egui::Ui, rect: Rect) {
+    fn top_bar(&mut self, ui: &mut egui::Ui, full: Rect) {
+        let bar = Rect::from_min_size(full.min, Vec2::new(full.width(), TOP_H));
+        // Dragging the bar moves the window; a double click maximises it.
+        let drag = ui.interact(bar, ui.id().with("titlebar"), Sense::click_and_drag());
+        if drag.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if drag.double_clicked() {
+            let m = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!m));
+        }
         let p = ui.painter().clone();
-        p.rect_filled(rect, 0.0, c::SIDEBAR);
-        p.line_segment(
-            [rect.right_top(), rect.right_bottom()],
-            Stroke::new(1.0_f32, c::BORDER),
-        );
         p.image(
             self.logo.id(),
-            Rect::from_center_size(
-                Pos2::new(rect.center().x, rect.top() + 42.0),
-                Vec2::splat(52.0),
+            Rect::from_min_size(
+                Pos2::new(bar.left() + 24.0, bar.top() + 14.0),
+                Vec2::splat(44.0),
             ),
-            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            FULL_UV,
             Color32::WHITE,
         );
+        wordmark(&p, Pos2::new(bar.left() + 80.0, bar.center().y));
+
+        // The account: its face, its name, and the menu.
+        let chip = Rect::from_min_size(
+            Pos2::new(bar.right() - 46.0 * 3.0 - 16.0 - 200.0, bar.top() + 16.0),
+            Vec2::new(200.0, 42.0),
+        );
+        let resp = ui.interact(chip, ui.id().with("account-chip"), Sense::click());
+        surface(
+            &p,
+            chip,
+            if resp.hovered() || self.menu_open {
+                c::HOVER
+            } else {
+                c::RAISED
+            },
+        );
+        ui::draw_head(
+            &p,
+            Rect::from_min_size(chip.min + Vec2::new(9.0, 8.0), Vec2::splat(26.0)),
+            self.skin.as_ref(),
+        );
+        ui::text(
+            &p,
+            Pos2::new(chip.left() + 46.0, chip.center().y),
+            Align2::LEFT_CENTER,
+            &self.name,
+            ui::semi(14.0),
+            c::TEXT,
+        );
+        self.icons.draw(
+            &p,
+            "chevron-down",
+            Pos2::new(chip.right() - 18.0, chip.center().y),
+            12.0,
+            c::MUTED,
+        );
+        if resp.clicked() {
+            self.menu_open = !self.menu_open;
+        }
+        ui::window_controls(ui, bar, &self.icons);
+    }
+
+    fn sidebar(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        let p = ui.painter().clone();
         let items = [
-            (Page::Play, "device-gamepad-2", "JOUER"),
-            (Page::Mods, "puzzle", "MODS"),
-            (Page::Market, "building-store", "MARKETPLACE"),
-            (Page::Settings, "settings", "PARAMÈTRES"),
+            (Page::Play, "controller", "JOUER"),
+            (Page::Mods, "puzzle-fill", "MODS"),
+            (Page::Market, "shop", "MARKETPLACE"),
+            (Page::Settings, "gear-fill", "PARAMÈTRES"),
         ];
         for (i, (page, icon, label)) in items.into_iter().enumerate() {
             let r = Rect::from_min_size(
-                Pos2::new(rect.left() + 8.0, rect.top() + 96.0 + i as f32 * 92.0),
-                Vec2::new(rect.width() - 16.0, 84.0),
+                Pos2::new(rect.left() + 10.0, rect.top() + 14.0 + i as f32 * 88.0),
+                Vec2::new(rect.width() - 20.0, 78.0),
             );
             let resp = ui.interact(r, ui.id().with(("nav", i)), Sense::click());
-            let active = self.page == page || (page == Page::Play && self.page == Page::News);
+            let active = self.page == page
+                || (page == Page::Play && self.page == Page::News)
+                || (page == Page::Settings && self.page == Page::Accounts);
             if active {
-                ui::plate(&p, r, 6, c::SELECTED, ui::alpha(c::ACCENT, 0.55));
+                surface(&p, r, c::SELECTED);
             } else if resp.hovered() {
-                p.rect_filled(r, CornerRadius::same(6), c::RAISED);
+                surface(&p, r, c::RAISED);
             }
             let col = if active || resp.hovered() {
-                c::TEXT
+                Color32::WHITE
             } else {
                 c::MUTED
             };
-            self.icons.draw(
-                &p,
-                icon,
-                r.center() - Vec2::new(0.0, 12.0),
-                30.0,
-                if active { c::CYAN } else { col },
-            );
+            self.icons
+                .draw(&p, icon, r.center() - Vec2::new(0.0, 11.0), 26.0, col);
             ui::text(
                 &p,
-                r.center() + Vec2::new(0.0, 20.0),
+                r.center() + Vec2::new(0.0, 22.0),
                 Align2::CENTER_CENTER,
                 label,
-                ui::semi(11.0),
+                ui::semi(10.5),
                 col,
             );
             if resp.clicked() {
                 self.page = page;
+                self.menu_open = false;
             }
         }
         ui::text(
@@ -886,236 +1009,96 @@ impl Launcher {
         );
     }
 
-    fn top_bar(&mut self, ui: &mut egui::Ui, rect: Rect) {
-        // Dragging the bar moves the window; a double click maximises it.
-        let drag = ui.interact(rect, ui.id().with("titlebar"), Sense::click_and_drag());
-        if drag.drag_started() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        }
-        if drag.double_clicked() {
-            let m = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Maximized(!m));
-        }
-        let p = ui.painter().clone();
-        let x = rect.left() + 28.0;
-        ui::text(
-            &p,
-            Pos2::new(x, rect.top() + 14.0),
-            Align2::LEFT_TOP,
-            "OTERIA",
-            ui::pixel(32.0),
-            c::TEXT,
-        );
-        ui::spaced(
-            &p,
-            Pos2::new(x + 2.0, rect.top() + 50.0),
-            "LAUNCHER",
-            ui::semi(11.0),
-            c::MUTED,
-            3.4,
-        );
-
-        // The account.
-        let w = 220.0;
-        let acc = Rect::from_min_size(
-            Pos2::new(rect.right() - 46.0 * 3.0 - 16.0 - w, rect.top() + 18.0),
-            Vec2::new(w, 44.0),
-        );
-        let resp = ui.interact(acc, ui.id().with("account"), Sense::click());
-        ui::plate(
-            &p,
-            acc,
-            6,
-            if resp.hovered() { c::HOVER } else { c::RAISED },
-            c::BORDER,
-        );
-        let head = Rect::from_min_size(acc.min + Vec2::new(8.0, 8.0), Vec2::splat(28.0));
-        ui::draw_head(&p, head, self.skin.as_ref());
-        ui::text(
-            &p,
-            Pos2::new(head.right() + 12.0, acc.center().y),
-            Align2::LEFT_CENTER,
-            &self.name,
-            ui::semi(14.0),
-            c::TEXT,
-        );
-        self.icons.draw(
-            &p,
-            "chevron-right",
-            Pos2::new(acc.right() - 18.0, acc.center().y),
-            16.0,
-            c::MUTED,
-        );
-        if resp.clicked() {
-            self.page = Page::Settings;
-        }
-        ui::window_controls(ui, rect, &self.icons);
-    }
-
     fn play_page(&mut self, ui: &mut egui::Ui, body: Rect) {
-        let side_w = 340.0;
-        let gap = 24.0;
+        let side_w = 320.0;
+        let gap = 22.0;
         let main = Rect::from_min_max(
-            body.min + Vec2::new(0.0, 4.0),
+            body.min,
             Pos2::new(body.right() - side_w - gap, body.bottom()),
         );
-        let side = Rect::from_min_max(Pos2::new(main.right() + gap, main.top()), body.max);
-        let hero_h = (main.height() * 0.6).clamp(330.0, 460.0);
-        let hero = Rect::from_min_size(main.min, Vec2::new(main.width(), hero_h));
+        let side = Rect::from_min_max(Pos2::new(main.right() + gap, body.top()), body.max);
+        let hero = Rect::from_min_size(main.min, Vec2::new(main.width(), main.height() * 0.64));
         self.hero(ui, hero);
 
         let p = ui.painter().clone();
-        let news_top = hero.bottom() + 24.0;
-        section_title(
-            &p,
-            &self.icons,
-            Pos2::new(main.left(), news_top),
-            "news",
-            "DERNIÈRES ACTUALITÉS",
-        );
-        let all = Rect::from_min_size(
-            Pos2::new(main.right() - 96.0, news_top),
-            Vec2::new(96.0, 22.0),
-        );
-        let resp = ui.interact(all, ui.id().with("all-news"), Sense::click());
-        let col = if resp.hovered() { c::TEXT } else { c::CYAN };
+        let top = hero.bottom() + 22.0;
+        let news_w = main.width() * 0.64;
         ui::text(
             &p,
-            Pos2::new(all.right() - 18.0, all.center().y),
-            Align2::RIGHT_CENTER,
-            "Tout voir",
-            ui::medium(13.0),
-            col,
+            Pos2::new(main.left(), top),
+            Align2::LEFT_TOP,
+            "ACTUALITÉS",
+            ui::semi(15.0),
+            c::TEXT,
         );
-        self.icons.draw(
+        let cards = Rect::from_min_max(
+            Pos2::new(main.left(), top + 32.0),
+            Pos2::new(main.left() + news_w, main.bottom()),
+        );
+        self.news_cards(ui, cards);
+        let fx = main.left() + news_w + 30.0;
+        ui::text(
             &p,
-            "chevron-right",
-            Pos2::new(all.right() - 7.0, all.center().y),
-            15.0,
-            col,
+            Pos2::new(fx, top),
+            Align2::LEFT_TOP,
+            "AMIS",
+            ui::semi(15.0),
+            c::TEXT,
         );
-        if resp.clicked() {
-            self.page = Page::News;
-        }
-        let cards_top = news_top + 36.0;
-        let news = self.news();
-        let h = (main.bottom() - cards_top).max(120.0);
-        if news.is_empty() {
-            let r = Rect::from_min_max(Pos2::new(main.left(), cards_top), main.max);
-            ui::plate(&p, r, 6, c::PANEL, c::BORDER);
-            ui::text(
-                &p,
-                r.center(),
-                Align2::CENTER_CENTER,
-                "Pas d'actualité pour le moment.",
-                ui::regular(13.0),
-                c::MUTED,
-            );
-        }
-        let gap = 18.0;
-        let w = (main.width() - gap) / 2.0;
-        for (i, item) in news.iter().take(2).enumerate() {
-            let r = Rect::from_min_size(
-                Pos2::new(main.left() + i as f32 * (w + gap), cards_top),
-                Vec2::new(w, h),
-            );
-            self.news_card(ui, r, item, i);
-        }
-        self.side_column(ui, side);
+        ui::wrapped(
+            &p,
+            Pos2::new(fx, top + 34.0),
+            "Aucun ami pour l'instant. Connecte un compte Microsoft pour en ajouter.",
+            ui::regular(13.5),
+            c::MUTED,
+            main.right() - fx,
+            4,
+        );
+        self.partner_servers(ui, side);
     }
 
     fn hero(&mut self, ui: &mut egui::Ui, r: Rect) {
         let p = ui.painter().clone();
-        match self.panorama.get(3) {
-            Some(tex) => {
-                cover(&p, r, 8, tex, 1.0, 0.5, Color32::WHITE);
-                p.add(
-                    RectShape::filled(r, CornerRadius::same(8), Color32::WHITE).with_texture(
-                        self.scrim.id(),
-                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    ),
-                );
-            }
-            None => {
-                p.rect_filled(
-                    r,
-                    CornerRadius::same(8),
-                    Color32::from_rgb(0x0f, 0x22, 0x38),
-                );
-            }
-        }
-        p.rect_stroke(
-            r,
-            CornerRadius::same(8),
-            Stroke::new(1.0_f32, c::BORDER),
-            StrokeKind::Inside,
-        );
+        cover(&p, r, R, &self.background, 0.5, Color32::WHITE);
+        shade(&p, r, R, &self.hero_shade);
 
-        // The player on the right, with a name tag as the game draws one.
-        let ph = r.height() * 0.7;
-        let feet = Pos2::new(r.right() - r.width() * 0.19, r.bottom() - r.height() * 0.08);
+        // The main button and the two small ones, then the player standing behind the button.
+        let btn = Rect::from_center_size(
+            Pos2::new(r.center().x, r.bottom() - 16.0 - 40.0 - 12.0 - 32.0),
+            Vec2::new(300.0, 64.0),
+        );
+        let fig_bottom = btn.top() + 24.0;
+        let fig_h = (fig_bottom - (r.top() + 70.0)).max(120.0);
         let fig = Rect::from_min_max(
-            Pos2::new(feet.x - ph / 4.0, feet.y - ph),
-            Pos2::new(feet.x + ph / 4.0, feet.y),
+            Pos2::new(r.center().x - fig_h / 4.0, fig_bottom - fig_h),
+            Pos2::new(r.center().x + fig_h / 4.0, fig_bottom),
         );
         ui::draw_player(&p.with_clip_rect(r), fig, self.skin.as_ref());
-        let g = p.layout_no_wrap(self.name.clone(), ui::semi(13.0), Color32::WHITE);
+        let g = p.layout_no_wrap(self.name.clone(), ui::pixel(15.0), Color32::WHITE);
         let tag = Rect::from_center_size(
-            Pos2::new(feet.x, fig.top() - 20.0),
-            g.size() + Vec2::new(14.0, 6.0),
+            Pos2::new(r.center().x, fig.top() - 22.0),
+            g.size() + Vec2::new(24.0, 12.0),
         );
-        p.rect_filled(tag, 0.0, Color32::from_black_alpha(110));
-        p.galley(tag.min + Vec2::new(7.0, 3.0), g, Color32::WHITE);
+        p.rect_filled(
+            tag,
+            CornerRadius::same(4),
+            Color32::from_rgba_unmultiplied(8, 12, 18, 170),
+        );
+        p.galley(tag.min + Vec2::new(12.0, 6.0), g, Color32::WHITE);
 
-        // The title, with the hard shadow of the game's own titles.
-        let x = r.left() + 40.0;
-        let ty = r.top() + 36.0;
-        ui::text(
-            &p,
-            Pos2::new(x + 4.0, ty + 4.0),
-            Align2::LEFT_TOP,
-            "OTERIA",
-            ui::pixel(78.0),
-            Color32::from_black_alpha(150),
-        );
-        ui::text(
-            &p,
-            Pos2::new(x, ty),
-            Align2::LEFT_TOP,
-            "OTERIA",
-            ui::pixel(78.0),
-            Color32::WHITE,
-        );
-        ui::spaced(
-            &p,
-            Pos2::new(x + 4.0, ty + 94.0),
-            &format!(
-                "CLIENT PVP  ·  MINECRAFT JAVA {}",
-                oteria_dist::MINECRAFT_VERSION
-            ),
-            ui::semi(13.0),
-            Color32::from_rgb(0xc9, 0xd6, 0xe6),
-            2.0,
-        );
-
-        let btn = Rect::from_min_size(
-            Pos2::new(x, r.bottom() - 32.0 - 44.0 - 62.0 - 66.0),
-            Vec2::new(366.0, 66.0),
-        );
         self.main_button(ui, btn);
-        self.status_line(&p, Pos2::new(x, btn.bottom() + 12.0), btn.width());
-
-        let row_y = btn.bottom() + 62.0;
-        let b1 = Rect::from_min_size(Pos2::new(x, row_y), Vec2::new(178.0, 44.0));
-        let b2 = Rect::from_min_size(Pos2::new(b1.right() + 10.0, row_y), Vec2::new(178.0, 44.0));
+        let row_y = btn.bottom() + 12.0;
+        let w = 176.0;
+        let b1 = Rect::from_min_size(Pos2::new(r.center().x - w - 5.0, row_y), Vec2::new(w, 40.0));
+        let b2 = Rect::from_min_size(Pos2::new(r.center().x + 5.0, row_y), Vec2::new(w, 40.0));
         if button(
             ui,
             &self.icons,
             b1,
-            Some("folder"),
+            Some("folder2-open"),
             "Dossier du jeu",
             "game-folder",
+            Look::OverPicture,
             true,
         ) {
             open_folder(&self.game_dir);
@@ -1124,27 +1107,68 @@ impl Launcher {
             ui,
             &self.icons,
             b2,
-            Some("external-link"),
+            Some("box-arrow-up-right"),
             "Captures d'écran",
             "screenshots",
+            Look::OverPicture,
             true,
         ) {
             open_folder(&self.game_dir.join("screenshots"));
         }
+
+        // What just happened, in the corner.
+        let text = match (&self.notice, &self.phase) {
+            (Some((t, col)), _) => Some((t.clone(), *col)),
+            (None, Phase::Failed(e)) => Some((e.clone(), c::BAD)),
+            (None, Phase::NeedDownload { update: true }) => {
+                Some(("Une mise à jour est nécessaire pour jouer.".into(), c::WARN))
+            }
+            (None, Phase::NeedDownload { update: false }) => Some((
+                "Le jeu n'est pas encore installé sur ce PC.".into(),
+                Color32::WHITE,
+            )),
+            _ => None,
+        };
+        if let Some((t, col)) = text {
+            ui::wrapped(
+                &p,
+                Pos2::new(r.left() + 22.0, r.bottom() - 40.0),
+                &t,
+                ui::medium(13.0),
+                ui::lerp(col, Color32::WHITE, 0.35),
+                r.width() * 0.3,
+                2,
+            );
+        }
     }
 
     fn main_button(&mut self, ui: &mut egui::Ui, btn: Rect) {
-        let (label, icon, enabled, danger) = match &self.phase {
-            Phase::Checking => ("RECHERCHE…", "refresh", false, false),
-            Phase::SelfUpdating { .. } => ("MISE À JOUR…", "refresh", false, false),
-            Phase::NeedDownload { update: false } => ("TÉLÉCHARGER", "download", true, false),
-            Phase::NeedDownload { update: true } => ("METTRE À JOUR", "download", true, false),
-            Phase::Downloading => ("TÉLÉCHARGEMENT…", "download", false, false),
-            Phase::Ready => ("JOUER", "player-play-filled", true, false),
-            Phase::Launching { .. } | Phase::Running => {
-                ("ARRÊTER LE JEU", "player-stop-filled", true, true)
+        let latest = self.report.client_latest.clone().unwrap_or_default();
+        let installed = self.state.client_version.clone().unwrap_or_default();
+        let game = format!(
+            "Oteria {installed} · Minecraft {}",
+            oteria_dist::MINECRAFT_VERSION
+        );
+        let (label, sub, enabled, danger) = match &self.phase {
+            Phase::Checking => ("RECHERCHE…", "Mises à jour".to_owned(), false, false),
+            Phase::SelfUpdating { .. } => {
+                ("MISE À JOUR…", "Le launcher redémarre".into(), false, false)
             }
-            Phase::Failed(_) => ("RÉESSAYER", "refresh", true, false),
+            Phase::NeedDownload { update: false } => {
+                ("TÉLÉCHARGER", format!("Oteria {latest}"), true, false)
+            }
+            Phase::NeedDownload { update: true } => (
+                "METTRE À JOUR",
+                format!("{installed} → {latest}"),
+                true,
+                false,
+            ),
+            Phase::Downloading => ("INSTALLATION…", String::new(), false, false),
+            Phase::Ready => ("JOUER", game, true, false),
+            Phase::Launching { .. } | Phase::Running => {
+                ("ARRÊTER LE JEU", "Le jeu est ouvert".into(), true, true)
+            }
+            Phase::Failed(_) => ("RÉESSAYER", "Source injoignable".into(), true, false),
         };
         let resp = ui.interact(
             btn,
@@ -1159,333 +1183,170 @@ impl Launcher {
         let hovered = enabled && resp.hovered();
         let (fill, edge) = match (enabled, danger, hovered) {
             (false, _, _) => (
-                Color32::from_rgb(0x1f, 0x35, 0x50),
-                Color32::from_rgb(0x17, 0x28, 0x3e),
+                Color32::from_rgb(0x2a, 0x3a, 0x4d),
+                Color32::from_rgb(0x20, 0x2d, 0x3d),
             ),
             (true, true, false) => (c::BAD, c::BAD_EDGE),
             (true, true, true) => (c::BAD_HOVER, c::BAD_EDGE),
             (true, false, false) => (c::ACCENT, c::ACCENT_EDGE),
             (true, false, true) => (c::ACCENT_HOVER, c::ACCENT_EDGE),
         };
-        // A darker edge at the bottom, as the game's own buttons have.
-        p.rect_filled(btn, CornerRadius::same(6), edge);
+        // A darker edge under the face, as the game's own buttons have.
+        surface(&p, btn, edge);
         let face = Rect::from_min_max(btn.min, btn.max - Vec2::new(0.0, 4.0));
-        p.rect_filled(face, CornerRadius::same(6), fill);
-        let fg = if enabled { Color32::WHITE } else { c::MUTED };
-        let g = p.layout_no_wrap(label.to_owned(), ui::semi(21.0), fg);
-        let total = 30.0 + g.size().x;
-        let x0 = face.center().x - total / 2.0;
-        self.icons
-            .draw(&p, icon, Pos2::new(x0 + 11.0, face.center().y), 24.0, fg);
-        p.galley(
-            Pos2::new(x0 + 32.0, face.center().y - g.size().y / 2.0),
-            g,
+        surface(&p, face, fill);
+        let fg = if enabled {
+            Color32::WHITE
+        } else {
+            Color32::from_gray(190)
+        };
+        let two = !sub.is_empty();
+        ui::text(
+            &p,
+            Pos2::new(
+                face.center().x,
+                face.center().y - if two { 9.0 } else { 0.0 },
+            ),
+            Align2::CENTER_CENTER,
+            label,
+            ui::semi(19.0),
             fg,
         );
+        if two {
+            ui::text(
+                &p,
+                Pos2::new(face.center().x, face.center().y + 14.0),
+                Align2::CENTER_CENTER,
+                &sub,
+                ui::regular(12.0),
+                ui::alpha(fg, 0.82),
+            );
+        }
         if enabled && resp.clicked() {
             self.main_action();
         }
     }
 
-    /// What the main button is doing, beside it: the download's progress, or a short message.
-    fn status_line(&self, p: &egui::Painter, pos: Pos2, width: f32) {
-        let version = match (
-            &self.phase,
-            &self.report.client_latest,
-            &self.state.client_version,
-        ) {
-            (Phase::NeedDownload { update: true }, Some(new), Some(old)) => {
-                format!("Mise à jour obligatoire : {old} → {new}")
-            }
-            (Phase::NeedDownload { update: false }, Some(new), _) => {
-                format!("Oteria {new} · première installation")
-            }
-            (_, _, Some(v)) => format!("Oteria {v} · Minecraft {}", oteria_dist::MINECRAFT_VERSION),
-            _ => String::new(),
-        };
-        if let Some(d) = &self.download {
-            let stage = match d.stage.as_str() {
-                "download" => "Téléchargement du client",
-                "extract" => "Installation",
-                "minecraft" => "Minecraft (serveurs de Mojang)",
-                "java" => "Java (serveurs de Mojang)",
-                "resources" => "Préparation du jeu",
-                other => other,
-            };
+    fn news_cards(&mut self, ui: &mut egui::Ui, area: Rect) {
+        let p = ui.painter().clone();
+        let news = self.news();
+        if news.is_empty() {
             ui::text(
-                p,
-                pos,
+                &p,
+                area.min,
                 Align2::LEFT_TOP,
-                stage,
-                ui::semi(13.0),
-                Color32::WHITE,
+                "Pas d'actualité pour le moment.",
+                ui::regular(13.5),
+                c::MUTED,
             );
-            let k = d.fraction.clamp(0.0, 1.0);
-            ui::text(
-                p,
-                pos + Vec2::new(width, 0.0),
-                Align2::RIGHT_TOP,
-                &format!("{:.0} %", k * 100.0),
-                ui::semi(13.0),
-                c::CYAN,
-            );
-            let bar = Rect::from_min_size(pos + Vec2::new(0.0, 24.0), Vec2::new(width, 6.0));
-            p.rect_filled(bar, CornerRadius::same(2), Color32::from_white_alpha(28));
-            p.rect_filled(
-                Rect::from_min_size(bar.min, Vec2::new(bar.width() * k, 6.0)),
-                CornerRadius::same(2),
-                c::ACCENT_HOVER,
-            );
-            if !d.note.is_empty() {
-                ui::wrapped(
-                    p,
-                    bar.left_bottom() + Vec2::new(0.0, 8.0),
-                    &d.note,
-                    ui::regular(12.0),
-                    Color32::from_rgb(0xb5, 0xc3, 0xd6),
-                    width,
-                    1,
-                );
-            }
             return;
         }
-        ui::text(
-            p,
-            pos,
-            Align2::LEFT_TOP,
-            &version,
-            ui::semi(13.0),
-            Color32::WHITE,
-        );
-        let (text, col) = match (&self.notice, &self.phase) {
-            (Some((t, col)), _) => (t.clone(), *col),
-            (None, Phase::Failed(e)) => (e.clone(), c::BAD),
-            (None, Phase::NeedDownload { update: true }) => {
-                ("Télécharge la mise à jour pour jouer.".into(), c::WARN)
+        let gap = 16.0;
+        let w = (area.width() - gap) / 2.0;
+        for (i, item) in news.iter().take(2).enumerate() {
+            let r = Rect::from_min_size(
+                Pos2::new(area.left() + i as f32 * (w + gap), area.top()),
+                Vec2::new(w, area.height()),
+            );
+            let resp = ui.interact(r, ui.id().with(("news", i)), Sense::click());
+            cover(
+                &p,
+                r,
+                R,
+                &self.background,
+                i as f32,
+                Color32::from_gray(if resp.hovered() { 255 } else { 235 }),
+            );
+            shade(&p, r, R, &self.card_shade);
+            let mut job = LayoutJob::simple(
+                item.title.clone(),
+                ui::semi(16.0),
+                Color32::WHITE,
+                r.width() - 36.0,
+            );
+            job.wrap.max_rows = 2;
+            let g = p.layout_job(job);
+            let date = format!("{}  ·  {}", item.date, item.tag);
+            let y = r.bottom() - 18.0 - 16.0 - 6.0 - g.size().y;
+            p.galley(Pos2::new(r.left() + 18.0, y), g, Color32::WHITE);
+            ui::text(
+                &p,
+                Pos2::new(r.left() + 18.0, r.bottom() - 18.0),
+                Align2::LEFT_BOTTOM,
+                &date,
+                ui::regular(12.0),
+                Color32::from_gray(200),
+            );
+            if resp.clicked() {
+                self.page = Page::News;
             }
-            (None, Phase::NeedDownload { update: false }) => (
-                "Le jeu n'est pas encore installé sur ce PC.".into(),
-                Color32::from_rgb(0xb5, 0xc3, 0xd6),
-            ),
-            (None, Phase::Ready) => ("Prêt à jouer.".into(), c::GOOD),
-            (None, Phase::Launching { .. }) => (
-                "Le jeu démarre…".into(),
-                Color32::from_rgb(0xb5, 0xc3, 0xd6),
-            ),
-            (None, Phase::Running) => ("Le jeu est ouvert.".into(), c::GOOD),
-            (None, Phase::Checking) => (
-                "Recherche de mises à jour…".into(),
-                Color32::from_rgb(0xb5, 0xc3, 0xd6),
-            ),
-            _ => return,
-        };
-        let y = pos.y + 24.0;
-        p.rect_filled(
-            Rect::from_min_size(Pos2::new(pos.x, y + 5.0), Vec2::splat(7.0)),
-            0.0,
-            col,
-        );
-        ui::wrapped(
-            p,
-            Pos2::new(pos.x + 15.0, y),
-            &text,
-            ui::medium(13.0),
-            ui::lerp(col, Color32::WHITE, 0.4),
-            width - 15.0,
-            2,
-        );
+        }
     }
 
-    fn news_card(&self, ui: &mut egui::Ui, r: Rect, item: &NewsItem, index: usize) {
-        let resp = ui.interact(r, ui.id().with(("news", index)), Sense::hover());
+    fn partner_servers(&mut self, ui: &mut egui::Ui, side: Rect) {
         let p = ui.painter().clone();
-        ui::plate(
-            &p,
-            r,
-            6,
-            if resp.hovered() { c::RAISED } else { c::PANEL },
-            c::BORDER,
+        // The title with a line on each side.
+        let y = side.top() + 12.0;
+        let g = p.layout_no_wrap("SERVEURS PARTENAIRES".into(), ui::semi(11.5), c::MUTED);
+        let tx = side.center().x - g.size().x / 2.0;
+        p.line_segment(
+            [
+                Pos2::new(side.left(), y + 7.0),
+                Pos2::new(tx - 12.0, y + 7.0),
+            ],
+            Stroke::new(1.0_f32, c::BORDER),
         );
-        // The player's own panorama as the picture; text alone before the game is installed.
-        let img_h = if self.panorama.is_empty() {
-            0.0
-        } else {
-            (r.height() - 92.0).max(0.0)
-        };
-        if img_h > 40.0 {
-            let img = Rect::from_min_size(
-                r.min + Vec2::new(1.0, 1.0),
-                Vec2::new(r.width() - 2.0, img_h),
-            );
-            match self.panorama.get(index) {
-                Some(tex) => cover(&p, img, 5, tex, 1.0, 0.5, Color32::from_gray(225)),
-                None => {
-                    p.rect_filled(
-                        img,
-                        CornerRadius::same(5),
-                        Color32::from_rgb(0x13, 0x26, 0x3e),
-                    );
-                }
-            }
-            // Square corners where the image meets the text.
-            p.rect_filled(
-                Rect::from_min_max(
-                    Pos2::new(img.left(), img.bottom() - 6.0),
-                    img.right_bottom(),
-                ),
-                0.0,
-                c::PANEL,
-            );
-            p.rect_filled(
-                Rect::from_min_max(
-                    Pos2::new(img.left(), img.bottom() - 6.0),
-                    Pos2::new(img.right(), img.bottom() - 5.0),
-                ),
-                0.0,
-                c::BORDER,
-            );
-        }
-        let x = r.left() + 18.0;
-        let y = r.top() + img_h.max(0.0) + 10.0;
-        let col = tag_colour(&item.tag);
-        p.rect_filled(
-            Rect::from_min_size(Pos2::new(x, y + 6.0), Vec2::splat(9.0)),
-            0.0,
-            col,
+        p.line_segment(
+            [
+                Pos2::new(tx + g.size().x + 12.0, y + 7.0),
+                Pos2::new(side.right(), y + 7.0),
+            ],
+            Stroke::new(1.0_f32, c::BORDER),
         );
-        ui::wrapped(
-            &p,
-            Pos2::new(x + 18.0, y),
-            &item.title,
-            ui::semi(16.0),
-            c::TEXT,
-            r.width() - 140.0,
-            1,
-        );
-        ui::wrapped(
-            &p,
-            Pos2::new(x, y + 28.0),
-            &item.body,
-            ui::regular(13.0),
-            c::MUTED,
-            r.width() - 64.0,
-            if img_h > 0.0 { 2 } else { 5 },
-        );
-        ui::text(
-            &p,
-            Pos2::new(r.right() - 18.0, y + 3.0),
-            Align2::RIGHT_TOP,
-            &item.date,
-            ui::regular(12.0),
-            c::FAINT,
-        );
-    }
-
-    fn side_column(&mut self, ui: &mut egui::Ui, side: Rect) {
-        let p = ui.painter().clone();
-        // The account.
-        let acc = Rect::from_min_size(side.min, Vec2::new(side.width(), 88.0));
-        let resp = ui.interact(acc, ui.id().with("account-card"), Sense::click());
-        let fill = if resp.hovered() {
-            Color32::from_rgb(0x15, 0x5a, 0x90)
-        } else {
-            Color32::from_rgb(0x12, 0x4d, 0x7c)
-        };
-        ui::plate(&p, acc, 6, fill, ui::alpha(c::ACCENT, 0.6));
-        let head = Rect::from_min_size(acc.min + Vec2::new(20.0, 20.0), Vec2::splat(48.0));
-        ui::draw_head(&p, head, self.skin.as_ref());
-        ui::text(
-            &p,
-            Pos2::new(head.right() + 16.0, acc.top() + 26.0),
-            Align2::LEFT_TOP,
-            &self.name,
-            ui::semi(18.0),
-            Color32::WHITE,
-        );
-        p.rect_filled(
-            Rect::from_min_size(
-                Pos2::new(head.right() + 16.0, acc.top() + 55.0),
-                Vec2::splat(8.0),
-            ),
-            0.0,
-            c::WARN,
-        );
-        ui::text(
-            &p,
-            Pos2::new(head.right() + 30.0, acc.top() + 59.0),
-            Align2::LEFT_CENTER,
-            "Compte hors ligne",
-            ui::regular(13.0),
-            Color32::from_rgb(0xc9, 0xd6, 0xe6),
-        );
-        self.icons.draw(
-            &p,
-            "chevron-right",
-            Pos2::new(acc.right() - 22.0, acc.center().y),
-            20.0,
-            Color32::WHITE,
-        );
-        if resp.clicked() {
-            self.page = Page::Settings;
-        }
-
-        // Partner servers.
-        let mut y = acc.bottom() + 24.0;
-        section_title(
-            &p,
-            &self.icons,
-            Pos2::new(side.left(), y),
-            "server",
-            "SERVEURS PARTENAIRES",
-        );
-        y += 34.0;
+        p.galley(Pos2::new(tx, y), g, c::MUTED);
         let servers = self.report.servers.clone();
-        let list_h = if servers.is_empty() {
-            64.0
-        } else {
-            16.0 + servers.len().min(4) as f32 * 62.0
-        };
-        let list = Rect::from_min_size(Pos2::new(side.left(), y), Vec2::new(side.width(), list_h));
-        ui::plate(&p, list, 6, c::PANEL, c::BORDER);
         if servers.is_empty() {
             ui::text(
                 &p,
-                list.left_center() + Vec2::new(18.0, 0.0),
-                Align2::LEFT_CENTER,
-                "Aucun serveur partenaire pour l'instant.",
-                ui::regular(13.0),
+                Pos2::new(side.center().x, y + 44.0),
+                Align2::CENTER_CENTER,
+                "Aucun serveur pour le moment.",
+                ui::regular(13.5),
                 c::MUTED,
             );
+            return;
         }
         let can_join = matches!(self.phase, Phase::Ready);
-        for (i, s) in servers.iter().take(4).enumerate() {
+        for (i, s) in servers.iter().take(7).enumerate() {
             let row = Rect::from_min_size(
-                Pos2::new(list.left() + 8.0, list.top() + 8.0 + i as f32 * 62.0),
-                Vec2::new(list.width() - 16.0, 58.0),
+                Pos2::new(side.left(), y + 34.0 + i as f32 * 76.0),
+                Vec2::new(side.width(), 68.0),
             );
-            let ic = Rect::from_min_size(row.min + Vec2::new(8.0, 9.0), Vec2::splat(40.0));
-            p.rect_filled(ic, CornerRadius::same(4), c::RAISED);
-            self.icons.draw(&p, "server", ic.center(), 22.0, c::CYAN);
+            surface(&p, row, c::PANEL);
+            let ic = Rect::from_min_size(row.min + Vec2::new(14.0, 14.0), Vec2::splat(40.0));
+            surface(&p, ic, c::RAISED);
+            self.icons
+                .draw(&p, "hdd-network", ic.center(), 20.0, c::MUTED);
             ui::text(
                 &p,
-                Pos2::new(ic.right() + 12.0, row.top() + 12.0),
+                Pos2::new(ic.right() + 14.0, row.top() + 16.0),
                 Align2::LEFT_TOP,
                 &s.name,
-                ui::semi(14.0),
+                ui::semi(15.0),
                 c::TEXT,
             );
             ui::wrapped(
                 &p,
-                Pos2::new(ic.right() + 12.0, row.top() + 32.0),
+                Pos2::new(ic.right() + 14.0, row.top() + 38.0),
                 &s.address,
-                ui::regular(12.0),
+                ui::regular(12.5),
                 c::MUTED,
-                row.width() - 160.0,
+                row.width() - 170.0,
                 1,
             );
             let join = Rect::from_min_size(
-                Pos2::new(row.right() - 88.0, row.center().y - 16.0),
-                Vec2::new(80.0, 32.0),
+                Pos2::new(row.right() - 96.0, row.center().y - 17.0),
+                Vec2::new(82.0, 34.0),
             );
             if button(
                 ui,
@@ -1494,126 +1355,48 @@ impl Launcher {
                 None,
                 "Rejoindre",
                 &format!("join-{i}"),
+                Look::Quiet,
                 can_join,
             ) {
                 let addr = s.address.clone();
                 self.launch(Some(&addr));
             }
         }
-
-        // Friends: they come with Microsoft accounts.
-        y = list.bottom() + 24.0;
-        section_title(&p, &self.icons, Pos2::new(side.left(), y), "users", "AMIS");
-        y += 34.0;
-        let friends = Rect::from_min_size(Pos2::new(side.left(), y), Vec2::new(side.width(), 84.0));
-        ui::plate(&p, friends, 6, c::PANEL, c::BORDER);
-        ui::wrapped(&p, friends.min + Vec2::new(18.0, 18.0), "Connecte un compte Microsoft pour voir tes amis et les rejoindre. La connexion arrive bientôt dans Oteria.", ui::regular(13.0), c::MUTED, friends.width() - 36.0, 4);
     }
 
-    fn self_update_overlay(&self, ui: &mut egui::Ui, full: Rect, version: &str, t: f32) {
-        let p = ui.painter();
-        p.rect_filled(full, 0.0, c::BG);
-        let cn = full.center();
-        p.image(
-            self.logo.id(),
-            Rect::from_center_size(cn - Vec2::new(0.0, 70.0), Vec2::splat(88.0)),
-            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-            Color32::WHITE,
-        );
+    fn page_title(&self, p: &egui::Painter, body: Rect, title: &str) -> f32 {
         ui::text(
             p,
-            cn + Vec2::new(0.0, 4.0),
-            Align2::CENTER_CENTER,
-            "Mise à jour du launcher",
-            ui::semi(22.0),
-            c::TEXT,
-        );
-        ui::text(
-            p,
-            cn + Vec2::new(0.0, 36.0),
-            Align2::CENTER_CENTER,
-            &format!(
-                "v{} → v{version}, le launcher redémarre tout seul",
-                oteria_dist::LAUNCHER_VERSION
-            ),
-            ui::regular(14.0),
-            c::MUTED,
-        );
-        let bar = Rect::from_center_size(cn + Vec2::new(0.0, 72.0), Vec2::new(280.0, 6.0));
-        p.rect_filled(bar, CornerRadius::same(2), c::RAISED);
-        let k = (t / 1.4).clamp(0.0, 1.0);
-        p.rect_filled(
-            Rect::from_min_size(bar.min, Vec2::new(bar.width() * k, 6.0)),
-            CornerRadius::same(2),
-            c::ACCENT,
-        );
-        ui.ctx().request_repaint();
-    }
-
-    /// A page's title and its line of explanation; returns where the page's content starts.
-    fn page_head(&self, p: &egui::Painter, body: Rect, title: &str, subtitle: &str) -> f32 {
-        ui::text(
-            p,
-            body.min + Vec2::new(0.0, 8.0),
+            body.min + Vec2::new(4.0, 6.0),
             Align2::LEFT_TOP,
             title,
             ui::semi(26.0),
             c::TEXT,
         );
-        ui::text(
-            p,
-            body.min + Vec2::new(0.0, 46.0),
-            Align2::LEFT_TOP,
-            subtitle,
-            ui::regular(14.0),
-            c::MUTED,
-        );
-        body.top() + 86.0
-    }
-
-    /// A page with nothing in it yet.
-    fn empty_state(&self, p: &egui::Painter, area: Rect, icon: &str, title: &str, line: &str) {
-        ui::plate(p, area, 6, c::PANEL, c::BORDER);
-        let cn = area.center() - Vec2::new(0.0, 30.0);
-        self.icons.draw(p, icon, cn, 52.0, c::FAINT);
-        ui::text(
-            p,
-            cn + Vec2::new(0.0, 50.0),
-            Align2::CENTER_CENTER,
-            title,
-            ui::semi(17.0),
-            c::TEXT,
-        );
-        ui::text(
-            p,
-            cn + Vec2::new(0.0, 76.0),
-            Align2::CENTER_CENTER,
-            line,
-            ui::regular(13.5),
-            c::MUTED,
-        );
+        body.top() + 62.0
     }
 
     fn mods_page(&mut self, ui: &mut egui::Ui, body: Rect) {
         let p = ui.painter().clone();
-        let top = self.page_head(&p, body, "Mods", "Les mods installés pour Oteria Client.");
-        let mods_dir = self.game_dir.join("mods");
+        let top = self.page_title(&p, body, "Mods");
+        let dir = self.game_dir.join("mods");
         let open = Rect::from_min_size(
-            Pos2::new(body.right() - 210.0, body.top() + 14.0),
-            Vec2::new(210.0, 40.0),
+            Pos2::new(body.right() - 230.0, body.top() + 4.0),
+            Vec2::new(230.0, 40.0),
         );
         if button(
             ui,
             &self.icons,
             open,
-            Some("folder"),
+            Some("folder2-open"),
             "Ouvrir le dossier des mods",
             "open-mods",
+            Look::Quiet,
             true,
         ) {
-            open_folder(&mods_dir);
+            open_folder(&dir);
         }
-        let mut files: Vec<(String, u64)> = std::fs::read_dir(&mods_dir)
+        let mut files: Vec<(String, u64)> = std::fs::read_dir(&dir)
             .into_iter()
             .flatten()
             .flatten()
@@ -1626,48 +1409,39 @@ impl Launcher {
             })
             .collect();
         files.sort();
-        let area = Rect::from_min_max(Pos2::new(body.left(), top), body.max);
         if files.is_empty() {
-            self.empty_state(
+            ui::text(
                 &p,
-                area,
-                "puzzle",
-                "Aucun mod installé",
-                "Les mods pour Oteria arrivent bientôt : ils apparaîtront ici.",
+                Pos2::new(body.left() + 4.0, top + 4.0),
+                Align2::LEFT_TOP,
+                "Aucun mod installé.",
+                ui::regular(14.0),
+                c::MUTED,
             );
             return;
         }
-        ui::plate(&p, area, 6, c::PANEL, c::BORDER);
         for (i, (name, size)) in files.iter().enumerate() {
             let row = Rect::from_min_size(
-                Pos2::new(area.left(), area.top() + i as f32 * 52.0),
-                Vec2::new(area.width(), 52.0),
+                Pos2::new(body.left(), top + i as f32 * 64.0),
+                Vec2::new(body.width().min(900.0), 56.0),
             );
-            if row.bottom() > area.bottom() {
+            if row.bottom() > body.bottom() {
                 break;
             }
-            if i > 0 {
-                p.line_segment(
-                    [
-                        row.left_top() + Vec2::new(16.0, 0.0),
-                        row.right_top() - Vec2::new(16.0, 0.0),
-                    ],
-                    Stroke::new(1.0_f32, c::BORDER),
-                );
-            }
+            surface(&p, row, c::PANEL);
             self.icons.draw(
                 &p,
-                "puzzle",
-                Pos2::new(row.left() + 32.0, row.center().y),
-                22.0,
-                c::CYAN,
+                "puzzle-fill",
+                Pos2::new(row.left() + 30.0, row.center().y),
+                20.0,
+                c::MUTED,
             );
             ui::text(
                 &p,
                 Pos2::new(row.left() + 58.0, row.center().y),
                 Align2::LEFT_CENTER,
                 name,
-                ui::medium(14.0),
+                ui::medium(14.5),
                 c::TEXT,
             );
             ui::text(
@@ -1683,93 +1457,446 @@ impl Launcher {
 
     fn market_page(&mut self, ui: &mut egui::Ui, body: Rect) {
         let p = ui.painter().clone();
-        let top = self.page_head(
+        let top = self.page_title(&p, body, "Marketplace");
+        ui::text(
             &p,
-            body,
-            "Marketplace",
-            "Cosmétiques, packs et mods pour Oteria.",
-        );
-        let area = Rect::from_min_max(Pos2::new(body.left(), top), body.max);
-        self.empty_state(
-            &p,
-            area,
-            "building-store",
-            "La marketplace n'est pas encore ouverte",
-            "Elle arrivera avec les comptes Microsoft.",
+            Pos2::new(body.left() + 4.0, top + 4.0),
+            Align2::LEFT_TOP,
+            "La marketplace arrive bientôt.",
+            ui::regular(14.0),
+            c::MUTED,
         );
     }
 
     fn news_page(&mut self, ui: &mut egui::Ui, body: Rect) {
         let p = ui.painter().clone();
-        let top = self.page_head(&p, body, "Actualités", "Les nouveautés d'Oteria Client.");
-        let area = Rect::from_min_max(Pos2::new(body.left(), top), body.max);
+        let top = self.page_title(&p, body, "Actualités");
         let news = self.news();
         if news.is_empty() {
-            self.empty_state(
-                &p,
-                area,
-                "news",
-                "Pas d'actualité pour le moment",
-                "Les nouveautés apparaîtront ici.",
-            );
-            return;
-        }
-        for (i, item) in news.iter().enumerate() {
-            let r = Rect::from_min_size(
-                Pos2::new(area.left(), area.top() + i as f32 * 112.0),
-                Vec2::new(area.width().min(900.0), 100.0),
-            );
-            if r.bottom() > area.bottom() {
-                break;
-            }
-            ui::plate(&p, r, 6, c::PANEL, c::BORDER);
-            let col = tag_colour(&item.tag);
-            p.rect_filled(
-                Rect::from_min_size(r.min + Vec2::new(20.0, 24.0), Vec2::splat(9.0)),
-                0.0,
-                col,
-            );
             ui::text(
                 &p,
-                r.min + Vec2::new(38.0, 18.0),
+                Pos2::new(body.left() + 4.0, top + 4.0),
+                Align2::LEFT_TOP,
+                "Pas d'actualité pour le moment.",
+                ui::regular(14.0),
+                c::MUTED,
+            );
+        }
+        for (i, item) in news.iter().enumerate() {
+            let row = Rect::from_min_size(
+                Pos2::new(body.left(), top + i as f32 * 118.0),
+                Vec2::new(body.width().min(900.0), 106.0),
+            );
+            if row.bottom() > body.bottom() {
+                break;
+            }
+            surface(&p, row, c::PANEL);
+            ui::text(
+                &p,
+                row.min + Vec2::new(22.0, 18.0),
                 Align2::LEFT_TOP,
                 &item.title,
-                ui::semi(16.0),
+                ui::semi(16.5),
                 c::TEXT,
             );
             ui::text(
                 &p,
-                Pos2::new(r.right() - 20.0, r.top() + 20.0),
+                Pos2::new(row.right() - 22.0, row.top() + 20.0),
                 Align2::RIGHT_TOP,
-                &format!("{} · {}", item.tag, item.date),
-                ui::regular(12.0),
+                &format!("{}  ·  {}", item.date, item.tag),
+                ui::regular(12.5),
                 c::FAINT,
             );
             ui::wrapped(
                 &p,
-                r.min + Vec2::new(20.0, 48.0),
+                row.min + Vec2::new(22.0, 50.0),
                 &item.body,
                 ui::regular(13.5),
                 c::MUTED,
-                r.width() - 40.0,
+                row.width() - 44.0,
                 2,
             );
         }
     }
 
+    // ----- Accounts ---------------------------------------------------------------------------
+
+    /// The account menu under the chip: the accounts, then manage and add.
+    fn account_menu(&mut self, ui: &mut egui::Ui, full: Rect) {
+        // Anything outside the menu closes it.
+        let eater = ui.interact(full, ui.id().with("menu-eater"), Sense::click());
+        if eater.clicked() {
+            self.menu_open = false;
+            return;
+        }
+        let p = ui.painter().clone();
+        let accounts = self.state.accounts.clone();
+        let w = 290.0;
+        let h = 52.0 + accounts.len() as f32 * 54.0 + 12.0 + 2.0 * 46.0 + 8.0;
+        // Right-aligned under the chip.
+        let r = Rect::from_min_size(
+            Pos2::new(
+                full.right() - 46.0 * 3.0 - 16.0 - w,
+                full.top() + TOP_H - 6.0,
+            ),
+            Vec2::new(w, h),
+        );
+        p.rect(
+            r,
+            CornerRadius::same(10),
+            c::PANEL,
+            Stroke::new(1.0_f32, c::BORDER),
+            StrokeKind::Inside,
+        );
+        caption(&p, r.min + Vec2::new(20.0, 22.0), "VOS COMPTES");
+        let mut y = r.top() + 48.0;
+        let mut picked = None;
+        for (i, name) in accounts.iter().enumerate() {
+            let row = Rect::from_min_size(Pos2::new(r.left() + 6.0, y), Vec2::new(w - 12.0, 50.0));
+            let resp = ui.interact(row, ui.id().with(("menu-account", i)), Sense::click());
+            if resp.hovered() {
+                p.rect_filled(row, CornerRadius::same(6), c::RAISED);
+            }
+            ui::draw_head(
+                &p,
+                Rect::from_min_size(row.min + Vec2::new(10.0, 9.0), Vec2::splat(32.0)),
+                self.skin.as_ref(),
+            );
+            ui::text(
+                &p,
+                Pos2::new(row.left() + 54.0, row.top() + 18.0),
+                Align2::LEFT_CENTER,
+                name,
+                ui::semi(14.5),
+                c::TEXT,
+            );
+            ui::text(
+                &p,
+                Pos2::new(row.left() + 54.0, row.top() + 36.0),
+                Align2::LEFT_CENTER,
+                "Compte local",
+                ui::regular(12.0),
+                c::MUTED,
+            );
+            if name == &self.name {
+                self.icons.draw(
+                    &p,
+                    "check-lg",
+                    Pos2::new(row.right() - 22.0, row.center().y),
+                    18.0,
+                    Color32::WHITE,
+                );
+            }
+            if resp.clicked() {
+                picked = Some(name.clone());
+            }
+            y += 54.0;
+        }
+        y += 4.0;
+        p.line_segment(
+            [Pos2::new(r.left(), y), Pos2::new(r.right(), y)],
+            Stroke::new(1.0_f32, c::BORDER),
+        );
+        y += 8.0;
+        let mut go = None;
+        for (i, (icon, label)) in [
+            ("people-fill", "Gérer les comptes"),
+            ("person-plus", "Ajouter un compte"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let row = Rect::from_min_size(Pos2::new(r.left() + 6.0, y), Vec2::new(w - 12.0, 44.0));
+            let resp = ui.interact(row, ui.id().with(("menu-action", i)), Sense::click());
+            if resp.hovered() {
+                p.rect_filled(row, CornerRadius::same(6), c::RAISED);
+            }
+            self.icons.draw(
+                &p,
+                icon,
+                Pos2::new(row.left() + 24.0, row.center().y),
+                18.0,
+                c::TEXT,
+            );
+            ui::text(
+                &p,
+                Pos2::new(row.left() + 50.0, row.center().y),
+                Align2::LEFT_CENTER,
+                label,
+                ui::medium(14.0),
+                c::TEXT,
+            );
+            if resp.clicked() {
+                go = Some(i);
+            }
+            y += 46.0;
+        }
+        if let Some(name) = picked {
+            self.update_state(|s| s.account = Some(name));
+            self.menu_open = false;
+        }
+        if go.is_some() {
+            self.page = Page::Accounts;
+            self.menu_open = false;
+        }
+    }
+
+    fn accounts_page(&mut self, ui: &mut egui::Ui, body: Rect) {
+        let p = ui.painter().clone();
+        let top = self.page_title(&p, body, "Ajouter un compte");
+        let left_w = (body.width() * 0.46).min(520.0);
+
+        // The kinds of account: Microsoft is not open yet, a local one is just a name.
+        let tile = 150.0;
+        let kinds = [
+            ("windows", "Compte Microsoft", false),
+            ("person-fill", "Compte local", true),
+        ];
+        for (i, (icon, label, on)) in kinds.into_iter().enumerate() {
+            let t = Rect::from_min_size(
+                Pos2::new(body.left() + i as f32 * (tile + 18.0), top + 8.0),
+                Vec2::splat(tile),
+            );
+            surface(&p, t, c::RAISED);
+            self.icons.draw(
+                &p,
+                icon,
+                t.center(),
+                54.0,
+                if on { Color32::WHITE } else { c::FAINT },
+            );
+            if on {
+                p.rect_stroke(
+                    t,
+                    CornerRadius::same(R),
+                    Stroke::new(2.0_f32, c::ACCENT),
+                    StrokeKind::Inside,
+                );
+                let badge =
+                    Rect::from_min_size(t.right_top() + Vec2::new(-34.0, 10.0), Vec2::splat(24.0));
+                p.rect_filled(badge, CornerRadius::same(5), c::ACCENT);
+                self.icons
+                    .draw(&p, "check-lg", badge.center(), 15.0, Color32::WHITE);
+            }
+            ui::text(
+                &p,
+                Pos2::new(t.left(), t.bottom() + 10.0),
+                Align2::LEFT_TOP,
+                label,
+                ui::semi(14.5),
+                if on { c::TEXT } else { c::MUTED },
+            );
+            if !on {
+                ui::text(
+                    &p,
+                    Pos2::new(t.left(), t.bottom() + 30.0),
+                    Align2::LEFT_TOP,
+                    "Bientôt",
+                    ui::regular(12.5),
+                    c::FAINT,
+                );
+            }
+        }
+
+        // The accounts already there.
+        let list_top = top + 8.0 + tile + 78.0;
+        caption(&p, Pos2::new(body.left() + 4.0, list_top), "COMPTES");
+        let accounts = self.state.accounts.clone();
+        let mut picked = None;
+        let mut removed = None;
+        for (i, name) in accounts.iter().enumerate() {
+            let row = Rect::from_min_size(
+                Pos2::new(body.left(), list_top + 26.0 + i as f32 * 58.0),
+                Vec2::new(left_w, 52.0),
+            );
+            if row.bottom() > body.bottom() {
+                break;
+            }
+            let resp = ui.interact(row, ui.id().with(("account-row", i)), Sense::click());
+            surface(&p, row, if resp.hovered() { c::HOVER } else { c::PANEL });
+            ui::draw_head(
+                &p,
+                Rect::from_min_size(row.min + Vec2::new(12.0, 10.0), Vec2::splat(32.0)),
+                self.skin.as_ref(),
+            );
+            ui::text(
+                &p,
+                Pos2::new(row.left() + 58.0, row.top() + 19.0),
+                Align2::LEFT_CENTER,
+                name,
+                ui::semi(14.5),
+                c::TEXT,
+            );
+            ui::text(
+                &p,
+                Pos2::new(row.left() + 58.0, row.top() + 37.0),
+                Align2::LEFT_CENTER,
+                "Compte local",
+                ui::regular(12.0),
+                c::MUTED,
+            );
+            let chosen = name == &self.name;
+            if accounts.len() > 1 {
+                let bin = Rect::from_center_size(
+                    Pos2::new(row.right() - 24.0, row.center().y),
+                    Vec2::splat(32.0),
+                );
+                let b = ui.interact(bin, ui.id().with(("account-remove", i)), Sense::click());
+                self.icons.draw(
+                    &p,
+                    "trash3",
+                    bin.center(),
+                    16.0,
+                    if b.hovered() { c::BAD_HOVER } else { c::FAINT },
+                );
+                if b.clicked() {
+                    removed = Some(name.clone());
+                }
+            }
+            if chosen {
+                let x = row.right() - if accounts.len() > 1 { 62.0 } else { 26.0 };
+                self.icons.draw(
+                    &p,
+                    "check-lg",
+                    Pos2::new(x, row.center().y),
+                    18.0,
+                    Color32::WHITE,
+                );
+            }
+            if resp.clicked() && removed.is_none() {
+                picked = Some(name.clone());
+            }
+        }
+        if let Some(name) = removed {
+            self.update_state(|s| s.remove_account(&name));
+        } else if let Some(name) = picked {
+            self.update_state(|s| s.account = Some(name));
+        }
+
+        // The form.
+        let divider_x = body.left() + left_w + 28.0;
+        p.line_segment(
+            [
+                Pos2::new(divider_x, body.top() + 8.0),
+                Pos2::new(divider_x, body.bottom()),
+            ],
+            Stroke::new(1.0_f32, c::BORDER),
+        );
+        let fx = divider_x + 36.0;
+        let fw = body.right() - fx;
+        caption(&p, Pos2::new(fx, body.top() + 14.0), "COMPTE LOCAL");
+        let row = Rect::from_min_size(Pos2::new(fx, body.top() + 40.0), Vec2::new(fw, 66.0));
+        surface(&p, row, c::PANEL);
+        self.icons.draw(
+            &p,
+            "shuffle",
+            Pos2::new(row.left() + 26.0, row.center().y),
+            20.0,
+            c::TEXT,
+        );
+        ui::text(
+            &p,
+            Pos2::new(row.left() + 54.0, row.top() + 22.0),
+            Align2::LEFT_CENTER,
+            "Nom aléatoire",
+            ui::semi(14.5),
+            c::TEXT,
+        );
+        ui::text(
+            &p,
+            Pos2::new(row.left() + 54.0, row.top() + 43.0),
+            Align2::LEFT_CENTER,
+            "Choisis un nom pour ton compte local.",
+            ui::regular(12.5),
+            c::MUTED,
+        );
+        let gen = Rect::from_min_size(
+            Pos2::new(row.right() - 118.0, row.center().y - 19.0),
+            Vec2::new(104.0, 38.0),
+        );
+        if button(
+            ui,
+            &self.icons,
+            gen,
+            Some("shuffle"),
+            "Générer",
+            "generate",
+            Look::Quiet,
+            true,
+        ) {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos() as u64);
+            self.account_input = player::generate(nanos / 1000);
+            self.account_error = None;
+        }
+        caption(&p, Pos2::new(fx, body.top() + 134.0), "NOM D'UTILISATEUR");
+        let field = Rect::from_min_size(Pos2::new(fx, body.top() + 160.0), Vec2::new(fw, 48.0));
+        surface(&p, field, c::PANEL);
+        let inner = Rect::from_center_size(field.center(), Vec2::new(field.width() - 28.0, 26.0));
+        let edit = ui.put(
+            inner,
+            egui::TextEdit::singleline(&mut self.account_input)
+                .frame(false)
+                .margin(Margin::ZERO)
+                .font(ui::regular(14.5))
+                .char_limit(16)
+                .hint_text("Entre le nom d'utilisateur")
+                .desired_width(inner.width()),
+        );
+        if edit.changed() {
+            self.account_error = None;
+        }
+        if let Some(e) = &self.account_error {
+            ui::text(
+                &p,
+                Pos2::new(fx, field.bottom() + 12.0),
+                Align2::LEFT_TOP,
+                e,
+                ui::medium(13.0),
+                c::BAD_HOVER,
+            );
+        }
+        let ok = player::is_valid(self.account_input.trim());
+        let add = Rect::from_min_size(Pos2::new(fx, body.bottom() - 52.0), Vec2::new(fw, 52.0));
+        if button(
+            ui,
+            &self.icons,
+            add,
+            Some("person-plus"),
+            "Ajouter un compte local",
+            "add-account",
+            Look::Accent,
+            ok,
+        ) {
+            let name = self.account_input.trim().to_owned();
+            let mut result = Ok(());
+            self.update_state(|s| result = s.add_account(&name));
+            match result {
+                Ok(()) => {
+                    self.account_input.clear();
+                    self.log(&format!("compte local ajouté : {name}"));
+                }
+                Err(oteria_dist::AccountError::Exists) => {
+                    self.account_error = Some("Ce compte existe déjà.".into());
+                }
+                Err(oteria_dist::AccountError::Invalid) => {
+                    self.account_error = Some("1 à 16 lettres, chiffres ou _.".into());
+                }
+            }
+        }
+    }
+
+    // ----- Settings ---------------------------------------------------------------------------
+
     fn settings_page(&mut self, ui: &mut egui::Ui, body: Rect) {
         let p = ui.painter().clone();
-        let top = self.page_head(
-            &p,
-            body,
-            "Paramètres",
-            "L'installation, la mémoire, le launcher et le compte.",
-        );
-        let area = Rect::from_min_max(
-            Pos2::new(body.left(), top),
-            Pos2::new(body.left() + body.width().min(880.0), body.bottom()),
-        );
+        let top = self.page_title(&p, body, "Paramètres");
+        let area = Rect::from_min_max(Pos2::new(body.left(), top), body.max);
         let game_ram = self.child.as_ref().and_then(|c| memory::of_process(c.id()));
+        let busy = matches!(self.phase, Phase::Checking | Phase::Downloading);
+        let close_on_launch = self.state.close_on_launch;
+        let mut actions: Vec<&'static str> = Vec::new();
         let resources = self.state.resources_dir(&self.home);
         let source = self.state.source().unwrap_or_default();
         let client = self
@@ -1777,104 +1904,290 @@ impl Launcher {
             .client_version
             .clone()
             .map_or("aucun".into(), |v| format!("Oteria {v}"));
-        let busy = matches!(self.phase, Phase::Checking | Phase::Downloading);
-        let mut close_on_launch = self.state.close_on_launch;
-        let mut actions: Vec<&'static str> = Vec::new();
 
         egui::ScrollArea::vertical()
             .max_height(area.height())
             .show_viewport(&mut ui.new_child(egui::UiBuilder::new().max_rect(area)), |ui, _| {
-                // Each row: label, value, optional action (id, label).
-                type Row<'a> = (&'a str, String, Option<(&'static str, &'a str)>);
-                let sections: Vec<(&str, &str, Vec<Row>)> = vec![
-                    ("folder", "INSTALLATION", vec![
-                        ("Launcher", self.home.display().to_string(), Some(("open-home", "Ouvrir"))),
-                        ("Dossier du jeu", self.game_dir.display().to_string(), Some(("open-game", "Ouvrir"))),
-                        ("Ressources du jeu", resources.display().to_string(), Some(("open-res", "Ouvrir"))),
-                        ("Client installé", client.clone(), None),
-                    ]),
-                    ("cpu", "MÉMOIRE", vec![
-                        ("Mémoire du PC", self.total_ram.map_or("inconnue".into(), gib), None),
-                        ("Utilisée par le jeu", game_ram.map_or("le jeu n'est pas lancé".into(), gib), None),
-                    ]),
-                    ("refresh", "LAUNCHER", vec![
-                        ("Version", format!("v{}", oteria_dist::LAUNCHER_VERSION), Some(("check", if busy { "…" } else { "Rechercher une mise à jour" }))),
-                        ("Source des mises à jour", source.clone(), None),
-                        ("Au lancement du jeu", String::new(), None),
-                    ]),
-                    ("user", "COMPTE", vec![
-                        ("Pseudo", self.name.clone(), None),
-                        ("Type", "Hors ligne (la connexion Microsoft arrive bientôt)".into(), None),
-                    ]),
-                ];
-                let row_h = 46.0;
-                let total: f32 = sections.iter().map(|(_, _, rows)| 44.0 + rows.len() as f32 * row_h + 22.0).sum::<f32>() + 60.0;
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(area.width() - 22.0, total), Sense::hover());
+                let width = area.width() - 16.0;
+                let row_h = 72.0;
+                let sections: [(&str, usize); 4] = [("GÉNÉRAL", 2), ("INSTALLATION", 3), ("MÉMOIRE", 2), ("MISES À JOUR", 2)];
+                let total: f32 = sections.iter().map(|(_, n)| 34.0 + *n as f32 * (row_h + 10.0) + 14.0).sum();
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(width, total), Sense::hover());
                 let p = ui.painter().clone();
                 let mut y = rect.top();
-                for (icon, title, rows) in &sections {
-                    section_title(&p, &self.icons, Pos2::new(rect.left(), y), icon, title);
-                    y += 36.0;
-                    let panel = Rect::from_min_size(Pos2::new(rect.left(), y), Vec2::new(rect.width(), rows.len() as f32 * row_h));
-                    ui::plate(&p, panel, 6, c::PANEL, c::BORDER);
-                    for (i, (label, value, action)) in rows.iter().enumerate() {
-                        let row = Rect::from_min_size(Pos2::new(panel.left(), panel.top() + i as f32 * row_h), Vec2::new(panel.width(), row_h));
-                        if i > 0 {
-                            p.line_segment([row.left_top() + Vec2::new(16.0, 0.0), row.right_top() - Vec2::new(16.0, 0.0)], Stroke::new(1.0_f32, c::BORDER));
-                        }
-                        ui::text(&p, Pos2::new(row.left() + 18.0, row.center().y), Align2::LEFT_CENTER, label, ui::regular(13.5), c::MUTED);
-                        let action_w = action.map_or(0.0, |(_, l)| if l.len() > 10 { 220.0 } else { 90.0 });
-                        ui::wrapped(&p, Pos2::new(row.left() + 220.0, row.center().y - 9.0), value, ui::medium(13.5), c::TEXT, row.width() - 250.0 - action_w, 1);
-                        if *label == "Au lancement du jeu" {
-                            let check = Rect::from_min_size(Pos2::new(row.left() + 220.0, row.center().y - 10.0), Vec2::new(260.0, 20.0));
-                            let resp = ui.interact(check, ui.id().with("close-on-launch"), Sense::click());
-                            let bx = Rect::from_min_size(check.min, Vec2::splat(20.0));
-                            ui::plate(&p, bx, 4, if close_on_launch { c::ACCENT } else { c::RAISED }, if close_on_launch { c::ACCENT } else { c::BORDER });
-                            if close_on_launch {
-                                p.line_segment([bx.min + Vec2::new(5.0, 10.0), bx.min + Vec2::new(9.0, 14.0)], Stroke::new(2.0_f32, Color32::WHITE));
-                                p.line_segment([bx.min + Vec2::new(9.0, 14.0), bx.min + Vec2::new(15.5, 6.5)], Stroke::new(2.0_f32, Color32::WHITE));
-                            }
-                            ui::text(&p, Pos2::new(bx.right() + 10.0, bx.center().y), Align2::LEFT_CENTER, "Fermer le launcher", ui::medium(13.5), c::TEXT);
-                            if resp.clicked() {
-                                close_on_launch = !close_on_launch;
-                                actions.push("toggle-close");
-                            }
-                        }
-                        if let Some((id, label)) = action {
-                            let b = Rect::from_min_size(Pos2::new(row.right() - 12.0 - action_w, row.center().y - 16.0), Vec2::new(action_w, 32.0));
-                            if button(ui, &self.icons, b, None, label, id, *id != "check" || !busy) {
-                                actions.push(id);
-                            }
-                        }
-                    }
-                    y = panel.bottom() + 26.0;
+                let row = |y: &mut f32, icon: &str, title: &str, desc: &str| -> Rect {
+                    let r = Rect::from_min_size(Pos2::new(rect.left(), *y), Vec2::new(rect.width(), row_h));
+                    surface(&p, r, c::PANEL);
+                    self.icons.draw(&p, icon, Pos2::new(r.left() + 36.0, r.center().y), 22.0, c::MUTED);
+                    ui::text(&p, Pos2::new(r.left() + 70.0, r.top() + 24.0), Align2::LEFT_CENTER, title, ui::semi(14.5), c::TEXT);
+                    ui::wrapped(&p, Pos2::new(r.left() + 70.0, r.top() + 42.0), desc, ui::regular(12.5), c::MUTED, r.width() - 260.0, 1);
+                    *y += row_h + 10.0;
+                    r
+                };
+                caption(&p, Pos2::new(rect.left() + 2.0, y), "GÉNÉRAL");
+                y += 28.0;
+                let r = row(&mut y, "controller", "Fermer le launcher au lancement du jeu", "Le launcher se ferme quand le jeu démarre. Rouvre-le avec le raccourci Oteria.");
+                if toggle(ui, Rect::from_center_size(Pos2::new(r.right() - 50.0, r.center().y), Vec2::new(46.0, 24.0)), close_on_launch, "close-on-launch") {
+                    actions.push("toggle-close");
                 }
-                ui::wrapped(
-                    &p,
-                    Pos2::new(rect.left(), y),
-                    "Oteria est écrit en Rust : il ne réserve pas de mémoire à l'avance comme Java et prend ce qu'il lui faut. Oteria Client est un fork d'Horizon (MIT). Ce n'est pas un produit officiel Minecraft, ni approuvé par Mojang ou Microsoft.",
-                    ui::regular(12.5),
-                    c::FAINT,
-                    rect.width(),
-                    3,
-                );
+                let r = row(&mut y, "people-fill", "Compte", &format!("{} · compte local", self.name));
+                if button(ui, &self.icons, Rect::from_center_size(Pos2::new(r.right() - 82.0, r.center().y), Vec2::new(130.0, 36.0)), None, "Gérer", "manage-accounts", Look::Quiet, true) {
+                    actions.push("accounts");
+                }
+                y += 14.0;
+
+                caption(&p, Pos2::new(rect.left() + 2.0, y), "INSTALLATION");
+                y += 28.0;
+                for (icon, title, desc, id) in [
+                    ("hdd", "Dossier du launcher", self.home.display().to_string(), "open-home"),
+                    ("folder2-open", "Dossier du jeu", self.game_dir.display().to_string(), "open-game"),
+                    ("box-seam", "Ressources du jeu", resources.display().to_string(), "open-res"),
+                ] {
+                    let r = row(&mut y, icon, title, &desc);
+                    if button(ui, &self.icons, Rect::from_center_size(Pos2::new(r.right() - 82.0, r.center().y), Vec2::new(130.0, 36.0)), None, "Ouvrir", id, Look::Quiet, true) {
+                        actions.push(id);
+                    }
+                }
+                y += 14.0;
+
+                caption(&p, Pos2::new(rect.left() + 2.0, y), "MÉMOIRE");
+                y += 28.0;
+                let r = row(&mut y, "cpu", "Mémoire du PC", "Oteria est écrit en Rust : il ne réserve rien à l'avance, il prend ce qu'il lui faut.");
+                ui::text(&p, Pos2::new(r.right() - 26.0, r.center().y), Align2::RIGHT_CENTER, &self.total_ram.map_or("inconnue".into(), gib), ui::semi(14.5), c::TEXT);
+                let r = row(&mut y, "cpu", "Mémoire utilisée par le jeu", "Ce que le jeu occupe en ce moment.");
+                ui::text(&p, Pos2::new(r.right() - 26.0, r.center().y), Align2::RIGHT_CENTER, &game_ram.map_or("le jeu n'est pas lancé".into(), gib), ui::semi(14.5), c::TEXT);
+                y += 14.0;
+
+                caption(&p, Pos2::new(rect.left() + 2.0, y), "MISES À JOUR");
+                y += 28.0;
+                let r = row(&mut y, "arrow-repeat", &format!("Launcher v{}", oteria_dist::LAUNCHER_VERSION), &format!("Source : {source}"));
+                if button(ui, &self.icons, Rect::from_center_size(Pos2::new(r.right() - 105.0, r.center().y), Vec2::new(176.0, 36.0)), None, if busy { "…" } else { "Rechercher" }, "check", Look::Quiet, !busy) {
+                    actions.push("check");
+                }
+                row(&mut y, "download", &client, &format!("Minecraft {}", oteria_dist::MINECRAFT_VERSION));
             });
         for a in actions {
             match a {
                 "open-home" => open_folder(&self.home),
                 "open-game" => open_folder(&self.game_dir),
                 "open-res" => open_folder(&resources),
+                "accounts" => self.page = Page::Accounts,
                 "check" => {
                     self.notice = None;
                     self.start_check();
                 }
-                "toggle-close" => {
-                    self.state = State::load(&self.home);
-                    self.state.close_on_launch = close_on_launch;
-                    let _ = self.state.save(&self.home);
-                }
+                "toggle-close" => self.update_state(|s| s.close_on_launch = !close_on_launch),
                 _ => {}
             }
         }
     }
+
+    // ----- The installation and update cards ---------------------------------------------------
+
+    fn modal(&mut self, ui: &mut egui::Ui, full: Rect) {
+        if let Phase::SelfUpdating { version, since, .. } = &self.phase {
+            let k = (since.elapsed().as_secs_f32() / 1.4).clamp(0.0, 1.0);
+            let sub = format!("v{} → v{version}", oteria_dist::LAUNCHER_VERSION);
+            self.progress_card(
+                ui,
+                full,
+                Card {
+                    subtitle: "MISE À JOUR",
+                    tag: "LAUNCHER",
+                    icon: "arrow-repeat",
+                    title: "Mise à jour".into(),
+                    sub: "Le launcher se met à jour puis redémarre tout seul.".into(),
+                    percent: k,
+                    left: sub,
+                    right: String::new(),
+                    footer: "Rien à faire : la fenêtre se rouvre dans un instant.",
+                },
+            );
+            ui.ctx().request_repaint();
+            return;
+        }
+        let Some(d) = &self.download else { return };
+        let (title, doing) = match d.stage.as_str() {
+            "download" => ("Téléchargement", "Téléchargement du client Oteria…"),
+            "extract" => ("Installation", "Installation du client…"),
+            "minecraft" => ("Minecraft", "Téléchargement de Minecraft chez Mojang…"),
+            "java" => ("Java", "Téléchargement de Java chez Mojang…"),
+            _ => ("Préparation", "Préparation des ressources du jeu…"),
+        };
+        let sub = "Cela ne prend que quelques minutes.";
+        let counted = matches!(d.stage.as_str(), "download" | "extract") && d.total > 0;
+        let right = if counted {
+            format!("{} / {} Mo", mib(d.done), mib(d.total))
+        } else {
+            String::new()
+        };
+        let left = if d.note.is_empty() {
+            doing.to_owned()
+        } else {
+            d.note.clone()
+        };
+        let card = Card {
+            subtitle: "INSTALLATION DU JEU",
+            tag: if d.update { "MISE À JOUR" } else { "PREMIÈRE INSTALLATION" },
+            icon: "download",
+            title: title.to_owned(),
+            sub: sub.to_owned(),
+            percent: d.overall(),
+            left,
+            right,
+            footer: "Cette installation n'a lieu qu'une fois. Les prochains lancements seront instantanés.",
+        };
+        self.progress_card(ui, full, card);
+    }
+
+    fn progress_card(&self, ui: &mut egui::Ui, full: Rect, card: Card) {
+        let p = ui.painter().clone();
+        // Dim the page and keep clicks from reaching it.
+        ui.interact(full, ui.id().with("modal-eater"), Sense::click_and_drag());
+        p.rect_filled(full, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 165));
+        let r = Rect::from_center_size(full.center(), Vec2::new(540.0, 300.0));
+        p.rect(
+            r,
+            CornerRadius::same(10),
+            c::PANEL,
+            Stroke::new(1.0_f32, c::BORDER),
+            StrokeKind::Inside,
+        );
+
+        // The header: the logo, the name, and what this is.
+        p.image(
+            self.logo.id(),
+            Rect::from_min_size(r.min + Vec2::new(22.0, 16.0), Vec2::splat(34.0)),
+            FULL_UV,
+            Color32::WHITE,
+        );
+        ui::text(
+            &p,
+            r.min + Vec2::new(68.0, 19.0),
+            Align2::LEFT_TOP,
+            "Oteria",
+            ui::semi(16.0),
+            c::TEXT,
+        );
+        ui::spaced(
+            &p,
+            r.min + Vec2::new(68.0, 40.0),
+            card.subtitle,
+            ui::semi(10.0),
+            c::FAINT,
+            1.0,
+        );
+        let g = p.layout_no_wrap(card.tag.into(), ui::semi(10.0), c::MUTED);
+        let tag = Rect::from_min_size(
+            Pos2::new(r.right() - 22.0 - g.size().x - 24.0, r.top() + 23.0),
+            g.size() + Vec2::new(24.0, 12.0),
+        );
+        p.rect_filled(tag, CornerRadius::same(4), c::RAISED);
+        p.galley(tag.min + Vec2::new(12.0, 6.0), g, c::MUTED);
+        p.line_segment(
+            [
+                Pos2::new(r.left(), r.top() + 68.0),
+                Pos2::new(r.right(), r.top() + 68.0),
+            ],
+            Stroke::new(1.0_f32, c::BORDER),
+        );
+
+        // The body.
+        let icon_tile = Rect::from_min_size(r.min + Vec2::new(26.0, 92.0), Vec2::splat(52.0));
+        surface(&p, icon_tile, c::RAISED);
+        self.icons
+            .draw(&p, card.icon, icon_tile.center(), 22.0, c::TEXT);
+        ui::text(
+            &p,
+            r.min + Vec2::new(98.0, 92.0),
+            Align2::LEFT_TOP,
+            &card.title,
+            ui::semi(22.0),
+            Color32::WHITE,
+        );
+        ui::text(
+            &p,
+            r.min + Vec2::new(98.0, 124.0),
+            Align2::LEFT_TOP,
+            &card.sub,
+            ui::regular(13.5),
+            c::MUTED,
+        );
+        ui::text(
+            &p,
+            Pos2::new(r.right() - 26.0, r.top() + 96.0),
+            Align2::RIGHT_TOP,
+            &format!("{:.0}%", card.percent * 100.0),
+            ui::semi(16.0),
+            Color32::WHITE,
+        );
+        ui::wrapped(
+            &p,
+            Pos2::new(r.left() + 26.0, r.top() + 168.0),
+            &card.left,
+            ui::semi(12.5),
+            c::TEXT,
+            r.width() - 190.0,
+            1,
+        );
+        ui::text(
+            &p,
+            Pos2::new(r.right() - 26.0, r.top() + 168.0),
+            Align2::RIGHT_TOP,
+            &card.right,
+            ui::regular(12.5),
+            c::MUTED,
+        );
+        let bar = Rect::from_min_size(
+            Pos2::new(r.left() + 26.0, r.top() + 194.0),
+            Vec2::new(r.width() - 52.0, 6.0),
+        );
+        p.rect_filled(bar, CornerRadius::same(3), c::RAISED);
+        p.rect_filled(
+            Rect::from_min_size(
+                bar.min,
+                Vec2::new(bar.width() * card.percent.clamp(0.0, 1.0), 6.0),
+            ),
+            CornerRadius::same(3),
+            c::ACCENT_HOVER,
+        );
+
+        // The footer.
+        p.line_segment(
+            [
+                Pos2::new(r.left() + 26.0, r.top() + 232.0),
+                Pos2::new(r.right() - 26.0, r.top() + 232.0),
+            ],
+            Stroke::new(1.0_f32, c::BORDER),
+        );
+        self.icons.draw(
+            &p,
+            "box-seam",
+            Pos2::new(r.left() + 38.0, r.top() + 262.0),
+            16.0,
+            c::MUTED,
+        );
+        ui::wrapped(
+            &p,
+            Pos2::new(r.left() + 58.0, r.top() + 247.0),
+            card.footer,
+            ui::regular(12.5),
+            c::MUTED,
+            r.width() - 90.0,
+            2,
+        );
+    }
+}
+
+/// What the installation and update card says.
+struct Card {
+    subtitle: &'static str,
+    tag: &'static str,
+    icon: &'static str,
+    title: String,
+    sub: String,
+    percent: f32,
+    left: String,
+    right: String,
+    footer: &'static str,
 }

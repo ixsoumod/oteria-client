@@ -17,6 +17,18 @@ pub struct State {
     pub resources: Option<PathBuf>,
     /// Close the launcher once the game has started (Settings).
     pub close_on_launch: bool,
+    /// The local (offline) accounts: player names. The game is started with the chosen one.
+    pub accounts: Vec<String>,
+    /// The chosen account, one of `accounts`.
+    pub account: Option<String>,
+}
+
+/// Why a local account can't be added.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AccountError {
+    /// Not 1 to 16 letters, digits or underscores: vanilla's player name rule.
+    Invalid,
+    Exists,
 }
 
 impl State {
@@ -56,5 +68,58 @@ impl State {
     pub fn client_dir(&self, home: &Path) -> Option<PathBuf> {
         let dir = crate::paths::client_dir(home, self.client_version.as_deref()?);
         dir.join(crate::paths::CLIENT_EXE).is_file().then_some(dir)
+    }
+
+    /// The chosen account, else the first, else none.
+    pub fn current_account(&self) -> Option<&str> {
+        self.account
+            .as_deref()
+            .filter(|a| self.accounts.iter().any(|x| x == a))
+            .or_else(|| self.accounts.first().map(String::as_str))
+    }
+
+    /// Adds a local account and chooses it.
+    pub fn add_account(&mut self, name: &str) -> Result<(), AccountError> {
+        let name = name.trim();
+        if !crate::player::is_valid(name) {
+            return Err(AccountError::Invalid);
+        }
+        if self.accounts.iter().any(|a| a.eq_ignore_ascii_case(name)) {
+            return Err(AccountError::Exists);
+        }
+        self.accounts.push(name.to_owned());
+        self.account = Some(name.to_owned());
+        Ok(())
+    }
+
+    /// Removes an account, never the last one; the first one left is chosen if it was chosen.
+    pub fn remove_account(&mut self, name: &str) {
+        if self.accounts.len() > 1 {
+            self.accounts.retain(|a| a != name);
+            if self.account.as_deref() == Some(name) {
+                self.account = self.accounts.first().cloned();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_accounts_follow_the_player_name_rule() {
+        let mut s = State::default();
+        assert_eq!(s.add_account("Ixsou_mod"), Ok(()));
+        assert_eq!(s.add_account("ixsou_MOD"), Err(AccountError::Exists));
+        assert_eq!(s.add_account("a b"), Err(AccountError::Invalid));
+        assert_eq!(s.add_account(""), Err(AccountError::Invalid));
+        assert_eq!(s.add_account("Player12345"), Ok(()));
+        assert_eq!(s.current_account(), Some("Player12345"));
+        s.remove_account("Player12345");
+        assert_eq!(s.current_account(), Some("Ixsou_mod"));
+        // The last account stays.
+        s.remove_account("Ixsou_mod");
+        assert_eq!(s.accounts.len(), 1);
     }
 }

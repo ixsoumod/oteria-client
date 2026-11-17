@@ -1,6 +1,6 @@
 //! The look the launcher and the setup share: a dark navy with Oteria's blue, flat surfaces with
-//! small corners and one-pixel borders, Geist for text and Pixelify Sans for the wordmark
-//! (`crates/horizon-theme/fonts`, OFL), the logo and Tabler icons rendered from their SVGs
+//! small corners, Geist for text and Pixelify Sans for the name tag over the player
+//! (`crates/horizon-theme/fonts`, OFL), the logo and Bootstrap Icons rendered from their SVGs
 //! (`assets/icons`, MIT) at the size they are drawn.
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Pos2, Rect,
@@ -11,12 +11,12 @@ use std::sync::Arc;
 
 pub mod c {
     use eframe::egui::Color32;
-    pub const BG: Color32 = Color32::from_rgb(0x0a, 0x11, 0x1d);
+    pub const BG: Color32 = Color32::from_rgb(0x0c, 0x11, 0x18);
     pub const SIDEBAR: Color32 = Color32::from_rgb(0x0c, 0x15, 0x24);
-    pub const PANEL: Color32 = Color32::from_rgb(0x10, 0x1b, 0x2d);
-    pub const RAISED: Color32 = Color32::from_rgb(0x16, 0x24, 0x3a);
-    pub const HOVER: Color32 = Color32::from_rgb(0x1c, 0x2d, 0x48);
-    pub const BORDER: Color32 = Color32::from_rgb(0x1d, 0x2c, 0x44);
+    pub const PANEL: Color32 = Color32::from_rgb(0x13, 0x1a, 0x24);
+    pub const RAISED: Color32 = Color32::from_rgb(0x1a, 0x23, 0x2f);
+    pub const HOVER: Color32 = Color32::from_rgb(0x22, 0x2d, 0x3b);
+    pub const BORDER: Color32 = Color32::from_rgb(0x23, 0x2e, 0x3d);
     pub const TEXT: Color32 = Color32::from_rgb(0xe8, 0xee, 0xf6);
     pub const MUTED: Color32 = Color32::from_rgb(0x8b, 0x9a, 0xb2);
     pub const FAINT: Color32 = Color32::from_rgb(0x55, 0x65, 0x7e);
@@ -27,7 +27,7 @@ pub mod c {
     pub const ACCENT_EDGE: Color32 = Color32::from_rgb(0x0e, 0x62, 0x97);
     /// The logo's cyan wave, for small accents.
     pub const CYAN: Color32 = Color32::from_rgb(0x2b, 0xbf, 0xe9);
-    pub const SELECTED: Color32 = Color32::from_rgb(0x12, 0x2e, 0x4c);
+    pub const SELECTED: Color32 = Color32::from_rgb(0x1f, 0x2b, 0x3a);
     pub const GOOD: Color32 = Color32::from_rgb(0x46, 0xc2, 0x7a);
     pub const WARN: Color32 = Color32::from_rgb(0xe8, 0xb0, 0x45);
     pub const BAD: Color32 = Color32::from_rgb(0xd9, 0x4b, 0x4b);
@@ -97,7 +97,7 @@ pub fn pixel(size: f32) -> FontId {
 }
 /// The setup's titles.
 pub fn display(size: f32) -> FontId {
-    pixel(size)
+    semi(size)
 }
 
 pub fn texture_from_png(ctx: &egui::Context, name: &str, png: &[u8]) -> Option<TextureHandle> {
@@ -140,7 +140,7 @@ pub fn svg_texture(
     Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR))
 }
 
-/// The Tabler icons the launcher draws, by file name.
+/// The Bootstrap Icons the launcher draws, by file name.
 pub struct Icons(HashMap<&'static str, TextureHandle>);
 
 macro_rules! icon_files {
@@ -150,26 +150,35 @@ macro_rules! icon_files {
 }
 
 const ICONS: &[(&str, &[u8])] = icon_files![
-    "device-gamepad-2",
-    "puzzle",
-    "building-store",
-    "settings",
+    "controller",
+    "puzzle-fill",
+    "shop",
+    "gear-fill",
+    "play-fill",
+    "stop-fill",
     "download",
-    "folder",
-    "external-link",
-    "cpu",
-    "server",
-    "users",
-    "refresh",
+    "folder2-open",
+    "box-arrow-up-right",
+    "person-fill",
+    "person-plus",
+    "people-fill",
+    "chevron-down",
     "chevron-right",
-    "user",
-    "minus",
+    "shuffle",
+    "windows",
+    "x-lg",
+    "dash-lg",
     "square",
-    "x",
-    "alert-triangle",
-    "news",
-    "player-play-filled",
-    "player-stop-filled",
+    "check-lg",
+    "cpu",
+    "hdd",
+    "server",
+    "arrow-repeat",
+    "trash3",
+    "box-seam",
+    "plus-lg",
+    "newspaper",
+    "hdd-network",
 ];
 
 impl Icons {
@@ -503,7 +512,7 @@ pub fn window_controls(ui: &mut egui::Ui, bar: Rect, icons: &Icons) {
     let ctx = ui.ctx().clone();
     let w = 46.0;
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-    for (i, kind) in ["x", "square", "minus"].into_iter().enumerate() {
+    for (i, kind) in ["x-lg", "square", "dash-lg"].into_iter().enumerate() {
         let rect = Rect::from_min_size(
             Pos2::new(bar.right() - w * (i as f32 + 1.0), bar.top()),
             Vec2::new(w, bar.height().min(40.0)),
@@ -511,7 +520,7 @@ pub fn window_controls(ui: &mut egui::Ui, bar: Rect, icons: &Icons) {
         let resp = ui.interact(rect, ui.id().with(("winctl", kind)), egui::Sense::click());
         let p = ui.painter();
         if resp.hovered() {
-            let fill = if kind == "x" {
+            let fill = if kind == "x-lg" {
                 Color32::from_rgb(0xc4, 0x2b, 0x1c)
             } else {
                 c::HOVER
@@ -523,16 +532,33 @@ pub fn window_controls(ui: &mut egui::Ui, bar: Rect, icons: &Icons) {
         } else {
             c::MUTED
         };
-        let size = if kind == "square" { 14.0 } else { 18.0 };
+        let size = if kind == "square" { 12.0 } else { 14.0 };
         icons.draw(p, kind, rect.center(), size, col);
         if resp.clicked() {
             match kind {
-                "x" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                "x-lg" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 "square" => ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized)),
                 _ => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
             }
         }
     }
+}
+
+/// A 1×64 texture that ramps from `top` to `bottom` opacity of one dark colour, laid over a
+/// picture (a rounded rectangle textured with it) so text on the picture stays readable.
+pub fn vramp_texture(ctx: &egui::Context, name: &str, top: f32, bottom: f32) -> TextureHandle {
+    let h = 64;
+    let px = (0..h)
+        .map(|y| {
+            let t = y as f32 / (h - 1) as f32;
+            Color32::from_rgba_unmultiplied(5, 9, 15, ((top + (bottom - top) * t) * 255.0) as u8)
+        })
+        .collect();
+    ctx.load_texture(
+        name,
+        egui::ColorImage::new([1, h], px),
+        egui::TextureOptions::LINEAR,
+    )
 }
 
 /// Saves a screenshot event's picture as a PNG.

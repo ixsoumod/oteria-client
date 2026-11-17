@@ -71,6 +71,36 @@ pub trait Report {
     fn files(&mut self, done: usize, total: usize);
 }
 
+/// A report that maps the progress of one step onto part of a bigger one (`lo` to `hi`, of 1000).
+struct Scaled<'a> {
+    inner: &'a mut dyn Report,
+    lo: f64,
+    hi: f64,
+}
+
+impl<'a> Scaled<'a> {
+    fn new(inner: &'a mut dyn Report, lo: f64, hi: f64) -> Self {
+        Self { inner, lo, hi }
+    }
+}
+
+impl Report for Scaled<'_> {
+    fn note(&mut self, text: String) {
+        self.inner.note(text);
+    }
+    fn files(&mut self, done: usize, total: usize) {
+        let k = if total == 0 {
+            1.0
+        } else {
+            done as f64 / total as f64
+        };
+        self.inner.files(
+            ((self.lo + (self.hi - self.lo) * k) * 1000.0) as usize,
+            1000,
+        );
+    }
+}
+
 /// The official launcher's folder, whose files are reused when they are whole.
 fn official_dir() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join(".minecraft"))
@@ -152,7 +182,9 @@ pub fn download(pins: &Pins, dir: &Path, report: &mut dyn Report) -> Result<Path
         "Minecraft {v} : le jeu et {} bibliothèques",
         game.len() - 2
     ));
-    fetch_each(&game, report, true)?;
+    // One progress across the three steps, so the bar never goes back: the game's files are the
+    // first fifth, the sounds the rest.
+    fetch_each(&game, &mut Scaled::new(report, 0.0, 0.2), true)?;
 
     let index = &manifest["assetIndex"];
     let index_rel =
@@ -164,13 +196,17 @@ pub fn download(pins: &Pins, dir: &Path, report: &mut dyn Report) -> Result<Path
         path: dir.join(&index_rel),
         local: theirs(&index_rel),
     };
-    fetch_each(std::slice::from_ref(&index_file), report, true)?;
+    fetch_each(
+        std::slice::from_ref(&index_file),
+        &mut Scaled::new(report, 0.2, 0.2),
+        true,
+    )?;
     let objects = objects(&read_json(&index_file.path)?, dir, official.as_deref())?;
     report.note(format!(
         "Sons et langues de Minecraft ({} fichiers)",
         objects.len()
     ));
-    fetch_each(&objects, report, false)?;
+    fetch_each(&objects, &mut Scaled::new(report, 0.2, 1.0), false)?;
     Ok(server_jar)
 }
 

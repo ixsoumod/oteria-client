@@ -22,7 +22,7 @@ pub mod state;
 pub mod ui;
 
 pub use manifest::{Manifest, NewsItem, Package, PartnerServer};
-pub use state::State;
+pub use state::{AccountError, State};
 
 /// This build's launcher version: `OTERIA_LAUNCHER_VERSION` at build time, else the crate's.
 pub const LAUNCHER_VERSION: &str = match option_env!("OTERIA_LAUNCHER_VERSION") {

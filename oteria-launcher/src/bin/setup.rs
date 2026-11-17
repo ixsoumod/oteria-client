@@ -66,8 +66,8 @@ fn find_source() -> Option<String> {
 
 fn main() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
-        .with_title("Installation d'Oteria Client")
-        .with_inner_size([620.0, 420.0])
+        .with_title("Installation d'Oteria Launcher")
+        .with_inner_size([560.0, 340.0])
         .with_resizable(false)
         .with_decorations(false)
         .with_icon(ui::icon_data());
@@ -252,76 +252,85 @@ impl eframe::App for Setup {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(c::BG))
+            .frame(egui::Frame::NONE.fill(c::PANEL))
             .show(ctx, |ui| {
                 let full = ui.max_rect();
-                let icons = &self.icons;
                 let p = ui.painter().clone();
-                let bar = Rect::from_min_size(full.min, Vec2::new(full.width(), 40.0));
-                let drag = ui.interact(bar, ui.id().with("bar"), Sense::click_and_drag());
+                p.rect_stroke(full, 0.0, Stroke::new(1.0_f32, c::BORDER), egui::StrokeKind::Inside);
+
+                // The header: the logo, the name, what this is. Dragging it moves the window.
+                let head = Rect::from_min_size(full.min, Vec2::new(full.width(), 68.0));
+                let drag = ui.interact(head, ui.id().with("head"), Sense::click_and_drag());
                 if drag.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
-                ui::text(&p, Pos2::new(full.left() + 18.0, bar.center().y), Align2::LEFT_CENTER, "Installation d'Oteria Client", ui::medium(12.5), c::MUTED);
-                ui::window_controls(ui, bar, &icons);
-                p.image(
-                    self.logo.id(),
-                    Rect::from_center_size(Pos2::new(full.center().x, full.top() + 112.0), Vec2::splat(92.0)),
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    Color32::WHITE,
-                );
-                ui::text(&p, Pos2::new(full.center().x, full.top() + 188.0), Align2::CENTER_CENTER, "OTERIA", ui::pixel(36.0), c::TEXT);
-                let g = p.layout_no_wrap("LAUNCHER".into(), ui::semi(11.0), c::MUTED);
-                ui::spaced(&p, Pos2::new(full.center().x - (g.size().x + 7.0 * 3.4) / 2.0, full.top() + 210.0), "LAUNCHER", ui::semi(11.0), c::MUTED, 3.4);
+                p.image(self.logo.id(), Rect::from_min_size(full.min + Vec2::new(24.0, 17.0), Vec2::splat(34.0)), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                ui::text(&p, full.min + Vec2::new(70.0, 20.0), Align2::LEFT_TOP, "Oteria Launcher", ui::semi(16.0), c::TEXT);
+                ui::spaced(&p, full.min + Vec2::new(70.0, 42.0), "INSTALLATION", ui::semi(10.0), c::FAINT, 1.0);
+                let g = p.layout_no_wrap("BÊTA".into(), ui::semi(10.0), c::MUTED);
+                let tag = Rect::from_min_size(Pos2::new(full.right() - 62.0 - g.size().x - 24.0, full.top() + 23.0), g.size() + Vec2::new(24.0, 12.0));
+                p.rect_filled(tag, CornerRadius::same(4), c::RAISED);
+                p.galley(tag.min + Vec2::new(12.0, 6.0), g, c::MUTED);
+                p.line_segment([Pos2::new(full.left(), head.bottom()), Pos2::new(full.right(), head.bottom())], Stroke::new(1.0_f32, c::BORDER));
+                // Only the close button: the window can't be resized.
+                let close = Rect::from_min_size(Pos2::new(full.right() - 46.0, full.top()), Vec2::new(46.0, 40.0));
+                let cr = ui.interact(close, ui.id().with("close"), Sense::click());
+                if cr.hovered() {
+                    p.rect_filled(close, 0.0, Color32::from_rgb(0xc4, 0x2b, 0x1c));
+                }
+                self.icons.draw(&p, "x-lg", close.center(), 14.0, if cr.hovered() { Color32::WHITE } else { c::MUTED });
+                if cr.clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
 
-                let x = full.left() + 70.0;
-                let w = full.width() - 140.0;
-                let btn = Rect::from_min_size(Pos2::new(full.center().x - 130.0, full.bottom() - 98.0), Vec2::new(260.0, 54.0));
-                let (sub, label, enabled) = match &self.phase {
-                    Phase::Welcome => (
-                        format!("Le launcher sera installé dans {}", self.home.display()),
-                        "INSTALLER",
-                        self.source.is_some(),
-                    ),
-                    Phase::Installing { .. } => (String::new(), "INSTALLATION…", false),
-                    Phase::Done { version } => (format!("Launcher v{version} installé. Raccourci ajouté au Bureau."), "LANCER OTERIA", true),
-                    Phase::Failed(_) => (String::new(), "RÉESSAYER", self.source.is_some()),
+                // The body.
+                let (icon, title, sub, sub_col) = match &self.phase {
+                    Phase::Welcome => ("download", "Installer Oteria Launcher".to_owned(), format!("Il sera installé dans {}", self.home.display()), c::MUTED),
+                    Phase::Installing { step, .. } => ("download", "Installation".to_owned(), step.clone(), c::MUTED),
+                    Phase::Done { version } => ("check-lg", "C'est installé".to_owned(), format!("Launcher v{version} installé. Un raccourci a été ajouté au Bureau."), c::MUTED),
+                    Phase::Failed(e) => ("x-lg", "L'installation a échoué".to_owned(), e.clone(), c::BAD_HOVER),
                 };
-                match &self.phase {
-                    Phase::Installing { step, fraction } => {
-                        let track = Rect::from_min_size(Pos2::new(x, full.top() + 246.0), Vec2::new(w, 6.0));
-                        p.rect_filled(track, CornerRadius::same(3), c::RAISED);
-                        p.rect_filled(Rect::from_min_size(track.min, Vec2::new((w * fraction).max(6.0), 6.0)), CornerRadius::same(3), c::ACCENT);
-                        ui::text(&p, track.left_bottom() + Vec2::new(0.0, 10.0), Align2::LEFT_TOP, step, ui::medium(12.5), c::TEXT);
-                        ui::text(&p, track.right_bottom() + Vec2::new(0.0, 10.0), Align2::RIGHT_TOP, &format!("{:.0} %", fraction * 100.0), ui::semi(12.5), c::CYAN);
-                    }
-                    Phase::Failed(e) => {
-                        ui::wrapped(&p, Pos2::new(x, full.top() + 240.0), e, ui::medium(12.5), c::BAD, w, 3);
-                    }
-                    _ => {
-                        let g = p.layout(sub.clone(), ui::regular(13.0), c::MUTED, w);
-                        p.galley(Pos2::new(full.center().x - g.size().x / 2.0, full.top() + 246.0), g, c::MUTED);
-                        if matches!(self.phase, Phase::Welcome) && self.source.is_none() {
-                            ui::wrapped(&p, Pos2::new(x, full.top() + 268.0), "Aucune source de mise à jour trouvée : place manifest.json à côté de ce programme.", ui::medium(12.0), c::WARN, w, 2);
+                let tile = Rect::from_min_size(full.min + Vec2::new(26.0, 92.0), Vec2::splat(52.0));
+                p.rect_filled(tile, CornerRadius::same(8), c::RAISED);
+                self.icons.draw(&p, icon, tile.center(), 22.0, c::TEXT);
+                ui::text(&p, full.min + Vec2::new(98.0, 92.0), Align2::LEFT_TOP, &title, ui::semi(22.0), Color32::WHITE);
+                ui::wrapped(&p, full.min + Vec2::new(98.0, 124.0), &sub, ui::regular(13.5), sub_col, full.width() - 98.0 - 26.0, 2);
+                if let Phase::Installing { fraction, .. } = &self.phase {
+                    ui::text(&p, Pos2::new(full.right() - 26.0, full.top() + 96.0), Align2::RIGHT_TOP, &format!("{:.0}%", fraction * 100.0), ui::semi(16.0), Color32::WHITE);
+                    let bar = Rect::from_min_size(Pos2::new(full.left() + 26.0, full.top() + 190.0), Vec2::new(full.width() - 52.0, 6.0));
+                    p.rect_filled(bar, CornerRadius::same(3), c::RAISED);
+                    p.rect_filled(Rect::from_min_size(bar.min, Vec2::new(bar.width() * fraction.clamp(0.0, 1.0), 6.0)), CornerRadius::same(3), c::ACCENT_HOVER);
+                } else {
+                    let label = match &self.phase {
+                        Phase::Welcome => "INSTALLER",
+                        Phase::Done { .. } => "LANCER OTERIA",
+                        _ => "RÉESSAYER",
+                    };
+                    let enabled = !matches!(self.phase, Phase::Welcome | Phase::Failed(_)) || self.source.is_some();
+                    let btn = Rect::from_min_size(Pos2::new(full.left() + 26.0, full.top() + 180.0), Vec2::new(full.width() - 52.0, 52.0));
+                    let resp = ui.interact(btn, ui.id().with("go"), if enabled { Sense::click() } else { Sense::hover() });
+                    let fill = if !enabled { c::RAISED } else if resp.hovered() { c::ACCENT_HOVER } else { c::ACCENT };
+                    p.rect_filled(btn, CornerRadius::same(8), fill);
+                    ui::text(&p, btn.center(), Align2::CENTER_CENTER, label, ui::semi(17.0), if enabled { Color32::WHITE } else { c::MUTED });
+                    if resp.clicked() {
+                        match self.phase {
+                            Phase::Welcome | Phase::Failed(_) => self.start(),
+                            Phase::Done { .. } => {
+                                self.start_launcher();
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            _ => {}
                         }
                     }
                 }
-                let resp = ui.interact(btn, ui.id().with("go"), if enabled { Sense::click() } else { Sense::hover() });
-                let fill = if !enabled { c::RAISED } else if resp.hovered() { c::ACCENT_HOVER } else { c::ACCENT };
-                p.rect_filled(btn, CornerRadius::same(12), fill);
-                p.rect_stroke(btn, CornerRadius::same(12), Stroke::new(1.0_f32, ui::alpha(Color32::WHITE, 0.1)), egui::StrokeKind::Inside);
-                ui::text(&p, btn.center(), Align2::CENTER_CENTER, label, ui::semi(19.0), if enabled { Color32::WHITE } else { c::MUTED });
-                ui::text(&p, Pos2::new(full.center().x, full.bottom() - 22.0), Align2::CENTER_CENTER, "Fork d'Horizon (MIT) · pas un produit officiel Minecraft", ui::regular(11.0), c::FAINT);
-                if resp.clicked() {
-                    match self.phase {
-                        Phase::Welcome | Phase::Failed(_) => self.start(),
-                        Phase::Done { .. } => {
-                            self.start_launcher();
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                        _ => {}
-                    }
+                if matches!(self.phase, Phase::Welcome) && self.source.is_none() {
+                    ui::text(&p, full.min + Vec2::new(26.0, 248.0), Align2::LEFT_TOP, "Aucune source de mise à jour : place manifest.json à côté de ce programme.", ui::medium(12.5), c::WARN);
                 }
+
+                // The footer.
+                p.line_segment([Pos2::new(full.left() + 26.0, full.bottom() - 52.0), Pos2::new(full.right() - 26.0, full.bottom() - 52.0)], Stroke::new(1.0_f32, c::BORDER));
+                self.icons.draw(&p, "box-seam", Pos2::new(full.left() + 38.0, full.bottom() - 26.0), 16.0, c::MUTED);
+                ui::text(&p, Pos2::new(full.left() + 58.0, full.bottom() - 26.0), Align2::LEFT_CENTER, "Le jeu se télécharge ensuite depuis le launcher. Fork d'Horizon (MIT).", ui::regular(12.5), c::MUTED);
             });
         ctx.request_repaint_after(Duration::from_millis(
             if matches!(self.phase, Phase::Installing { .. }) || self.shot.is_some() {
