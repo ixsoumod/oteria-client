@@ -65,9 +65,9 @@ if ($Launcher) {
         # The Azure app's client ID (public, not a secret) makes the Microsoft sign-in work in this build.
         $env:OTERIA_MSA_CLIENT_ID = (gh variable get HORIZON_MSA_CLIENT_ID -R $Repo).Trim()
         if (-not $env:OTERIA_MSA_CLIENT_ID) { throw 'La variable HORIZON_MSA_CLIENT_ID est vide : la connexion Microsoft ne marcherait pas.' }
-        Run cargo @('build', '--release')
+        Run cargo @('build', '--release', '--target-dir', 'target\publish')
     } finally { Remove-Item Env:OTERIA_LAUNCHER_VERSION, Env:OTERIA_MSA_CLIENT_ID -ErrorAction SilentlyContinue; Pop-Location }
-    foreach ($f in 'OteriaLauncher.exe', 'updater.exe', 'oteria-launcher-setup.exe') { Copy-Item "$L\target\release\$f" "$Out\launcher\" }
+    foreach ($f in 'OteriaLauncher.exe', 'updater.exe', 'oteria-launcher-setup.exe') { Copy-Item "$L\target\publish\release\$f" "$Out\launcher\" }
     $tag = "launcher-v$Launcher"
     $manifest.launcher = Entry $Launcher "$Out\launcher\OteriaLauncher.exe" "$Base/$tag/OteriaLauncher.exe"
     $manifest.updater = Entry $Launcher "$Out\launcher\updater.exe" "$Base/$tag/updater.exe"
