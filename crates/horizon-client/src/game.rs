@@ -176,6 +176,9 @@ mod oteria_knife_rig;
 mod oteria_menu;
 mod oteria_mods;
 mod oteria_music;
+/// Incremental re-download of a server pack with no declared hash
+/// (`game/server_packs.rs`'s download queue).
+mod oteria_pack_delta;
 mod oteria_profiles;
 mod oteria_skins;
 mod oteria_showcase;

@@ -385,11 +385,11 @@ pub fn draw(
     }
 }
 
-/// `LoadingOverlay.MOJANG_STUDIOS_LOGO_LOCATION`, from the player's own resources.
-pub const MOJANG_STUDIOS_LOGO: &str = "gui/title/mojangstudios";
-
-/// `LoadingOverlay.extractRenderState`'s logo on a GUI `w` x `h`: the left
-/// half's corner, then each half's width and height.
+/// `LoadingOverlay.extractRenderState`'s brand slot on a GUI `w` x `h`: the
+/// left half's corner, then each half's width and height. Oteria draws its
+/// own square logo in this slot instead of Mojang's wordmark (`draw_loading_overlay`),
+/// but keeps the progress bar exactly as wide as the two halves together, so
+/// only this function's return value is reused for the bar's geometry.
 pub fn logo_layout(w: f32, h: f32) -> (i32, i32, i32, i32) {
     let (w, h) = (f64::from(w), f64::from(h));
     let (content_x, logo_y) = ((w * 0.5) as i32, (h * 0.5) as i32);
@@ -412,13 +412,12 @@ fn fill_corners(batch: &mut HudBatch, atlas: &HudAtlas, [x0, y0, x1, y1]: [i32; 
     batch.fill(atlas, left as f32, top as f32, w, h, color);
 }
 
-/// `LoadingOverlay.extractRenderState`: fills the frame with `BRAND_BACKGROUND`
-/// (Mojang red, or black when `darkMojangStudiosBackground` is set), draws the
-/// Mojang Studios logo as its two halves side by side, and the progress bar
-/// at 83.25% of the height (`extractProgressBar`, unfaded), with the stage's
-/// line above it. The logo's `MOJANG_LOGO` pipeline adds it (`SRC_ALPHA, ONE`):
-/// its texels are white, which alpha blending matches but for the red channel
-/// of the logo's soft edges, a 16/255 difference at most.
+/// `LoadingOverlay.extractRenderState`, with Oteria's own branding: fills the
+/// frame with `BRAND_BACKGROUND` (red, or black when `darkMojangStudiosBackground`
+/// is set), draws Oteria's logo (square, `oteria_art::LOGO`) in place of
+/// Mojang's wordmark, and the progress bar at 83.25% of the height
+/// (`extractProgressBar`, unfaded, exactly as wide as vanilla's logo slot),
+/// with the stage's line above it.
 pub fn draw_loading_overlay(
     batch: &mut HudBatch,
     atlas: &HudAtlas,
@@ -428,29 +427,11 @@ pub fn draw_loading_overlay(
 ) {
     let (w, h) = (batch.width, batch.height);
     batch.fill(atlas, 0.0, 0.0, w, h, brand_background(dark));
-    let (x, y, half_width, logo_height) = logo_layout(w, h);
-    if let Some(r) = atlas.sprites.get(MOJANG_STUDIOS_LOGO).copied() {
-        // blit(.., u, v, width, height, 120, 60, 120, 120): the left half
-        // samples the texture's top half from u = -0.0625, the right half its
-        // bottom half from u = 0.0625 (clamped, as the logo's sampler is).
-        let at = |u: f32, v: f32| {
-            let (u, v) = ((u / 120.0).clamp(0.0, 1.0), v / 120.0);
-            (r.u0 + (r.u1 - r.u0) * u, r.v0 + (r.v1 - r.v0) * v)
-        };
-        for (i, (u, v)) in [(-0.0625, 0.0), (0.0625, 60.0)].into_iter().enumerate() {
-            let (u0, v0) = at(u, v);
-            let (u1, v1) = at(u + 120.0, v + 60.0);
-            let half = crate::hud::Rect {
-                u0,
-                v0,
-                u1,
-                v1,
-                ..r
-            };
-            let left = x + i as i32 * half_width;
-            let (lw, lh) = (half_width as f32, logo_height as f32);
-            batch.rect_uv(left as f32, y as f32, lw, lh, half, u32::MAX);
-        }
+    let (_, y, half_width, logo_height) = logo_layout(w, h);
+    if let Some(r) = atlas.sprites.get(crate::oteria_art::LOGO).copied() {
+        let x = (w as i32) / 2 - logo_height / 2;
+        let side = logo_height as f32;
+        batch.rect_uv(x as f32, y as f32, side, side, r, u32::MAX);
     }
     let bar_y = (f64::from(h) * 0.8325) as i32;
     let x_center = (w as i32) / 2;
@@ -647,10 +628,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_mojang_logo_is_a_quarter_of_the_shorter_side_and_four_times_as_wide() {
-        // 320x240: min(240, 240) / 4 = 60 high, two halves of 120.
+    fn the_brand_slot_is_a_quarter_of_the_shorter_side_and_the_bar_four_times_as_wide() {
+        // 320x240: min(240, 240) / 4 = 60 high, the bar two halves of 120.
         assert_eq!(logo_layout(320.0, 240.0), (40, 90, 120, 60));
-        // A tall frame sizes the logo by three quarters of its width.
+        // A tall frame sizes the slot by three quarters of its width.
         assert_eq!(logo_layout(400.0, 500.0), (50, 213, 150, 75));
     }
 

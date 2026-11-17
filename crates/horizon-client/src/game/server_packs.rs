@@ -3,7 +3,7 @@
 //! and `DownloadedPackSource` as `Minecraft` drives it): the prompt, the
 //! server list's setting, downloads into `downloads/`, and a resource reload
 //! with the server's packs on top of the player's own.
-use super::{Game, packs::ReloadKind};
+use super::{Game, oteria_pack_delta::DeltaQueue, packs::ReloadKind};
 use horizon_client::{
     Result,
     confirm_screen::Confirm,
@@ -83,8 +83,10 @@ impl ServerPackState {
 #[derive(Default)]
 pub(super) struct ServerPackState {
     packs: ServerPacks,
-    /// `downloads/` in the game folder, opened at the first download.
-    queue: Option<download::Queue>,
+    /// `downloads/` in the game folder, opened at the first download. Tries
+    /// Oteria's incremental re-download first for a pack with no declared
+    /// hash, falling back to the plain download otherwise.
+    queue: Option<DeltaQueue>,
     pub(super) prompt: Option<PackPrompt>,
     /// The server list entry the setting is saved to (none: a direct join).
     pub(super) address: Option<String>,
@@ -406,7 +408,7 @@ impl Game<'_> {
             .server_packs
             .queue
             .as_ref()
-            .map(download::Queue::finished)
+            .map(DeltaQueue::finished)
             .unwrap_or_default();
         for batch in finished {
             self.server_packs.packs.downloaded(batch);
@@ -430,7 +432,7 @@ impl Game<'_> {
             let dir = std::env::current_dir()
                 .unwrap_or_default()
                 .join("downloads");
-            match download::Queue::open(dir) {
+            match DeltaQueue::open(dir) {
                 Ok(queue) => state.queue = Some(queue),
                 Err(e) => {
                     log::error!("Horizon: failed to open the download queue: {e}");
