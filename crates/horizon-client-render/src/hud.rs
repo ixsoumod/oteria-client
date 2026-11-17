@@ -392,14 +392,17 @@ fn animation_of(mcmeta: Option<&str>) -> Option<AnimationMetadata> {
 }
 /// An animated strip's first frame: the region the mcmeta's frame size picks
 /// (`AnimationMetadataSection.frameSize`), which is the top-left square unless
-/// it names other dimensions or the frames run along a row.
+/// it names other dimensions or the frames run along a row. Without an animation
+/// the image is whole (`SpriteContents` takes the image's size): a pack's 128×64
+/// item texture keeps its right half (CubeCraft's lobby titles are drawn from it).
 fn first_frame(
     (w, h, pixels): (u32, u32, Vec<u8>),
     animation: Option<&AnimationMetadata>,
 ) -> (u32, u32, Vec<u8>) {
-    let [fw, fh] = animation.map_or([w.min(h) as i32; 2], |meta| {
-        meta.frame_size(w as i32, h as i32)
-    });
+    let Some(meta) = animation else {
+        return (w, h, pixels);
+    };
+    let [fw, fh] = meta.frame_size(w as i32, h as i32);
     match (u32::try_from(fw), u32::try_from(fh)) {
         (Ok(fw), Ok(fh))
             if fw > 0 && fh > 0 && w % fw == 0 && h % fh == 0 && (fw, fh) != (w, h) =>
@@ -4097,6 +4100,13 @@ texture=wide",
         write_png(&pack, "gui/sprites/widget/button", 400, 40);
         write_png(&pack, "block/stone", 32, 32);
         write_png(&pack, "item/compass", 32, 1024);
+        fs::write(
+            pack.join("assets/minecraft/textures/item/compass.png.mcmeta"),
+            r#"{"animation":{}}"#,
+        )
+        .unwrap();
+        // A still texture twice as wide as tall is packed whole (CubeCraft's lobby titles).
+        write_png(&pack, "item/wide", 128, 64);
         write_png(&pack, "gui/sprites/pack_only", 30, 10);
         let atlas = HudAtlas::build_over(&pack, &defaults).unwrap();
         let _ = fs::remove_dir_all(&temp);
@@ -4106,6 +4116,7 @@ texture=wide",
             ("gui/sprites/widget/button", (200, 20), (400, 40)),
             ("block/stone", (16, 16), (32, 32)),
             ("item/compass", (16, 16), (32, 32)),
+            ("item/wide", (128, 64), (128, 64)),
             ("gui/sprites/pack_only", (30, 10), (30, 10)),
         ] {
             let r = atlas.sprites[name];

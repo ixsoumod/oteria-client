@@ -43,6 +43,15 @@ pub fn resources(bin: &str) {
         };
         let mut resource = winresource::WindowsResource::new();
         resource.set_icon(&resource_icon);
+        // The version block Windows shows for the executable (the firewall prompt, the Task
+        // Manager, the file's properties): winresource would fill it with the Cargo package name
+        // (`horizon-client`), but the game ships as Oteria.exe.
+        resource
+            .set("ProductName", "Oteria Client")
+            .set("FileDescription", "Oteria Client")
+            .set("CompanyName", "Oteria")
+            .set("InternalName", "Oteria")
+            .set("OriginalFilename", "Oteria.exe");
         if std::env::var_os("CARGO_FEATURE_WINDOWS_SEGMENT_HEAP").is_some() {
             let manifest = manifest_dir.join("../horizon-client/windows-segment-heap.manifest");
             println!("cargo:rerun-if-changed={}", manifest.display());

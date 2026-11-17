@@ -375,7 +375,9 @@ fn load_bitmap(
                 top,
                 right: cell_w as f32 * scale,
                 bottom: top + cell_h as f32 * scale,
-                advance: (0.5 + used as f32 * scale).floor() + 1.0,
+                // Java's `(int)` cast rounds toward zero: a negative `height` (packs' negative
+                // spaces, a 1×1 sheet at height -3) moves back 1, not 2.
+                advance: (0.5 + used as f32 * scale).trunc() + 1.0,
                 offset: 1.0,
             };
             if metrics_only {
@@ -1525,6 +1527,29 @@ mod tests {
         assert!(glyph.rect.is_none());
         assert!(metrics.take_patches().is_empty());
         assert!(!rendered.take_patches().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// CubeCraft's negative spaces: one opaque pixel at a negative height. Vanilla's
+    /// `(int)(0.5 + 1 * height) + 1` rounds toward zero.
+    #[test]
+    fn negative_height_bitmaps_move_back_as_vanilla() {
+        let sheet = png(1, 1, |_, _| true);
+        let def = br#"{"providers":[
+            {"type":"bitmap","file":"minecraft:gui/neg.png","height":-3,"ascent":-9999,"chars":["\ufcc0"]},
+            {"type":"bitmap","file":"minecraft:gui/neg.png","height":-50,"ascent":-9999,"chars":["\ufcc1"]},
+            {"type":"bitmap","file":"minecraft:gui/neg.png","height":-259,"ascent":-9999,"chars":["\ufcc2"]}]}"#;
+        let root = root(
+            "negative",
+            &[
+                ("assets/minecraft/font/default.json", def),
+                ("assets/minecraft/textures/gui/neg.png", &sheet),
+            ],
+        );
+        let font = Font::metrics(&root);
+        assert_eq!(font.glyph('\u{fcc0}').advance, -1.0);
+        assert_eq!(font.glyph('\u{fcc1}').advance, -48.0);
+        assert_eq!(font.glyph('\u{fcc2}').advance, -257.0);
         let _ = std::fs::remove_dir_all(root);
     }
 
