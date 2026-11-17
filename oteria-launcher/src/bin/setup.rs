@@ -34,6 +34,7 @@ struct Setup {
     phase: Phase,
     rx: Option<Receiver<Msg>>,
     logo: egui::TextureHandle,
+    icons: ui::Icons,
     silent: bool,
     shot: Option<PathBuf>,
     shot_at: String,
@@ -91,7 +92,8 @@ fn main() -> eframe::Result {
                 home: paths::home(),
                 phase: Phase::Welcome,
                 rx: None,
-                logo: ui::texture_from_png(&cc.egui_ctx, "logo", ui::LOGO_PNG).unwrap(),
+                logo: ui::svg_texture(&cc.egui_ctx, "logo", ui::LOGO_SVG, 192, false).unwrap(),
+                icons: ui::Icons::load(&cc.egui_ctx),
                 silent: std::env::args().any(|a| a == "--silent"),
                 shot: std::env::var_os("OTERIA_SETUP_SHOT").map(PathBuf::from),
                 shot_at: std::env::var("OTERIA_SETUP_SHOT_AT").unwrap_or_default(),
@@ -253,23 +255,24 @@ impl eframe::App for Setup {
             .frame(egui::Frame::NONE.fill(c::BG))
             .show(ctx, |ui| {
                 let full = ui.max_rect();
+                let icons = &self.icons;
                 let p = ui.painter().clone();
                 let bar = Rect::from_min_size(full.min, Vec2::new(full.width(), 40.0));
                 let drag = ui.interact(bar, ui.id().with("bar"), Sense::click_and_drag());
                 if drag.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
-                ui::glow(&p, Pos2::new(full.center().x, full.top() + 120.0), 260.0, c::ACCENT_DEEP, 1.0);
                 ui::text(&p, Pos2::new(full.left() + 18.0, bar.center().y), Align2::LEFT_CENTER, "Installation d'Oteria Client", ui::medium(12.5), c::MUTED);
-                ui::window_controls(ui, bar);
+                ui::window_controls(ui, bar, &icons);
                 p.image(
                     self.logo.id(),
                     Rect::from_center_size(Pos2::new(full.center().x, full.top() + 112.0), Vec2::splat(92.0)),
                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     Color32::WHITE,
                 );
-                ui::text(&p, Pos2::new(full.center().x - 50.0, full.top() + 196.0), Align2::CENTER_CENTER, "OTERIA", ui::display(36.0), c::TEXT);
-                ui::text(&p, Pos2::new(full.center().x + 74.0, full.top() + 200.0), Align2::CENTER_CENTER, "CLIENT", ui::display(20.0), c::ACCENT);
+                ui::text(&p, Pos2::new(full.center().x, full.top() + 188.0), Align2::CENTER_CENTER, "OTERIA", ui::pixel(36.0), c::TEXT);
+                let g = p.layout_no_wrap("LAUNCHER".into(), ui::semi(11.0), c::MUTED);
+                ui::spaced(&p, Pos2::new(full.center().x - (g.size().x + 7.0 * 3.4) / 2.0, full.top() + 210.0), "LAUNCHER", ui::semi(11.0), c::MUTED, 3.4);
 
                 let x = full.left() + 70.0;
                 let w = full.width() - 140.0;
@@ -287,27 +290,27 @@ impl eframe::App for Setup {
                 match &self.phase {
                     Phase::Installing { step, fraction } => {
                         let track = Rect::from_min_size(Pos2::new(x, full.top() + 246.0), Vec2::new(w, 6.0));
-                        p.rect_filled(track, CornerRadius::same(3), c::CARD);
+                        p.rect_filled(track, CornerRadius::same(3), c::RAISED);
                         p.rect_filled(Rect::from_min_size(track.min, Vec2::new((w * fraction).max(6.0), 6.0)), CornerRadius::same(3), c::ACCENT);
                         ui::text(&p, track.left_bottom() + Vec2::new(0.0, 10.0), Align2::LEFT_TOP, step, ui::medium(12.5), c::TEXT);
-                        ui::text(&p, track.right_bottom() + Vec2::new(0.0, 10.0), Align2::RIGHT_TOP, &format!("{:.0} %", fraction * 100.0), ui::semi(12.5), c::ACCENT_HI);
+                        ui::text(&p, track.right_bottom() + Vec2::new(0.0, 10.0), Align2::RIGHT_TOP, &format!("{:.0} %", fraction * 100.0), ui::semi(12.5), c::CYAN);
                     }
                     Phase::Failed(e) => {
                         ui::wrapped(&p, Pos2::new(x, full.top() + 240.0), e, ui::medium(12.5), c::BAD, w, 3);
                     }
                     _ => {
                         let g = p.layout(sub.clone(), ui::regular(13.0), c::MUTED, w);
-                        p.galley(Pos2::new(full.center().x - g.size().x / 2.0, full.top() + 242.0), g, c::MUTED);
+                        p.galley(Pos2::new(full.center().x - g.size().x / 2.0, full.top() + 246.0), g, c::MUTED);
                         if matches!(self.phase, Phase::Welcome) && self.source.is_none() {
                             ui::wrapped(&p, Pos2::new(x, full.top() + 268.0), "Aucune source de mise à jour trouvée : place manifest.json à côté de ce programme.", ui::medium(12.0), c::WARN, w, 2);
                         }
                     }
                 }
                 let resp = ui.interact(btn, ui.id().with("go"), if enabled { Sense::click() } else { Sense::hover() });
-                let fill = if !enabled { c::CARD } else if resp.hovered() { c::ACCENT_HI } else { c::ACCENT };
+                let fill = if !enabled { c::RAISED } else if resp.hovered() { c::ACCENT_HOVER } else { c::ACCENT };
                 p.rect_filled(btn, CornerRadius::same(12), fill);
                 p.rect_stroke(btn, CornerRadius::same(12), Stroke::new(1.0_f32, ui::alpha(Color32::WHITE, 0.1)), egui::StrokeKind::Inside);
-                ui::text(&p, btn.center(), Align2::CENTER_CENTER, label, ui::display(19.0), if enabled { c::ON_ACCENT } else { c::MUTED });
+                ui::text(&p, btn.center(), Align2::CENTER_CENTER, label, ui::semi(19.0), if enabled { Color32::WHITE } else { c::MUTED });
                 ui::text(&p, Pos2::new(full.center().x, full.bottom() - 22.0), Align2::CENTER_CENTER, "Fork d'Horizon (MIT) · pas un produit officiel Minecraft", ui::regular(11.0), c::FAINT);
                 if resp.clicked() {
                     match self.phase {

@@ -1,40 +1,46 @@
-//! The look the launcher and the setup share: Oteria's palette (the logo's blues over a night
-//! navy), the design system's fonts (Geist, Bricolage Grotesque: `crates/horizon-theme/fonts`,
-//! OFL), the logo, and painting helpers.
+//! The look the launcher and the setup share: a dark navy with Oteria's blue, flat surfaces with
+//! small corners and one-pixel borders, Geist for text and Pixelify Sans for the wordmark
+//! (`crates/horizon-theme/fonts`, OFL), the logo and Tabler icons rendered from their SVGs
+//! (`assets/icons`, MIT) at the size they are drawn.
 use eframe::egui::{
-    self, epaint::Mesh, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, Pos2, Rect, Shape, Stroke, StrokeKind, TextureHandle, Vec2,
+    self, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Pos2, Rect,
+    Stroke, StrokeKind, TextureHandle, Vec2,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 
 pub mod c {
     use eframe::egui::Color32;
-    pub const BG: Color32 = Color32::from_rgb(0x09, 0x0d, 0x14);
-    pub const SIDEBAR: Color32 = Color32::from_rgb(0x0c, 0x11, 0x1a);
-    pub const PANEL: Color32 = Color32::from_rgb(0x11, 0x18, 0x23);
-    pub const CARD: Color32 = Color32::from_rgb(0x14, 0x1c, 0x29);
-    pub const CARD_HOVER: Color32 = Color32::from_rgb(0x1a, 0x25, 0x36);
-    pub const BORDER: Color32 = Color32::from_rgb(0x1f, 0x2a, 0x3b);
-    pub const TEXT: Color32 = Color32::from_rgb(0xe9, 0xef, 0xf7);
-    pub const MUTED: Color32 = Color32::from_rgb(0x86, 0x94, 0xa9);
-    pub const FAINT: Color32 = Color32::from_rgb(0x4d, 0x5a, 0x6e);
-    /// The logo's cyan wave.
-    pub const ACCENT: Color32 = Color32::from_rgb(0x2b, 0xbf, 0xe9);
+    pub const BG: Color32 = Color32::from_rgb(0x0a, 0x11, 0x1d);
+    pub const SIDEBAR: Color32 = Color32::from_rgb(0x0c, 0x15, 0x24);
+    pub const PANEL: Color32 = Color32::from_rgb(0x10, 0x1b, 0x2d);
+    pub const RAISED: Color32 = Color32::from_rgb(0x16, 0x24, 0x3a);
+    pub const HOVER: Color32 = Color32::from_rgb(0x1c, 0x2d, 0x48);
+    pub const BORDER: Color32 = Color32::from_rgb(0x1d, 0x2c, 0x44);
+    pub const TEXT: Color32 = Color32::from_rgb(0xe8, 0xee, 0xf6);
+    pub const MUTED: Color32 = Color32::from_rgb(0x8b, 0x9a, 0xb2);
+    pub const FAINT: Color32 = Color32::from_rgb(0x55, 0x65, 0x7e);
     /// The logo's big wave.
-    pub const ACCENT_DEEP: Color32 = Color32::from_rgb(0x15, 0x90, 0xcc);
-    pub const ACCENT_HI: Color32 = Color32::from_rgb(0x5c, 0xc6, 0xef);
-    pub const ON_ACCENT: Color32 = Color32::from_rgb(0x04, 0x16, 0x24);
-    pub const GOOD: Color32 = Color32::from_rgb(0x3d, 0xd6, 0x8c);
-    pub const WARN: Color32 = Color32::from_rgb(0xf5, 0xb9, 0x4a);
-    pub const BAD: Color32 = Color32::from_rgb(0xf2, 0x5f, 0x6b);
+    pub const ACCENT: Color32 = Color32::from_rgb(0x18, 0x8f, 0xd1);
+    pub const ACCENT_HOVER: Color32 = Color32::from_rgb(0x26, 0xa3, 0xe6);
+    /// The darker edge under the main button.
+    pub const ACCENT_EDGE: Color32 = Color32::from_rgb(0x0e, 0x62, 0x97);
+    /// The logo's cyan wave, for small accents.
+    pub const CYAN: Color32 = Color32::from_rgb(0x2b, 0xbf, 0xe9);
+    pub const SELECTED: Color32 = Color32::from_rgb(0x12, 0x2e, 0x4c);
+    pub const GOOD: Color32 = Color32::from_rgb(0x46, 0xc2, 0x7a);
+    pub const WARN: Color32 = Color32::from_rgb(0xe8, 0xb0, 0x45);
+    pub const BAD: Color32 = Color32::from_rgb(0xd9, 0x4b, 0x4b);
+    pub const BAD_HOVER: Color32 = Color32::from_rgb(0xe6, 0x5c, 0x5c);
+    pub const BAD_EDGE: Color32 = Color32::from_rgb(0x9a, 0x2f, 0x2f);
 }
 
 const GEIST: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/Geist-Regular.ttf");
 const GEIST_MEDIUM: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/Geist-Medium.ttf");
 const GEIST_SEMI: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/Geist-SemiBold.ttf");
-const DISPLAY: &[u8] =
-    include_bytes!("../../crates/horizon-theme/fonts/BricolageGrotesqueDisplay-Bold.ttf");
+const PIXEL: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/PixelifySans-Bold.ttf");
 pub const LOGO_PNG: &[u8] = include_bytes!("../assets/oteria-logo.png");
+pub const LOGO_SVG: &[u8] = include_bytes!("../../branding/oteria-logo.svg");
 
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
@@ -42,7 +48,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         ("geist", GEIST),
         ("geist-medium", GEIST_MEDIUM),
         ("geist-semi", GEIST_SEMI),
-        ("display", DISPLAY),
+        ("pixel", PIXEL),
     ] {
         fonts
             .font_data
@@ -57,7 +63,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     for (family, first) in [
         ("medium", "geist-medium"),
         ("semi", "geist-semi"),
-        ("display", "display"),
+        ("pixel", "pixel"),
     ] {
         let mut list = vec![first.to_owned()];
         list.extend(fallback.iter().cloned());
@@ -69,7 +75,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         s.visuals.panel_fill = c::BG;
         s.visuals.window_fill = c::PANEL;
         s.visuals.extreme_bg_color = c::BG;
-        s.visuals.selection.bg_fill = c::ACCENT_DEEP;
+        s.visuals.selection.bg_fill = c::ACCENT;
         s.visuals.override_text_color = Some(c::TEXT);
         s.spacing.scroll.bar_width = 6.0;
         s.spacing.scroll.floating = true;
@@ -85,8 +91,13 @@ pub fn medium(size: f32) -> FontId {
 pub fn semi(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("semi".into()))
 }
+/// Pixelify Sans, for the wordmark and the big title.
+pub fn pixel(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("pixel".into()))
+}
+/// The setup's titles.
 pub fn display(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("display".into()))
+    pixel(size)
 }
 
 pub fn texture_from_png(ctx: &egui::Context, name: &str, png: &[u8]) -> Option<TextureHandle> {
@@ -97,6 +108,92 @@ pub fn texture_from_png(ctx: &egui::Context, name: &str, png: &[u8]) -> Option<T
         egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
         egui::TextureOptions::LINEAR,
     ))
+}
+
+/// An SVG rendered to a square texture of `px` pixels. `white` turns `currentColor` white, so
+/// the icon takes its colour from the tint it is drawn with.
+pub fn svg_texture(
+    ctx: &egui::Context,
+    name: &str,
+    svg: &[u8],
+    px: u32,
+    white: bool,
+) -> Option<TextureHandle> {
+    let text = String::from_utf8_lossy(svg);
+    let text = if white {
+        text.replace("currentColor", "#ffffff")
+    } else {
+        text.into_owned()
+    };
+    let tree =
+        resvg::usvg::Tree::from_data(text.as_bytes(), &resvg::usvg::Options::default()).ok()?;
+    let size = tree.size();
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(px, px)?;
+    let scale = px as f32 / size.width().max(size.height());
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let image =
+        egui::ColorImage::from_rgba_premultiplied([px as usize, px as usize], pixmap.data());
+    Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR))
+}
+
+/// The Tabler icons the launcher draws, by file name.
+pub struct Icons(HashMap<&'static str, TextureHandle>);
+
+macro_rules! icon_files {
+    ($($name:literal),* $(,)?) => {
+        &[$(($name, include_bytes!(concat!("../assets/icons/", $name, ".svg")) as &[u8])),*]
+    };
+}
+
+const ICONS: &[(&str, &[u8])] = icon_files![
+    "device-gamepad-2",
+    "puzzle",
+    "building-store",
+    "settings",
+    "download",
+    "folder",
+    "external-link",
+    "cpu",
+    "server",
+    "users",
+    "refresh",
+    "chevron-right",
+    "user",
+    "minus",
+    "square",
+    "x",
+    "alert-triangle",
+    "news",
+    "player-play-filled",
+    "player-stop-filled",
+];
+
+impl Icons {
+    pub fn load(ctx: &egui::Context) -> Self {
+        let px = ((64.0 * ctx.pixels_per_point().max(1.0)) as u32).min(128);
+        Self(
+            ICONS
+                .iter()
+                .filter_map(|(name, svg)| Some((*name, svg_texture(ctx, name, svg, px, true)?)))
+                .collect(),
+        )
+    }
+
+    /// Draws icon `name` centred on `center`, `size` points wide, in `color`.
+    pub fn draw(&self, p: &egui::Painter, name: &str, center: Pos2, size: f32, color: Color32) {
+        if let Some(t) = self.0.get(name) {
+            p.image(
+                t.id(),
+                Rect::from_center_size(center, Vec2::splat(size)),
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                color,
+            );
+        }
+    }
 }
 
 pub fn icon_data() -> egui::IconData {
@@ -122,39 +219,7 @@ pub fn alpha(c: Color32, a: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a.clamp(0.0, 1.0) * 255.0) as u8)
 }
 
-/// A rectangle filled with a gradient from `a` (top-left) to `b` (bottom-right), at an angle:
-/// `horizontal` 0 is vertical, 1 is horizontal.
-pub fn gradient(painter: &egui::Painter, rect: Rect, a: Color32, b: Color32, horizontal: f32) {
-    let mut mesh = Mesh::default();
-    let corners = [
-        rect.left_top(),
-        rect.right_top(),
-        rect.right_bottom(),
-        rect.left_bottom(),
-    ];
-    let ts = [0.0, horizontal, 1.0, 1.0 - horizontal];
-    for (p, t) in corners.iter().zip(ts) {
-        mesh.colored_vertex(*p, lerp(a, b, t));
-    }
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(Shape::mesh(mesh));
-}
-
-/// A soft round glow: rings fading out from `color` at the centre.
-pub fn glow(painter: &egui::Painter, center: Pos2, radius: f32, color: Color32, strength: f32) {
-    let steps = 24;
-    for i in (1..=steps).rev() {
-        let t = i as f32 / steps as f32;
-        painter.circle_filled(
-            center,
-            radius * t,
-            alpha(color, strength * (1.0 - t) * 0.16),
-        );
-    }
-}
-
-/// A button-like plate: fill, hover fill, and a one-pixel border.
+/// A flat surface with a one-pixel border.
 pub fn plate(painter: &egui::Painter, rect: Rect, radius: u8, fill: Color32, border: Color32) {
     painter.rect(
         rect,
@@ -163,15 +228,6 @@ pub fn plate(painter: &egui::Painter, rect: Rect, radius: u8, fill: Color32, bor
         Stroke::new(1.0_f32, border),
         StrokeKind::Inside,
     );
-}
-
-/// A small rounded label (`MINECRAFT 26.3`, a news tag).
-pub fn pill(painter: &egui::Painter, pos: Pos2, text: &str, fg: Color32, bg: Color32) -> Rect {
-    let galley = painter.layout_no_wrap(text.to_owned(), semi(11.0), fg);
-    let rect = Rect::from_min_size(pos, galley.size() + Vec2::new(16.0, 8.0));
-    painter.rect_filled(rect, CornerRadius::same(255), bg);
-    painter.galley(rect.min + Vec2::new(8.0, 4.0), galley, fg);
-    rect
 }
 
 /// Text clipped to `rows` lines within `width`.
@@ -202,6 +258,32 @@ pub fn text(
     color: Color32,
 ) -> Rect {
     painter.text(pos, align, s, font, color)
+}
+
+/// Text with its letters spaced out, for small capitals (`LAUNCHER`, section titles).
+pub fn spaced(
+    painter: &egui::Painter,
+    pos: Pos2,
+    s: &str,
+    font: FontId,
+    color: Color32,
+    spacing: f32,
+) -> Rect {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        s,
+        0.0,
+        egui::TextFormat {
+            font_id: font,
+            color,
+            extra_letter_spacing: spacing,
+            ..Default::default()
+        },
+    );
+    let galley = painter.layout_job(job);
+    let rect = Rect::from_min_size(pos, galley.size());
+    painter.galley(pos, galley, color);
+    rect
 }
 
 /// A skin's pixels (64x64 or legacy 64x32), for drawing the player.
@@ -239,7 +321,8 @@ impl Skin {
     }
 }
 
-/// Draws `w`×`h` texels of a source (`get(x, y)`) into `rect`, one rectangle per texel.
+/// Draws `w`×`h` texels of a source (`get(x, y)`) into `rect`, one rectangle per texel,
+/// darkened by `shade` (0 to 1) for the sides that face away from the light.
 fn blit(
     painter: &egui::Painter,
     rect: Rect,
@@ -283,7 +366,6 @@ fn default_texel(x: usize, y: usize) -> Color32 {
     let pants = Color32::from_rgb(0x1c, 0x24, 0x33);
     let shoe = Color32::from_rgb(0x0e, 0x12, 0x1a);
     match y {
-        // Head: x 4..12.
         0..=7 if (4..12).contains(&x) => match (x - 4, y) {
             (_, 0..=1) => hair,
             (0 | 7, 2) => hair,
@@ -292,9 +374,8 @@ fn default_texel(x: usize, y: usize) -> Color32 {
             (3..=4, 6) => skin_dark,
             _ => skin,
         },
-        // Arms (x 0..4 and 12..16) and the body (4..12), rows 8..20.
         8..=19 => {
-            if x < 4 || x >= 12 {
+            if !(4..12).contains(&x) {
                 if y >= 18 {
                     skin
                 } else if y == 17 {
@@ -309,16 +390,13 @@ fn default_texel(x: usize, y: usize) -> Color32 {
                     || (y == 13 && (2..=5).contains(&bx));
                 if chest {
                     wave
-                } else if y == 8 && (bx == 3 || bx == 4) {
-                    hood_dark
-                } else if y >= 18 {
+                } else if (y == 8 && (bx == 3 || bx == 4)) || y >= 18 {
                     hood_dark
                 } else {
                     hood
                 }
             }
         }
-        // Legs: x 4..12, rows 20..32.
         20..=31 if (4..12).contains(&x) => {
             if y >= 30 {
                 shoe
@@ -335,8 +413,7 @@ fn default_texel(x: usize, y: usize) -> Color32 {
 /// The player standing, front on, filling `rect`'s height (16:32).
 pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
     let unit = rect.height() / 32.0;
-    let w = unit * 16.0;
-    let left = rect.center().x - w / 2.0;
+    let left = rect.center().x - unit * 8.0;
     let top = rect.top();
     let r = |x: f32, y: f32, ww: f32, hh: f32| {
         Rect::from_min_size(
@@ -344,12 +421,6 @@ pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
             Vec2::new(ww * unit, hh * unit),
         )
     };
-    // A shadow on the ground.
-    painter.add(Shape::ellipse_filled(
-        Pos2::new(rect.center().x, rect.bottom()),
-        Vec2::new(w * 0.55, unit * 1.4),
-        Color32::from_black_alpha(110),
-    ));
     let Some(s) = skin else {
         blit(painter, r(0.0, 0.0, 16.0, 32.0), 16, 32, default_texel, 0.0);
         return;
@@ -357,7 +428,6 @@ pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
     let arm_w = if s.slim { 3.0 } else { 4.0 };
     let arm = arm_w as usize;
     let modern = s.h == 64;
-    // (source x, y, width, height) -> destination (x, y in units)
     let part = |sx: usize, sy: usize, sw: usize, sh: usize, dx: f32, dy: f32, shade: f32| {
         blit(
             painter,
@@ -368,7 +438,6 @@ pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
             shade,
         );
     };
-    // Legs: right leg (on the left of the picture) at 4,20; left leg at 20,52 (legacy: mirrored).
     part(4, 20, 4, 12, 4.0, 20.0, 0.08);
     if modern {
         part(20, 52, 4, 12, 8.0, 20.0, 0.0);
@@ -382,8 +451,7 @@ pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
             0.0,
         );
     }
-    part(20, 20, 8, 12, 4.0, 8.0, 0.0); // body
-                                        // Arms: right arm at 44,20; left arm at 36,52 (legacy: mirrored).
+    part(20, 20, 8, 12, 4.0, 8.0, 0.0);
     part(44, 20, arm, 12, 4.0 - arm_w, 8.0, 0.12);
     if modern {
         part(36, 52, arm, 12, 12.0, 8.0, 0.0);
@@ -397,18 +465,12 @@ pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
             0.0,
         );
     }
-    part(8, 8, 8, 8, 4.0, 0.0, 0.0); // head
-                                     // The outer layer, a little larger.
+    part(8, 8, 8, 8, 4.0, 0.0, 0.0);
+    // The outer layer, a little larger.
     let outer = |sx: usize, sy: usize, sw: usize, sh: usize, dx: f32, dy: f32| {
-        let grow = 0.5;
         blit(
             painter,
-            r(
-                dx - grow * 0.5,
-                dy - grow * 0.5,
-                sw as f32 + grow,
-                sh as f32 + grow,
-            ),
+            r(dx - 0.25, dy - 0.25, sw as f32 + 0.5, sh as f32 + 0.5),
             sw,
             sh,
             |x, y| s.px(sx + x, sy + y),
@@ -425,7 +487,7 @@ pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
     outer(40, 8, 8, 8, 4.0, 0.0);
 }
 
-/// The player's face (with the hat layer), for the account chip.
+/// The player's face (with the hat layer), for the account.
 pub fn draw_head(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
     match skin {
         Some(s) => {
@@ -436,57 +498,37 @@ pub fn draw_head(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
     }
 }
 
-/// Window buttons drawn as in the references: minimise, maximise, close.
-pub fn window_controls(ui: &mut egui::Ui, bar: Rect) {
+/// Minimise, maximise and close, at the right of `bar`.
+pub fn window_controls(ui: &mut egui::Ui, bar: Rect, icons: &Icons) {
     let ctx = ui.ctx().clone();
     let w = 46.0;
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-    for (i, kind) in ["close", "max", "min"].into_iter().enumerate() {
+    for (i, kind) in ["x", "square", "minus"].into_iter().enumerate() {
         let rect = Rect::from_min_size(
             Pos2::new(bar.right() - w * (i as f32 + 1.0), bar.top()),
-            Vec2::new(w, bar.height()),
+            Vec2::new(w, bar.height().min(40.0)),
         );
         let resp = ui.interact(rect, ui.id().with(("winctl", kind)), egui::Sense::click());
         let p = ui.painter();
         if resp.hovered() {
-            p.rect_filled(
-                rect,
-                0.0,
-                if kind == "close" {
-                    Color32::from_rgb(0xc4, 0x2b, 0x1c)
-                } else {
-                    c::CARD_HOVER
-                },
-            );
+            let fill = if kind == "x" {
+                Color32::from_rgb(0xc4, 0x2b, 0x1c)
+            } else {
+                c::HOVER
+            };
+            p.rect_filled(rect, 0.0, fill);
         }
         let col = if resp.hovered() {
             Color32::WHITE
         } else {
             c::MUTED
         };
-        let cn = rect.center();
-        let st = Stroke::new(1.2_f32, col);
-        match kind {
-            "close" => {
-                p.line_segment([cn + Vec2::new(-5.0, -5.0), cn + Vec2::new(5.0, 5.0)], st);
-                p.line_segment([cn + Vec2::new(5.0, -5.0), cn + Vec2::new(-5.0, 5.0)], st);
-            }
-            "max" => {
-                p.rect_stroke(
-                    Rect::from_center_size(cn, Vec2::splat(10.0)),
-                    1.0,
-                    st,
-                    StrokeKind::Inside,
-                );
-            }
-            _ => {
-                p.line_segment([cn + Vec2::new(-5.0, 0.0), cn + Vec2::new(5.0, 0.0)], st);
-            }
-        }
+        let size = if kind == "square" { 14.0 } else { 18.0 };
+        icons.draw(p, kind, rect.center(), size, col);
         if resp.clicked() {
             match kind {
-                "close" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                "max" => ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized)),
+                "x" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                "square" => ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized)),
                 _ => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
             }
         }
