@@ -747,6 +747,28 @@ impl Launcher {
     }
 
     /// Starts a Microsoft sign-in: a code to type at microsoft.com/link, then the account.
+    /// The code page in a private Edge window: no Microsoft account is signed in there, so the
+    /// player signs in with their own, never the one their browser remembers (microsoft.com/link
+    /// takes it without asking). Without Edge, the default browser.
+    fn open_sign_in_page(uri: &str) {
+        let edge = ["ProgramFiles(x86)", "ProgramFiles"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .map(|d| std::path::Path::new(&d).join(r"Microsoft\Edge\Application\msedge.exe"))
+            .find(|p| p.is_file());
+        let opened = edge.is_some_and(|edge| {
+            std::process::Command::new(edge)
+                .args(["--inprivate", uri])
+                .spawn()
+                .is_ok()
+        });
+        if !opened {
+            let _ = install::quiet_command("cmd")
+                .args(["/c", "start", "", uri])
+                .spawn();
+        }
+    }
+
     fn start_sign_in(&mut self) {
         let Some(client_id) = microsoft::client_id() else {
             self.ms_flow =
@@ -805,9 +827,7 @@ impl Launcher {
                 MsEvent::Code(code) => {
                     // The page opens by itself: the player asked for this sign-in.
                     if std::env::var_os("OTERIA_NO_BROWSER").is_none() {
-                        let _ = install::quiet_command("cmd")
-                            .args(["/c", "start", "", &code.verification_uri])
-                            .spawn();
+                        Self::open_sign_in_page(&code.verification_uri);
                     }
                     self.ms_flow = MsFlow::Waiting {
                         code: code.user_code.clone(),
@@ -2278,7 +2298,7 @@ impl Launcher {
                     p,
                     Pos2::new(card.center().x, card.top() + 28.0),
                     Align2::CENTER_CENTER,
-                    "Ouvre microsoft.com/link et tape ce code :",
+                    "Fenêtre privée : tape ce code, puis connecte-toi avec ton compte Minecraft",
                     ui::regular(13.5),
                     c::MUTED,
                 );
@@ -2310,9 +2330,7 @@ impl Launcher {
                     Look::Quiet,
                     true,
                 ) {
-                    let _ = install::quiet_command("cmd")
-                        .args(["/c", "start", "", &uri])
-                        .spawn();
+                    Self::open_sign_in_page(&uri);
                 }
                 if button(
                     ui,
