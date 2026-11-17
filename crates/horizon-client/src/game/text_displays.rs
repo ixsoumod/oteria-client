@@ -53,6 +53,69 @@ pub(super) struct RemoteTextDisplay {
     /// `Entity.vehicle`: the mob it rides (`SetPassengers`), which places it
     /// every tick (`positionRider`), as NPC plugins hang a name over a head.
     pub(super) vehicle: Option<u32>,
+    /// How many times its data was applied, and what `OTERIA_DISPLAY_DUMP` has of it already
+    /// (see [`dump_display`]): the changes seen at the last line, and the lines written.
+    changes: u32,
+    dump_seen: u32,
+    dump_lines: u8,
+}
+
+/// An item as a command writes it: its id and count, the dye and the other components in SNBT.
+fn item_summary(stack: &ItemStack) -> serde_json::Value {
+    let mut components = serde_json::Map::new();
+    if let Some(extra) = &stack.extra {
+        if let Some(color) = extra.dyed_color {
+            components.insert("minecraft:dyed_color".into(), color.into());
+        }
+        for (name, tag) in &extra.other {
+            let text = horizon_client::snbt::pretty(tag).plain();
+            components.insert(name.clone(), text.into());
+        }
+    }
+    serde_json::json!({
+        "id": &*stack.item,
+        "count": stack.count,
+        "components": components,
+    })
+}
+
+/// `OTERIA_DISPLAY_DUMP=FILE`: every item and block display a server shows is written to FILE once,
+/// as a line of JSON (its id, position, item with its components, display context and
+/// transformation), so a scene that renders wrongly can be rebuilt with `/summon`. Capped at
+/// 4000 lines. Nothing is written without the variable.
+fn dump_display(id: i32, kind: &str, display: &RemoteTextDisplay, shown: &TextDisplayData) {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static WRITTEN: AtomicUsize = AtomicUsize::new(0);
+    let Some(path) = std::env::var_os("OTERIA_DISPLAY_DUMP").filter(|p| !p.is_empty()) else {
+        return;
+    };
+    if WRITTEN.fetch_add(1, Ordering::Relaxed) >= 4000 {
+        return;
+    }
+    let line = serde_json::json!({
+        "id": id,
+        "kind": kind,
+        "position": [display.position.x, display.position.y, display.position.z],
+        "rotation": display.rotation,
+        "item": display.item.as_ref().map(item_summary),
+        "context": display.item_display,
+        "block": display.block.map(|b| b.0),
+        "interpolation": {
+            "delay": display.data.interpolation_delay,
+            "duration": display.data.interpolation_duration,
+            "teleport": display.data.teleport_duration,
+        },
+        "shown": shown,
+        "from": &display.from,
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 /// `Display.RENDER_STATE_IDS` and `TextDisplay.TEXT_RENDER_STATE_IDS`: the
@@ -88,6 +151,9 @@ impl RemoteTextDisplay {
             last_progress: 0.0,
             lines: None,
             vehicle: None,
+            changes: 0,
+            dump_seen: 0,
+            dump_lines: 0,
         }
     }
     /// Where a passenger of this display sits, this tick and the last
@@ -173,6 +239,7 @@ impl RemoteTextDisplay {
                 self.data.clone()
             };
             self.shown = self.data.clone();
+            self.changes += 1;
             self.initialized = true;
         }
         self.dirty = false;
@@ -280,6 +347,15 @@ impl Game<'_> {
             for (id, display) in displays.iter_mut().filter(|(_, d)| d.shows == shows) {
                 display.last_progress = display.progress(partial as f32);
                 let d = display.shown.blend(&display.from, display.last_progress);
+                // A line when it first draws and after each change of its data (8 at most each): the
+                // first draw can come before the server's data does.
+                if display.dump_lines < 8
+                    && (display.dump_lines == 0 || display.dump_seen != display.changes)
+                {
+                    display.dump_lines += 1;
+                    display.dump_seen = display.changes;
+                    dump_display(*id, kind, display, &d);
+                }
                 let position = display.previous.lerp(display.position, partial);
                 if !self.display_in_view(camera, position, &d, scale) {
                     continue;
