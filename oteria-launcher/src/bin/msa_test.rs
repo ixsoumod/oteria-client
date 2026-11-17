@@ -16,6 +16,28 @@
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
+/// Prints a line and keeps it in `%TEMP%\oteria-msa-test.log` (no token is ever printed), so a run
+/// that is closed early can still be read afterwards.
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        let line = format!($($arg)*);
+        println!("{line}");
+        log_line(&line);
+    }};
+}
+
+fn log_line(line: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("oteria-msa-test.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 const SCOPE: &str = "XboxLive.signin offline_access";
 const MICROSOFT: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0";
 const XBOX_USER: &str = "https://user.auth.xboxlive.com/user/authenticate";
@@ -85,13 +107,13 @@ fn azure_advice(v: &Value) -> Option<&'static str> {
 }
 
 fn step(n: u8, what: &str) {
-    println!("\n[{n}] {what}");
+    say!("\n[{n}] {what}");
 }
 fn ok(msg: &str) {
-    println!("    OK   {msg}");
+    say!("    OK   {msg}");
 }
 fn ko(msg: &str) {
-    println!("    ÉCHEC {msg}");
+    say!("    ÉCHEC {msg}");
 }
 
 /// The result of a run, for the closing summary.
@@ -121,7 +143,14 @@ fn main() {
         std::process::exit(2);
     };
     let check_only = args.iter().any(|a| a == "--check");
-    println!("Test de la connexion Microsoft d'Oteria");
+    let _ = std::fs::remove_file(std::env::temp_dir().join("oteria-msa-test.log"));
+    std::panic::set_hook(Box::new(|info| {
+        say!(
+            "
+Le test a planté : {info}"
+        );
+    }));
+    say!("Test de la connexion Microsoft d'Oteria");
     let r = run(&client_id, check_only);
     summary(&r, check_only);
     std::process::exit(match (check_only, r.device_code, r.minecraft) {
@@ -154,7 +183,7 @@ fn run(client_id: &str, check_only: bool) -> Report {
     else {
         ko(&format!("(HTTP {status}) {}", microsoft_why(&v)));
         if let Some(a) = azure_advice(&v) {
-            println!("    -> {a}");
+            say!("    -> {a}");
         }
         return rep;
     };
@@ -173,19 +202,22 @@ fn run(client_id: &str, check_only: bool) -> Report {
     let expires = v.get("expires_in").and_then(Value::as_u64).unwrap_or(900);
 
     step(2, "Connexion dans le navigateur");
-    println!("    Va sur  {uri}");
-    println!("    et entre le code  {user_code}");
-    println!("    (connecte-toi avec le compte Microsoft qui possède Minecraft ; rien de ton mot de passe ne passe par ce programme)");
+    say!("    Va sur  {uri}");
+    say!("    et entre le code  {user_code}");
+    say!("    (connecte-toi avec le compte Microsoft qui possède Minecraft ; rien de ton mot de passe ne passe par ce programme)");
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("cmd")
             .args(["/c", "start", "", &uri])
             .spawn();
     }
+    say!("    En attente de ta connexion (un point toutes les {interval} s ; Ctrl+C pour annuler)...");
     let started = Instant::now();
     let mut wait = interval;
     let ms_access = loop {
         std::thread::sleep(Duration::from_secs(wait));
+        print!(".");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
         if started.elapsed().as_secs() > expires {
             ko("le code a expiré : relance le test");
             return rep;
@@ -217,7 +249,7 @@ fn run(client_id: &str, check_only: bool) -> Report {
                 _ => {
                     ko(&microsoft_why(&v));
                     if let Some(a) = azure_advice(&v) {
-                        println!("    -> {a}");
+                        say!("    -> {a}");
                     }
                     return rep;
                 }
@@ -228,6 +260,7 @@ fn run(client_id: &str, check_only: bool) -> Report {
             }
         }
     };
+    println!();
     rep.signed_in = true;
     ok("connecté chez Microsoft");
 
@@ -313,13 +346,13 @@ fn run(client_id: &str, check_only: bool) -> Report {
         ("authentication/login_with_xbox", &legacy),
     ] {
         match r {
-            Ok((s, v)) => println!(
+            Ok((s, v)) => say!(
                 "    {name} : HTTP {s}{}",
                 field(v, "errorMessage")
                     .map(|m| format!(" ({m})"))
                     .unwrap_or_default()
             ),
-            Err(e) => println!("    {name} : {e}"),
+            Err(e) => say!("    {name} : {e}"),
         }
     }
     let token = [&launcher, &legacy].into_iter().find_map(|r| match r {
@@ -399,23 +432,23 @@ fn xsts_error(code: u64) -> String {
 }
 
 fn summary(r: &Report, check_only: bool) {
-    println!("\n========== Résumé ==========");
-    println!(
+    say!("\n========== Résumé ==========");
+    say!(
         "Application Azure (code d'appareil) : {}",
         yes(r.device_code)
     );
     if check_only {
         return;
     }
-    println!("Connexion Microsoft               : {}", yes(r.signed_in));
-    println!("Xbox Live / XSTS                  : {}", yes(r.xbox));
+    say!("Connexion Microsoft               : {}", yes(r.signed_in));
+    say!("Xbox Live / XSTS                  : {}", yes(r.xbox));
     match r.minecraft {
-        Some(true) => println!("Validation de Mojang              : OUI, l'application est approuvée"),
-        Some(false) => println!("Validation de Mojang              : NON, pas encore (erreur 403 : il faut attendre ou relancer Mojang)"),
-        None => println!("Validation de Mojang              : non testée (une étape précédente a échoué)"),
+        Some(true) => say!("Validation de Mojang              : OUI, l'application est approuvée"),
+        Some(false) => say!("Validation de Mojang              : NON, pas encore (erreur 403 : il faut attendre ou relancer Mojang)"),
+        None => say!("Validation de Mojang              : non testée (une étape précédente a échoué)"),
     }
     if let Some(o) = r.owns {
-        println!("Le compte possède Minecraft       : {}", yes(o));
+        say!("Le compte possède Minecraft       : {}", yes(o));
     }
 }
 

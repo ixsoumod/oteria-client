@@ -14,7 +14,7 @@ Légende de difficulté : 🔴 très dur · 🟠 dur · 🟡 moyen · 🟢 facil
 - Identité visuelle : logo, icônes, thème bleu, badge Oteria devant ton pseudo (Tab et au-dessus de la tête).
 - Menus de réglages en verre, préréglages en un clic, FPS dans le menu Vidéo.
 - Chaîne de publication signée (`tools/oteria/publish.ps1`), en attente de la première version.
-- Connexion Microsoft : application Azure créée, en attente de la validation de Mojang.
+- Connexion Microsoft : application Azure approuvée par Mojang (testé le 17/11/2026 avec `tools/oteria/msa_test.ps1`). Reste à la brancher dans le launcher.
 
 ## Classement, du plus dur au plus simple
 
