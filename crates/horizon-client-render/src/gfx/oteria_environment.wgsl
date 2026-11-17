@@ -352,7 +352,9 @@ fn particle_layer(dir: vec3<f32>, limit: f32) -> vec4<f32> {
     let depth = textureLoad(depth_tex, texel, 0);
     // Reversed depth: nothing drawn is 0, the sky.
     let is_sky = depth <= 0.0;
-    let dir = normalize(unproject(ndc, 0.5));
+    // Two points on the pixel's ray (near plane, twice as far): view bobbing moves the eye as
+    // well as turning it, and a point this near the camera taken alone would swing the sky.
+    let dir = normalize(unproject(ndc, 0.5) - unproject(ndc, 1.0));
     let pos = unproject(ndc, max(depth, 1e-7));
     let dist = select(length(pos), 1e9, is_sky);
 
