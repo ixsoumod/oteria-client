@@ -38,6 +38,65 @@ const BG_ASPECT: f32 = 864.0 / 505.0;
 const BACKGROUND: &[u8] = include_bytes!("../../assets/background.jpg");
 const FULL_UV: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
 
+/// The banner's own looping video (0:02-0:20 of the clip recorded 2026-11-18, cropped and
+/// resized to `BG_ASPECT`), packed by `tools/oteria/pack_menu_loop.py` as one JPEG frame after
+/// another behind a small header: `u32` frame count, `u32` fps, `u32` reserved, then that many
+/// `u32` lengths, then the frames themselves.
+const MENU_LOOP: &[u8] = include_bytes!("../../assets/menu-loop.bin");
+
+/// The banner's video, decoded one frame at a time (never all at once: 180-odd JPEGs would be
+/// wasteful to keep as textures).
+struct MenuLoop {
+    /// Each frame's `(offset, length)` in `MENU_LOOP`, past the header.
+    frames: Vec<(usize, usize)>,
+    fps: u32,
+    texture: Option<TextureHandle>,
+    shown: Option<usize>,
+    started: Instant,
+}
+
+impl MenuLoop {
+    fn load() -> Self {
+        let mut frames = Vec::new();
+        let mut fps = 10;
+        if MENU_LOOP.len() >= 12 {
+            let u32_at = |i: usize| u32::from_le_bytes(MENU_LOOP[i..i + 4].try_into().unwrap());
+            let count = u32_at(0) as usize;
+            fps = u32_at(4).max(1);
+            let mut offset = 12 + count * 4;
+            for i in 0..count {
+                let len = u32_at(12 + i * 4) as usize;
+                frames.push((offset, len));
+                offset += len;
+            }
+        }
+        Self {
+            frames,
+            fps,
+            texture: None,
+            shown: None,
+            started: Instant::now(),
+        }
+    }
+
+    /// This frame's texture, decoding a new one only when the clock has moved past it.
+    fn texture(&mut self, ctx: &egui::Context) -> Option<&TextureHandle> {
+        if self.frames.is_empty() {
+            return None;
+        }
+        let elapsed = self.started.elapsed().as_secs_f32();
+        let i = (elapsed * self.fps as f32) as usize % self.frames.len();
+        if self.shown != Some(i) {
+            let (off, len) = self.frames[i];
+            if let Some(tex) = ui::texture_from_png(ctx, "menu-loop", &MENU_LOOP[off..off + len]) {
+                self.texture = Some(tex);
+                self.shown = Some(i);
+            }
+        }
+        self.texture.as_ref()
+    }
+}
+
 fn main() -> eframe::Result {
     let viewport = egui::ViewportBuilder::default()
         .with_title("Oteria Launcher")
@@ -154,17 +213,31 @@ struct Launcher {
     current: Option<AccountRef>,
     /// A Minecraft session for the chosen Microsoft account, renewed in the background.
     session: Option<Session>,
-    session_rx: Option<Receiver<Result<Session, String>>>,
+    session_rx: Option<Receiver<Result<SignedIn, String>>>,
     /// Play was pressed and waits for the session: the server to join, if any.
     pending_launch: Option<Option<String>>,
     add_kind: Kind,
     ms_flow: MsFlow,
     ms_rx: Option<Receiver<MsEvent>>,
     ms_cancel: Arc<AtomicBool>,
+    /// The skin chosen in Cosmetics, overriding the account's for this client only.
     skin: Option<ui::Skin>,
+    /// The chosen Microsoft account's own skin, kept up to date as it signs in or renews.
+    account_skin: Option<ui::Skin>,
+    /// Oteria's own character, drawn when there is neither of the above.
+    default_skin: ui::Skin,
+    /// The shown skin's texture and its posed 3D figure, both rebuilt only when the skin shown
+    /// changes, never once a frame.
+    skin_tex: TextureHandle,
+    figure: ui::PlayerFigure,
+    /// `skin` or `account_skin` changed: `tick` rebuilds `skin_tex` from them next, since that
+    /// needs a `&Context` not every caller has.
+    skin_dirty: bool,
     logo: TextureHandle,
     icons: Icons,
     background: TextureHandle,
+    /// The background video behind the player on the Jouer page, decoded one frame at a time.
+    menu_loop: MenuLoop,
     /// Darkens the bottom of the banner, under the buttons.
     hero_shade: TextureHandle,
     /// Darkens the bottom of a news picture, under its title.
@@ -213,6 +286,11 @@ impl Launcher {
             .as_ref()
             .map_or("Player".to_owned(), |a| a.name.clone());
         let skin = player::worn_skin(&game_dir).and_then(|p| ui::Skin::load(&p));
+        let default_skin = ui::Skin::default_skin();
+        // A placeholder: corrected right after construction, once `self` exists, by
+        // `rebuild_skin_tex` (which also picks the account's skin over this default one).
+        let skin_tex = default_skin.texture(ctx, "skin");
+        let figure = ui::PlayerFigure::new(&default_skin);
         let logo = ui::svg_texture(ctx, "logo", ui::LOGO_SVG, 192, false)
             .or_else(|| ui::texture_from_png(ctx, "logo", ui::LOGO_PNG))
             .expect("logo");
@@ -255,6 +333,12 @@ impl Launcher {
             ms_rx: None,
             ms_cancel: Arc::new(AtomicBool::new(false)),
             skin,
+            account_skin: None,
+            default_skin,
+            skin_tex,
+            figure,
+            skin_dirty: false,
+            menu_loop: MenuLoop::load(),
             logo,
             page,
             phase: Phase::Checking,
@@ -284,6 +368,7 @@ impl Launcher {
             shot_sent: false,
             started: Instant::now(),
         };
+        me.rebuild_skin_tex(ctx);
         if updated {
             me.notice = Some((
                 format!("Launcher mis à jour : v{}", oteria_dist::LAUNCHER_VERSION),
@@ -326,8 +411,28 @@ impl Launcher {
         self.state = state;
         if self.current.as_ref().map(|a| a.id.clone()) != before {
             self.session = None;
+            self.account_skin = None;
+            self.skin_dirty = true;
             self.prefetch_session();
         }
+    }
+
+    /// The skin shown in the launcher: the Cosmetics override if there is one, else the chosen
+    /// Microsoft account's own skin.
+    fn shown_skin(&self) -> Option<&ui::Skin> {
+        self.skin.as_ref().or(self.account_skin.as_ref())
+    }
+
+    /// Re-uploads `skin_tex` for whatever `shown_skin` now is (or Oteria's own default
+    /// character, when there is none): call this once whenever `skin` or `account_skin`
+    /// changes, never once a frame.
+    fn rebuild_skin_tex(&mut self, ctx: &egui::Context) {
+        let (tex, figure) = {
+            let s = self.shown_skin().unwrap_or(&self.default_skin);
+            (s.texture(ctx, "skin"), ui::PlayerFigure::new(s))
+        };
+        self.skin_tex = tex;
+        self.figure = figure;
     }
 
     /// The chosen Microsoft account's UUID.
@@ -653,6 +758,10 @@ impl Launcher {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
+        if self.skin_dirty {
+            self.rebuild_skin_tex(ctx);
+            self.skin_dirty = false;
+        }
         if let Some(rx) = &self.check_rx {
             if let Ok(r) = rx.try_recv() {
                 self.check_rx = None;
@@ -729,11 +838,16 @@ impl Launcher {
         let Ok(result) = rx.try_recv() else { return };
         self.session_rx = None;
         match result {
-            Ok(session) => {
-                self.log(&format!("session Microsoft prête pour {}", session.name));
-                self.session = Some(session.clone());
+            Ok(signed) => {
+                self.log(&format!(
+                    "session Microsoft prête pour {}",
+                    signed.session.name
+                ));
+                self.account_skin = signed.skin.as_deref().and_then(ui::Skin::from_bytes);
+                self.skin_dirty = true;
+                self.session = Some(signed.session.clone());
                 if let Some(server) = self.pending_launch.take() {
-                    self.start_game(server.as_deref(), Some(session));
+                    self.start_game(server.as_deref(), Some(signed.session));
                 }
             }
             Err(e) => {
@@ -843,6 +957,9 @@ impl Launcher {
                     let (uuid, name) = (signed.session.uuid.clone(), signed.session.name.clone());
                     self.session = Some(signed.session);
                     self.update_state(|s| s.add_ms_account(&uuid, &name));
+                    // After `update_state`, which clears it when the account changes.
+                    self.account_skin = signed.skin.as_deref().and_then(ui::Skin::from_bytes);
+                    self.skin_dirty = true;
                     self.ms_flow = MsFlow::Done(name);
                     self.ms_rx = None;
                     return;
@@ -1044,6 +1161,9 @@ impl eframe::App for Launcher {
         );
         ctx.request_repaint_after(if busy || self.shot.is_some() {
             Duration::from_millis(16)
+        } else if self.page == Page::Play {
+            // The banner's video keeps playing.
+            Duration::from_millis(1000 / self.menu_loop.fps.max(1) as u64)
         } else {
             Duration::from_millis(500)
         });
@@ -1226,7 +1346,7 @@ impl Launcher {
         ui::draw_head(
             &p,
             Rect::from_min_size(chip.min + Vec2::new(9.0, 8.0), Vec2::splat(26.0)),
-            self.skin.as_ref(),
+            self.shown_skin(),
         );
         ui::text(
             &p,
@@ -1351,24 +1471,28 @@ impl Launcher {
 
     fn hero(&mut self, ui: &mut egui::Ui, r: Rect) {
         let p = ui.painter().clone();
-        cover(&p, r, R, &self.background, 0.5, Color32::WHITE);
+        match self.menu_loop.texture(ui.ctx()) {
+            Some(tex) => cover(&p, r, R, tex, 0.5, Color32::WHITE),
+            None => cover(&p, r, R, &self.background, 0.5, Color32::WHITE),
+        }
         shade(&p, r, R, &self.hero_shade);
 
-        // The main button and the two small ones, then the player standing behind the button.
-        let btn = Rect::from_center_size(
-            Pos2::new(r.center().x, r.bottom() - 16.0 - 40.0 - 12.0 - 32.0),
-            Vec2::new(300.0, 64.0),
-        );
-        let fig_bottom = btn.top() + 24.0;
-        let fig_h = (fig_bottom - (r.top() + 70.0)).max(120.0);
-        let fig = Rect::from_min_max(
-            Pos2::new(r.center().x - fig_h / 4.0, fig_bottom - fig_h),
-            Pos2::new(r.center().x + fig_h / 4.0, fig_bottom),
-        );
-        ui::draw_player(&p.with_clip_rect(r), fig, self.skin.as_ref());
-        let g = p.layout_no_wrap(self.name.clone(), ui::pixel(15.0), Color32::WHITE);
+        // The main button sits at the bottom, just over the two small ones; the player leans over
+        // it, its hands on its two ends, its legs behind it. The figure is scaled so its head
+        // tops out under the name tag and its hands land on the button.
+        let row_y = r.bottom() - 16.0 - 40.0;
+        let btn_y = row_y - 12.0 - 32.0;
+        let head_y = r.top() + 50.0;
+        let f = &self.figure;
+        let hand_y = (f.hands[0].y + f.hands[1].y) / 2.0;
+        let scale = (btn_y - head_y) / (hand_y - f.head_top).max(1.0);
+        let origin = Pos2::new(r.center().x, head_y - f.head_top * scale);
+        let btn_w = ((f.hands[1].x - f.hands[0].x) * scale).clamp(240.0, 420.0);
+        let btn = Rect::from_center_size(Pos2::new(r.center().x, btn_y), Vec2::new(btn_w, 64.0));
+        f.draw(&p.with_clip_rect(r), &self.skin_tex, origin, scale, false);
+        let g = p.layout_no_wrap(self.name.clone(), ui::minecraft(17.0), Color32::WHITE);
         let tag = Rect::from_center_size(
-            Pos2::new(r.center().x, fig.top() - 22.0),
+            Pos2::new(r.center().x, head_y - 20.0),
             g.size() + Vec2::new(24.0, 12.0),
         );
         p.rect_filled(
@@ -1379,7 +1503,10 @@ impl Launcher {
         p.galley(tag.min + Vec2::new(12.0, 6.0), g, Color32::WHITE);
 
         self.main_button(ui, btn);
-        let row_y = btn.bottom() + 12.0;
+        // The hands hold the button: the arms again, over it, only where they cross it.
+        let grip = btn.expand2(Vec2::new(40.0, 4.0)).intersect(r);
+        self.figure
+            .draw(&p.with_clip_rect(grip), &self.skin_tex, origin, scale, true);
         let w = 176.0;
         let b1 = Rect::from_min_size(Pos2::new(r.center().x - w - 5.0, row_y), Vec2::new(w, 40.0));
         let b2 = Rect::from_min_size(Pos2::new(r.center().x + 5.0, row_y), Vec2::new(w, 40.0));
@@ -1856,7 +1983,7 @@ impl Launcher {
             ui::draw_head(
                 &p,
                 Rect::from_min_size(row.min + Vec2::new(10.0, 9.0), Vec2::splat(32.0)),
-                self.skin.as_ref(),
+                self.shown_skin(),
             );
             ui::text(
                 &p,
@@ -2020,7 +2147,7 @@ impl Launcher {
             ui::draw_head(
                 &p,
                 Rect::from_min_size(row.min + Vec2::new(12.0, 10.0), Vec2::splat(32.0)),
-                self.skin.as_ref(),
+                self.shown_skin(),
             );
             ui::text(
                 &p,

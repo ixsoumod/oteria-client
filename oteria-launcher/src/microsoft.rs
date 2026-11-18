@@ -9,6 +9,7 @@
 //!
 //! Nothing here prints or logs a token.
 use serde_json::{json, Value};
+use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCOPE: &str = "XboxLive.signin offline_access";
@@ -351,8 +352,15 @@ fn owns_game(token: &str) -> Result<bool, String> {
         }))
 }
 
-/// The profile (UUID without dashes, name); none when the account has none.
-fn profile(token: &str) -> Result<Option<(String, String)>, String> {
+/// The profile: UUID, name, and the active skin's download URL, if Mojang has one.
+struct Profile {
+    uuid: String,
+    name: String,
+    skin_url: Option<String>,
+}
+
+/// The profile; none when the account has none.
+fn profile(token: &str) -> Result<Option<Profile>, String> {
     let (status, v) = call(
         "GET",
         &format!("{MINECRAFT}/minecraft/profile"),
@@ -364,15 +372,40 @@ fn profile(token: &str) -> Result<Option<(String, String)>, String> {
         return Ok(None);
     }
     match (field(&v, "id"), field(&v, "name")) {
-        (Some(id), Some(name)) => Ok(Some((id.replace('-', "").to_lowercase(), name))),
+        (Some(id), Some(name)) => {
+            let skin_url = v
+                .get("skins")
+                .and_then(Value::as_array)
+                .and_then(|skins| {
+                    skins
+                        .iter()
+                        .find(|s| s.get("state").and_then(Value::as_str) == Some("ACTIVE"))
+                })
+                .and_then(|s| field(s, "url"));
+            Ok(Some(Profile {
+                uuid: id.replace('-', "").to_lowercase(),
+                name,
+                skin_url,
+            }))
+        }
         _ => Err("Impossible de lire le profil Minecraft.".into()),
     }
 }
 
-/// A signed-in account: its session and the refresh token to keep.
+/// The skin's own PNG bytes, best-effort: a download that fails never refuses a sign-in.
+fn fetch_skin(url: &str) -> Option<Vec<u8>> {
+    let resp = crate::manifest::agent().get(url).call().ok()?;
+    let mut buf = Vec::new();
+    resp.into_reader().take(1 << 20).read_to_end(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// A signed-in account: its session, the refresh token to keep, and its skin's PNG bytes (the
+/// launcher shows it above Jouer; `None` when Mojang has none, or the download failed).
 pub struct SignedIn {
     pub session: Session,
     pub refresh: String,
+    pub skin: Option<Vec<u8>>,
 }
 
 /// The session from Microsoft tokens. With `require_owner`, an account that doesn't own the game
@@ -382,23 +415,26 @@ pub fn sign_in_with(tokens: MsTokens, require_owner: bool) -> Result<SignedIn, S
     if require_owner && !owns_game(&token)? {
         return Err("Ce compte Microsoft ne possède pas Minecraft: Java Edition.".into());
     }
-    let (uuid, name) = profile(&token)?
+    let info = profile(&token)?
         .ok_or("Ce compte n'a pas de profil Minecraft : crée-le sur minecraft.net.")?;
+    let skin = info.skin_url.as_deref().and_then(fetch_skin);
     Ok(SignedIn {
         session: Session {
-            name,
-            uuid,
+            name: info.name,
+            uuid: info.uuid,
             access_token: token,
             xuid,
             expires_at: now() + lifetime,
         },
         refresh: tokens.refresh,
+        skin,
     })
 }
 
-/// The session of an account already added, from its stored refresh token. The new refresh token
-/// replaces the old one in the Credential Manager.
-pub fn session_for(client_id: &str, uuid: &str) -> Result<Session, String> {
+/// The session of an account already added, from its stored refresh token (and its skin, kept
+/// up to date in case the player changed it on minecraft.net). The new refresh token replaces
+/// the old one in the Credential Manager.
+pub fn session_for(client_id: &str, uuid: &str) -> Result<SignedIn, String> {
     let stored =
         load_refresh(uuid).ok_or("Ta connexion Microsoft n'est plus là : reconnecte ce compte.")?;
     let tokens = refresh(client_id, &stored)?;
@@ -407,7 +443,7 @@ pub fn session_for(client_id: &str, uuid: &str) -> Result<Session, String> {
         return Err("Ce n'est plus le même compte Microsoft : reconnecte-le.".into());
     }
     store_refresh(uuid, &signed.refresh)?;
-    Ok(signed.session)
+    Ok(signed)
 }
 
 // ----- The refresh token, in Windows' Credential Manager ------------------------------------------

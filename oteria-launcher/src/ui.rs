@@ -3,8 +3,8 @@
 //! (`crates/horizon-theme/fonts`, OFL), the logo and Bootstrap Icons rendered from their SVGs
 //! (`assets/icons`, MIT) at the size they are drawn.
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Pos2, Rect,
-    Stroke, StrokeKind, TextureHandle, Vec2,
+    self, epaint, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId,
+    Pos2, Rect, Shape, Stroke, StrokeKind, TextureHandle, Vec2,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,7 +39,12 @@ const GEIST: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/Geist-Regu
 const GEIST_MEDIUM: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/Geist-Medium.ttf");
 const GEIST_SEMI: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/Geist-SemiBold.ttf");
 const PIXEL: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/PixelifySans-Bold.ttf");
+/// The game's own font, for the pseudo tag over the player (not Pixelify Sans, a lookalike).
+const MINECRAFT: &[u8] = include_bytes!("../../crates/horizon-theme/fonts/Minecraft.ttf");
 pub const LOGO_PNG: &[u8] = include_bytes!("../assets/oteria-logo.png");
+/// Oteria's own character, for a player who has no skin yet (its own design, not Mojang's Steve:
+/// see `AGENTS.md`, never commit or ship Mojang's files).
+const DEFAULT_SKIN_PNG: &[u8] = include_bytes!("../assets/default-skin.png");
 pub const LOGO_SVG: &[u8] = include_bytes!("../../branding/oteria-logo.svg");
 
 pub fn install_fonts(ctx: &egui::Context) {
@@ -49,6 +54,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         ("geist-medium", GEIST_MEDIUM),
         ("geist-semi", GEIST_SEMI),
         ("pixel", PIXEL),
+        ("minecraft", MINECRAFT),
     ] {
         fonts
             .font_data
@@ -64,6 +70,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         ("medium", "geist-medium"),
         ("semi", "geist-semi"),
         ("pixel", "pixel"),
+        ("minecraft", "minecraft"),
     ] {
         let mut list = vec![first.to_owned()];
         list.extend(fallback.iter().cloned());
@@ -94,6 +101,10 @@ pub fn semi(size: f32) -> FontId {
 /// Pixelify Sans, for the wordmark and the big title.
 pub fn pixel(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("pixel".into()))
+}
+/// Minecraft's own font, for the pseudo tag over the player.
+pub fn minecraft(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("minecraft".into()))
 }
 /// The setup's titles.
 pub fn display(size: f32) -> FontId {
@@ -306,15 +317,60 @@ pub struct Skin {
 
 impl Skin {
     pub fn load(path: &std::path::Path) -> Option<Self> {
-        let img = image::open(path).ok()?.to_rgba8();
+        Self::from_rgba(image::open(path).ok()?.to_rgba8())
+    }
+
+    /// A skin's PNG bytes, as downloaded from a Microsoft account's profile.
+    pub fn from_bytes(png: &[u8]) -> Option<Self> {
+        Self::from_rgba(image::load_from_memory(png).ok()?.to_rgba8())
+    }
+
+    /// Oteria's own character, for a player who has no skin yet.
+    pub fn default_skin() -> Self {
+        Self::from_bytes(DEFAULT_SKIN_PNG).expect("default-skin.png")
+    }
+
+    fn from_rgba(img: image::RgbaImage) -> Option<Self> {
         let (w, h) = (img.width() as usize, img.height() as usize);
         if w != 64 || (h != 64 && h != 32) {
             return None;
         }
-        let rgba = img.into_raw();
+        let mut rgba = img.into_raw();
+        // Vanilla's "Notch hack": an old 64×32 skin whose hat area is fully opaque means no hat.
+        if h == 32 {
+            let hat = |y: usize| (32..64).map(move |x| (y * 64 + x) * 4 + 3);
+            if (0..16).flat_map(hat).all(|i| rgba[i] == 255) {
+                for i in (0..16).flat_map(hat) {
+                    rgba[i] = 0;
+                }
+            }
+        }
         let a = |x: usize, y: usize| rgba[(y * 64 + x) * 4 + 3];
         let slim = h == 64 && (20..32).all(|y| a(54, y) == 0 && a(55, y) == 0);
         Some(Self { w, h, rgba, slim })
+    }
+
+    /// Narrow (3 wide) arms, like Alex's.
+    pub fn slim(&self) -> bool {
+        self.slim
+    }
+
+    /// 64×32: no overlay layer, no left arm/leg of its own.
+    pub fn legacy(&self) -> bool {
+        self.h == 32
+    }
+
+    pub fn size(&self) -> [f32; 2] {
+        [self.w as f32, self.h as f32]
+    }
+
+    /// Uploads this skin as a GPU texture, nearest-filtered so its texels stay crisp.
+    pub fn texture(&self, ctx: &egui::Context, name: &str) -> TextureHandle {
+        ctx.load_texture(
+            name,
+            egui::ColorImage::from_rgba_unmultiplied([self.w, self.h], &self.rgba),
+            egui::TextureOptions::NEAREST,
+        )
     }
 
     fn px(&self, x: usize, y: usize) -> Color32 {
@@ -420,83 +476,6 @@ fn default_texel(x: usize, y: usize) -> Color32 {
     }
 }
 
-/// The player standing, front on, filling `rect`'s height (16:32).
-pub fn draw_player(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
-    let unit = rect.height() / 32.0;
-    let left = rect.center().x - unit * 8.0;
-    let top = rect.top();
-    let r = |x: f32, y: f32, ww: f32, hh: f32| {
-        Rect::from_min_size(
-            Pos2::new(left + x * unit, top + y * unit),
-            Vec2::new(ww * unit, hh * unit),
-        )
-    };
-    let Some(s) = skin else {
-        blit(painter, r(0.0, 0.0, 16.0, 32.0), 16, 32, default_texel, 0.0);
-        return;
-    };
-    let arm_w = if s.slim { 3.0 } else { 4.0 };
-    let arm = arm_w as usize;
-    let modern = s.h == 64;
-    let part = |sx: usize, sy: usize, sw: usize, sh: usize, dx: f32, dy: f32, shade: f32| {
-        blit(
-            painter,
-            r(dx, dy, sw as f32, sh as f32),
-            sw,
-            sh,
-            |x, y| s.px(sx + x, sy + y),
-            shade,
-        );
-    };
-    part(4, 20, 4, 12, 4.0, 20.0, 0.08);
-    if modern {
-        part(20, 52, 4, 12, 8.0, 20.0, 0.0);
-    } else {
-        blit(
-            painter,
-            r(8.0, 20.0, 4.0, 12.0),
-            4,
-            12,
-            |x, y| s.px(4 + 3 - x, 20 + y),
-            0.0,
-        );
-    }
-    part(20, 20, 8, 12, 4.0, 8.0, 0.0);
-    part(44, 20, arm, 12, 4.0 - arm_w, 8.0, 0.12);
-    if modern {
-        part(36, 52, arm, 12, 12.0, 8.0, 0.0);
-    } else {
-        blit(
-            painter,
-            r(12.0, 8.0, 4.0, 12.0),
-            4,
-            12,
-            |x, y| s.px(44 + 3 - x, 20 + y),
-            0.0,
-        );
-    }
-    part(8, 8, 8, 8, 4.0, 0.0, 0.0);
-    // The outer layer, a little larger.
-    let outer = |sx: usize, sy: usize, sw: usize, sh: usize, dx: f32, dy: f32| {
-        blit(
-            painter,
-            r(dx - 0.25, dy - 0.25, sw as f32 + 0.5, sh as f32 + 0.5),
-            sw,
-            sh,
-            |x, y| s.px(sx + x, sy + y),
-            0.0,
-        );
-    };
-    if modern {
-        outer(4, 36, 4, 12, 4.0, 20.0);
-        outer(4, 52, 4, 12, 8.0, 20.0);
-        outer(20, 36, 8, 12, 4.0, 8.0);
-        outer(44, 36, arm, 12, 4.0 - arm_w, 8.0);
-        outer(52, 52, arm, 12, 12.0, 8.0);
-    }
-    outer(40, 8, 8, 8, 4.0, 0.0);
-}
-
 /// The player's face (with the hat layer), for the account.
 pub fn draw_head(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
     match skin {
@@ -505,6 +484,313 @@ pub fn draw_head(painter: &egui::Painter, rect: Rect, skin: Option<&Skin>) {
             blit(painter, rect, 8, 8, |x, y| s.px(40 + x, 8 + y), 0.0);
         }
         None => blit(painter, rect, 8, 8, |x, y| default_texel(4 + x, y), 0.0),
+    }
+}
+
+// ----- The player, in 3D, for the Jouer page --------------------------------------------------
+//
+// The vanilla player model (head, body, arms, legs, each with its jacket/hat/sleeve/pants layer),
+// posed leaning over the Jouer button and holding it, seen from the front and a little above in
+// perspective. Model space is the game's own, in texels, Y up, the feet at 0, the face toward +Z.
+
+type V3 = [f32; 3];
+
+fn v_add(a: V3, b: V3) -> V3 {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+fn v_sub(a: V3, b: V3) -> V3 {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+fn v_scale(a: V3, k: f32) -> V3 {
+    [a[0] * k, a[1] * k, a[2] * k]
+}
+fn v_dot(a: V3, b: V3) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+fn v_cross(a: V3, b: V3) -> V3 {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+fn v_norm(a: V3) -> V3 {
+    let l = v_dot(a, a).sqrt().max(1e-6);
+    v_scale(a, 1.0 / l)
+}
+/// Turns around X: a positive angle brings +Y toward +Z (toward the viewer).
+fn rot_x(v: V3, a: f32) -> V3 {
+    let (s, c) = a.sin_cos();
+    [v[0], v[1] * c - v[2] * s, v[1] * s + v[2] * c]
+}
+/// Turns around Z: a positive angle brings +X toward +Y.
+fn rot_z(v: V3, a: f32) -> V3 {
+    let (s, c) = a.sin_cos();
+    [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
+}
+
+/// The pose and the camera. Angles in radians.
+const CAM_PITCH: f32 = 0.34;
+const CAM_DIST: f32 = 62.0;
+const CAM_TARGET: V3 = [0.0, 19.0, 0.0];
+const HIP: V3 = [0.0, 12.0, 0.0];
+/// The whole upper body bends forward around the hips, over the button.
+const LEAN: f32 = 0.22;
+const NECK: V3 = [0.0, 24.0, 0.0];
+/// The head looks down at the button.
+const HEAD_DOWN: f32 = 0.26;
+/// The arms reach forward and down, and a little outward, to the button's ends.
+const ARM_FORWARD: f32 = -0.85;
+const ARM_OUT: f32 = 0.26;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Limb {
+    Head,
+    Body,
+    Arm,
+    Leg,
+}
+
+/// One box of the model: its corners (before `inflate`), its spot in the skin (the vanilla
+/// box layout from `uv`), and how it is turned around its `pivot`.
+struct Bone {
+    min: V3,
+    max: V3,
+    uv: [f32; 2],
+    inflate: f32,
+    /// A legacy (64×32) skin's left limb: the right one's texture, mirrored.
+    mirror: bool,
+    pivot: V3,
+    pitch: f32,
+    roll: f32,
+    limb: Limb,
+}
+
+fn bones(slim: bool, legacy: bool) -> Vec<Bone> {
+    let aw = if slim { 3.0 } else { 4.0 };
+    // A slim arm hangs half a texel lower (vanilla's own offset).
+    let sy = if slim { 21.5 } else { 22.0 };
+    let bone = |min: V3, max: V3, uv: [f32; 2], inflate: f32, mirror: bool, pivot: V3, pitch: f32, roll: f32, limb: Limb| Bone {
+        min,
+        max,
+        uv,
+        inflate,
+        mirror,
+        pivot,
+        pitch,
+        roll,
+        limb,
+    };
+    let mut out = Vec::new();
+    for (uv, inflate) in [([0.0, 0.0], 0.0), ([32.0, 0.0], 0.5)] {
+        out.push(bone([-4.0, 24.0, -4.0], [4.0, 32.0, 4.0], uv, inflate, false, NECK, HEAD_DOWN, 0.0, Limb::Head));
+    }
+    let body = |uv, inflate| bone([-4.0, 12.0, -2.0], [4.0, 24.0, 2.0], uv, inflate, false, HIP, 0.0, 0.0, Limb::Body);
+    out.push(body([16.0, 16.0], 0.0));
+    let right_arm = |uv, inflate, mirror| {
+        bone([-4.0 - aw, sy - 10.0, -2.0], [-4.0, sy + 2.0, 2.0], uv, inflate, mirror, [-5.0, sy, 0.0], ARM_FORWARD, -ARM_OUT, Limb::Arm)
+    };
+    let left_arm = |uv, inflate, mirror| {
+        bone([4.0, sy - 10.0, -2.0], [4.0 + aw, sy + 2.0, 2.0], uv, inflate, mirror, [5.0, sy, 0.0], ARM_FORWARD, ARM_OUT, Limb::Arm)
+    };
+    let right_leg = |uv, inflate, mirror| bone([-4.0, 0.0, -2.0], [0.0, 12.0, 2.0], uv, inflate, mirror, HIP, 0.0, 0.0, Limb::Leg);
+    let left_leg = |uv, inflate, mirror| bone([0.0, 0.0, -2.0], [4.0, 12.0, 2.0], uv, inflate, mirror, HIP, 0.0, 0.0, Limb::Leg);
+    out.push(right_arm([40.0, 16.0], 0.0, false));
+    out.push(right_leg([0.0, 16.0], 0.0, false));
+    if legacy {
+        out.push(left_arm([40.0, 16.0], 0.0, true));
+        out.push(left_leg([0.0, 16.0], 0.0, true));
+    } else {
+        out.push(body([16.0, 32.0], 0.25));
+        out.push(right_arm([40.0, 32.0], 0.25, false));
+        out.push(right_leg([0.0, 32.0], 0.25, false));
+        out.push(left_arm([32.0, 48.0], 0.0, false));
+        out.push(left_arm([48.0, 48.0], 0.25, false));
+        out.push(left_leg([16.0, 48.0], 0.0, false));
+        out.push(left_leg([0.0, 48.0], 0.25, false));
+    }
+    out
+}
+
+/// A model-space point of `b`, posed and turned to the camera (view space: the camera sits at
+/// `(0, 0, CAM_DIST)` looking toward -Z).
+fn pose(b: &Bone, p: V3) -> V3 {
+    let mut p = v_add(rot_z(rot_x(v_sub(p, b.pivot), b.pitch), b.roll), b.pivot);
+    if b.limb != Limb::Leg {
+        p = v_add(rot_x(v_sub(p, HIP), LEAN), HIP);
+    }
+    rot_x(v_sub(p, CAM_TARGET), CAM_PITCH)
+}
+
+/// A view-space point on the screen, one texel at the target's distance being one unit, Y down.
+fn project(v: V3) -> Pos2 {
+    let d = (CAM_DIST - v[2]).max(1.0);
+    Pos2::new(CAM_DIST * v[0] / d, -CAM_DIST * v[1] / d)
+}
+
+/// One textured quad (one texel of one face), in unit screen space.
+#[derive(Clone, Copy)]
+struct Cell {
+    pts: [Pos2; 4],
+    uv: Rect,
+    color: Color32,
+}
+
+/// The posed player, ready to draw at any size: built once per skin (`PlayerFigure::new`), then
+/// only scaled and moved each frame.
+pub struct PlayerFigure {
+    /// Back to front.
+    cells: Vec<Cell>,
+    /// The arms' own cells, drawn a second time over the button where the hands hold it.
+    arm_cells: Vec<Cell>,
+    /// The highest point of the head (hat included), in unit screen space.
+    pub head_top: f32,
+    /// The hands (the arms' ends), left then right on the screen, in unit screen space.
+    pub hands: [Pos2; 2],
+}
+
+impl PlayerFigure {
+    pub fn new(skin: &Skin) -> Self {
+        let atlas = skin.size();
+        let light = v_norm([0.3, 0.6, 0.75]);
+        let camera: V3 = [0.0, 0.0, CAM_DIST];
+        let mut faces: Vec<(f32, bool, Vec<Cell>)> = Vec::new();
+        let mut head_top = f32::MAX;
+        let mut hands = Vec::new();
+        for b in bones(skin.slim(), skin.legacy()) {
+            let [w, h, d] = v_sub(b.max, b.min);
+            let i = b.inflate;
+            let [x0, y0, z0] = v_sub(b.min, [i, i, i]);
+            let [x1, y1, z1] = v_add(b.max, [i, i, i]);
+            let [u, v] = b.uv;
+            let side_minus = [u, v + d, d, h];
+            let side_plus = [u + d + w, v + d, d, h];
+            let (sm, sp) = if b.mirror {
+                (side_plus, side_minus)
+            } else {
+                (side_minus, side_plus)
+            };
+            // Each face: its rect in the skin, then its corners top-left, top-right,
+            // bottom-right, bottom-left, as seen from outside.
+            let list: [([f32; 4], [V3; 4]); 6] = [
+                ([u + d, v + d, w, h], [[x0, y1, z1], [x1, y1, z1], [x1, y0, z1], [x0, y0, z1]]),
+                ([u + 2.0 * d + w, v + d, w, h], [[x1, y1, z0], [x0, y1, z0], [x0, y0, z0], [x1, y0, z0]]),
+                (sm, [[x0, y1, z0], [x0, y1, z1], [x0, y0, z1], [x0, y0, z0]]),
+                (sp, [[x1, y1, z1], [x1, y1, z0], [x1, y0, z0], [x1, y0, z1]]),
+                ([u + d, v, w, d], [[x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1]]),
+                ([u + d + w, v, w, d], [[x0, y0, z1], [x1, y0, z1], [x1, y0, z0], [x0, y0, z0]]),
+            ];
+            if b.limb == Limb::Head {
+                for (_, corners) in &list {
+                    for c in corners {
+                        head_top = head_top.min(project(pose(&b, *c)).y);
+                    }
+                }
+            }
+            if b.limb == Limb::Arm && b.inflate == 0.0 {
+                let end = [(b.min[0] + b.max[0]) / 2.0, b.min[1], 0.0];
+                hands.push(project(pose(&b, end)));
+            }
+            for (rect, corners) in list {
+                let [tl, tr, br, bl] = corners.map(|c| pose(&b, c));
+                let n = v_norm(v_cross(v_sub(bl, tl), v_sub(tr, tl)));
+                let center = v_scale(v_add(v_add(tl, tr), v_add(br, bl)), 0.25);
+                if v_dot(n, v_sub(camera, center)) <= 0.0 {
+                    continue;
+                }
+                let k = 0.6 + 0.4 * v_dot(n, light).max(0.0);
+                let color = Color32::from_gray((k.min(1.0) * 255.0) as u8);
+                let (cols, rows) = (rect[2] as usize, rect[3] as usize);
+                let at = |s: f32, t: f32| {
+                    project(v_add(
+                        tl,
+                        v_add(v_scale(v_sub(tr, tl), s), v_scale(v_sub(bl, tl), t)),
+                    ))
+                };
+                let mut cells = Vec::new();
+                for j in 0..rows {
+                    for i in 0..cols {
+                        let col = if b.mirror { cols - 1 - i } else { i };
+                        let (tx, ty) = (rect[0] as usize + col, rect[1] as usize + j);
+                        if skin.px(tx, ty).a() == 0 {
+                            continue;
+                        }
+                        let (s0, s1) = (i as f32 / cols as f32, (i + 1) as f32 / cols as f32);
+                        let (t0, t1) = (j as f32 / rows as f32, (j + 1) as f32 / rows as f32);
+                        // Inset a hair inside the texel so nearest sampling never bleeds.
+                        let e = 0.02;
+                        cells.push(Cell {
+                            pts: [at(s0, t0), at(s1, t0), at(s1, t1), at(s0, t1)],
+                            uv: Rect::from_min_max(
+                                Pos2::new((tx as f32 + e) / atlas[0], (ty as f32 + e) / atlas[1]),
+                                Pos2::new(
+                                    (tx as f32 + 1.0 - e) / atlas[0],
+                                    (ty as f32 + 1.0 - e) / atlas[1],
+                                ),
+                            ),
+                            color,
+                        });
+                    }
+                }
+                faces.push((CAM_DIST - center[2], b.limb == Limb::Arm, cells));
+            }
+        }
+        faces.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut cells = Vec::new();
+        let mut arm_cells = Vec::new();
+        for (_, arm, c) in faces {
+            if arm {
+                arm_cells.extend_from_slice(&c);
+            }
+            cells.extend(c);
+        }
+        hands.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let hands = [hands[0], hands[hands.len() - 1]];
+        Self {
+            cells,
+            arm_cells,
+            head_top,
+            hands,
+        }
+    }
+
+    /// Draws the figure (or only its arms), its unit point (0, 0) at `origin`, one unit being
+    /// `scale` points.
+    pub fn draw(
+        &self,
+        painter: &egui::Painter,
+        tex: &TextureHandle,
+        origin: Pos2,
+        scale: f32,
+        arms_only: bool,
+    ) {
+        let cells = if arms_only {
+            &self.arm_cells
+        } else {
+            &self.cells
+        };
+        let mut mesh = epaint::Mesh::with_texture(tex.id());
+        mesh.reserve_triangles(cells.len() * 2);
+        mesh.reserve_vertices(cells.len() * 4);
+        for c in cells {
+            let base = mesh.vertices.len() as u32;
+            let uvs = [
+                c.uv.left_top(),
+                c.uv.right_top(),
+                c.uv.right_bottom(),
+                c.uv.left_bottom(),
+            ];
+            for (p, uv) in c.pts.iter().zip(uvs) {
+                mesh.vertices.push(epaint::Vertex {
+                    pos: origin + p.to_vec2() * scale,
+                    uv,
+                    color: c.color,
+                });
+            }
+            mesh.indices
+                .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        painter.add(Shape::mesh(mesh));
     }
 }
 
