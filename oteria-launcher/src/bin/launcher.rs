@@ -1064,6 +1064,7 @@ impl eframe::App for Launcher {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ui::no_window_animations();
         self.tick(ctx);
         // Screenshots for the tests.
         let shots: Vec<_> = ctx.input(|i| {
@@ -1101,7 +1102,12 @@ impl eframe::App for Launcher {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(SIDE_BG))
             .show(ctx, |ui| {
-                let full = ui.max_rect();
+                // Maximized, the window hangs past the screen: keep everything on it.
+                let o = ui::maximized_overhang(ctx);
+                let full = Rect::from_min_max(
+                    ui.max_rect().min + Vec2::splat(o),
+                    ui.max_rect().max - Vec2::new(o, 0.0),
+                );
                 // The content panel, framed by the dark bars, its corners rounded.
                 let content = Rect::from_min_max(
                     Pos2::new(full.left() + SIDE_W, full.top() + TOP_H),
@@ -1202,6 +1208,9 @@ fn button(
             Sense::hover()
         },
     );
+    if enabled {
+        ui::hand(&resp);
+    }
     let hovered = enabled && resp.hovered();
     let p = ui.painter();
     let (fill, fg) = match (look, enabled) {
@@ -1230,6 +1239,7 @@ fn button(
 /// A square button with just an icon, over the video. Returns whether it was clicked.
 fn icon_button(ui: &mut egui::Ui, icons: &Icons, r: Rect, icon: &str, id: &str) -> bool {
     let resp = ui.interact(r, ui.id().with(("icon-button", id)), Sense::click());
+    ui::hand(&resp);
     let p = ui.painter();
     surface(p, r, over_picture(resp.hovered()));
     icons.draw_fit(p, icon, r.center(), 17.0, Color32::WHITE);
@@ -1262,6 +1272,7 @@ fn sheen_texture(ctx: &egui::Context) -> TextureHandle {
 /// A switch. Returns whether it was clicked.
 fn toggle(ui: &mut egui::Ui, r: Rect, on: bool, id: &str) -> bool {
     let resp = ui.interact(r, ui.id().with(("toggle", id)), Sense::click());
+    ui::hand(&resp);
     let p = ui.painter();
     let fill = if on {
         c::ACCENT
@@ -1352,6 +1363,7 @@ impl Launcher {
             Vec2::new(w, CHIP_H),
         );
         let resp = ui.interact(chip, ui.id().with("account-chip"), Sense::click());
+        ui::hand(&resp);
         p.rect_filled(
             chip,
             CornerRadius::same((CHIP_H * 0.28).round() as u8),
@@ -1420,6 +1432,7 @@ impl Launcher {
             };
             let r = Rect::from_min_size(min, TILE);
             let resp = ui.interact(r, ui.id().with(("nav", i)), Sense::click());
+            ui::hand(&resp);
             let active = self.page == page
                 || (page == Page::Play && self.page == Page::News)
                 || (page == Page::Settings && self.page == Page::Accounts);
@@ -1596,6 +1609,9 @@ impl Launcher {
                 Sense::hover()
             },
         );
+        if enabled {
+            ui::hand(&resp);
+        }
         let p = ui.painter().clone();
         let hovered = enabled && resp.hovered();
         // Green, or red to stop or when an account is missing, or a muted green while busy.
@@ -1617,23 +1633,23 @@ impl Launcher {
             ),
         };
         let radius = 9u8;
-        // On hover, a soft light around it.
-        if hovered {
+        // On hover, a soft light grows around it (and fades away again), over a fifth of a second.
+        let t = ui
+            .ctx()
+            .animate_bool_with_time(ui.id().with("main-hover"), hovered, 0.2);
+        let t = t * t * (3.0 - 2.0 * t);
+        if t > 0.0 {
             p.add(
                 egui::epaint::Shadow {
                     offset: [0, 0],
-                    blur: 34,
-                    spread: 5,
-                    color: ui::alpha(glow, 0.85),
+                    blur: (14.0 + 20.0 * t) as u8,
+                    spread: (5.0 * t) as u8,
+                    color: ui::alpha(glow, 0.85 * t),
                 }
                 .as_shape(btn, CornerRadius::same(radius)),
             );
         }
-        let base = if hovered {
-            ui::lerp(base, Color32::WHITE, 0.08)
-        } else {
-            base
-        };
+        let base = ui::lerp(base, Color32::WHITE, 0.08 * t);
         p.add(
             RectShape::filled(btn, CornerRadius::same(radius), base)
                 .with_texture(self.button_sheen.id(), FULL_UV),
@@ -1704,6 +1720,7 @@ impl Launcher {
                 Vec2::new(w, area.height()),
             );
             let resp = ui.interact(r, ui.id().with(("news", i)), Sense::click());
+            ui::hand(&resp);
             cover(
                 &p,
                 r,
@@ -2010,6 +2027,7 @@ impl Launcher {
         for (i, account) in accounts.iter().enumerate() {
             let row = Rect::from_min_size(Pos2::new(r.left() + 6.0, y), Vec2::new(w - 12.0, 50.0));
             let resp = ui.interact(row, ui.id().with(("menu-account", i)), Sense::click());
+            ui::hand(&resp);
             if resp.hovered() {
                 p.rect_filled(row, CornerRadius::same(6), RAISED);
             }
@@ -2064,6 +2082,7 @@ impl Launcher {
         {
             let row = Rect::from_min_size(Pos2::new(r.left() + 6.0, y), Vec2::new(w - 12.0, 44.0));
             let resp = ui.interact(row, ui.id().with(("menu-action", i)), Sense::click());
+            ui::hand(&resp);
             if resp.hovered() {
                 p.rect_filled(row, CornerRadius::same(6), RAISED);
             }
@@ -2115,6 +2134,7 @@ impl Launcher {
                 Vec2::splat(tile),
             );
             let resp = ui.interact(t, ui.id().with(("kind", i)), Sense::click());
+            ui::hand(&resp);
             let on = self.add_kind == kind;
             surface(&p, t, if resp.hovered() { HOVER } else { RAISED });
             self.icons.draw(
@@ -2176,6 +2196,7 @@ impl Launcher {
                 break;
             }
             let resp = ui.interact(row, ui.id().with(("account-row", i)), Sense::click());
+            ui::hand(&resp);
             surface(&p, row, if resp.hovered() { HOVER } else { PANEL });
             ui::draw_head(
                 &p,
@@ -2204,6 +2225,7 @@ impl Launcher {
                     Vec2::splat(32.0),
                 );
                 let b = ui.interact(bin, ui.id().with(("account-remove", i)), Sense::click());
+                ui::hand(&b);
                 self.icons.draw(
                     &p,
                     "trash3",

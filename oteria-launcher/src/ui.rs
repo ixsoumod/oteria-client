@@ -820,6 +820,55 @@ impl PlayerFigure {
     }
 }
 
+/// Turns off Windows' minimize, maximize and restore animations for this thread's windows: on a
+/// window without a title bar, Windows animates a stale picture of it, blending the old size with
+/// the new (doubled, stretched textures). Call once the window exists: only the first call acts.
+pub fn no_window_animations() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    #[cfg(windows)]
+    ONCE.call_once(|| unsafe {
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+        use windows_sys::Win32::UI::WindowsAndMessaging::EnumThreadWindows;
+        unsafe extern "system" fn each(hwnd: HWND, _: LPARAM) -> windows_sys::core::BOOL {
+            let off: i32 = 1;
+            unsafe {
+                DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_TRANSITIONS_FORCEDISABLED as u32,
+                    (&off as *const i32).cast(),
+                    std::mem::size_of::<i32>() as u32,
+                );
+            }
+            1
+        }
+        EnumThreadWindows(GetCurrentThreadId(), Some(each), 0);
+    });
+    #[cfg(not(windows))]
+    let _ = &ONCE;
+}
+
+/// How far a maximized window without a title bar hangs past the screen on each side but the
+/// bottom (Windows keeps room for a frame it does not draw), in points.
+pub fn maximized_overhang(ctx: &egui::Context) -> f32 {
+    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+    if cfg!(windows) && maximized {
+        8.0
+    } else {
+        0.0
+    }
+}
+
+/// The pointing hand over anything clickable while the mouse is on it.
+pub fn hand(resp: &egui::Response) {
+    if resp.hovered() {
+        resp.ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+}
+
 /// The hover bubble behind an icon: faint white, rounded, a little larger than the icon.
 pub fn bubble(p: &egui::Painter, center: Pos2, size: f32, strength: f32) {
     p.rect_filled(
@@ -848,6 +897,7 @@ pub fn window_controls(ui: &mut egui::Ui, bar: Rect, icons: &Icons) {
         let center = Pos2::new(bar.right() - 26.0 - WINDOW_STEP * i as f32, cy);
         let rect = Rect::from_center_size(center, Vec2::splat(WINDOW_STEP - 4.0));
         let resp = ui.interact(rect, ui.id().with(("winctl", i)), egui::Sense::click());
+        hand(&resp);
         let p = ui.painter();
         if resp.hovered() {
             bubble(p, center, WINDOW_ICON + 16.0, 1.0);

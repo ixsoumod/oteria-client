@@ -274,6 +274,7 @@ impl Popup {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         let min = ui.interact(dash, ui.id().with("popup-min"), Sense::click());
+        ui::hand(&min);
         if min.hovered() {
             ui::bubble(&p, dash.center(), ui::WINDOW_ICON + 16.0, 1.0);
         }
@@ -398,6 +399,7 @@ impl eframe::App for Popup {
     }
 
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        ui::no_window_animations();
         self.tick(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
