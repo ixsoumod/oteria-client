@@ -630,7 +630,10 @@ impl Game<'_> {
             (false, None) => return marks,
         };
         if let Some(d) = engine::name_decoration(&model, &HookSprites(self)) {
-            marks.mark = d.mark;
+            // The service says this player plays Oteria: Oteria's badge, not Horizon's mark.
+            if d.mark.is_some() {
+                marks.badge = Some(horizon_client::name_badge::SPRITE);
+            }
             marks.top = d.top;
             marks.style = d.badge.map(|b| {
                 let [u0, v0, u1, v1] = b.uv;

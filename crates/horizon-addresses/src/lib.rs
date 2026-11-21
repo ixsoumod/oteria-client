@@ -23,10 +23,10 @@ pub const WITHDRAWN_PARTNER_SERVER: &str = "afri-network.co.za";
 /// (the telemetry server's status checks).
 pub const OFFICIAL_SERVER_STATUS: &str = "play.playhorizon.dev:24454";
 
-/// The cosmetics service: cosmetics, emotes, "Show me as a Horizon player"
-/// (`HORIZON_COSMETICS_API` overrides it). Oteria runs none of its own yet: empty, nothing is
-/// asked and every player wears nothing (`horizon_cosmetics::Http`).
-pub const COSMETICS_API: &str = "";
+/// The cosmetics service (`HORIZON_COSMETICS_API` overrides it). Oteria's is its presence
+/// service (`services/oteria-presence`, on its game panel host): it says which players play
+/// Oteria, for the badge by their names, and has no cosmetics (every player wears nothing).
+pub const COSMETICS_API: &str = "http://185.207.226.6:30316";
 
 /// The telemetry ingest server (`crates/horizon-telemetry-server`): opt-in telemetry, the
 /// "I'm playing" ping, benchmark uploads (`HORIZON_TELEMETRY_URL` overrides it). Oteria runs none

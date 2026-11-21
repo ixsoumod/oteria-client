@@ -905,7 +905,8 @@ impl Game<'_> {
             self.serving.is_none(),
             "a server thread calls no client hook"
         );
-        let marked = horizon_hooks::engine::player_mark;
+        // Players the service says play Oteria get Oteria's badge (below), not Horizon's mark.
+        let marked = |_: u128| None;
         // The window's own player plays Oteria: their row carries its badge, hooks or not. Many
         // servers fill the list with their own entries (a tab plugin, a proxy), whose UUID and
         // name are not the player's: the row is theirs by UUID, or when its name or the name it
@@ -954,8 +955,7 @@ impl Game<'_> {
             }
         }
         let badge = |uuid: u128| {
-            own_rows
-                .contains(&uuid)
+            (own_rows.contains(&uuid) || horizon_hooks::engine::player_mark(uuid).is_some())
                 .then_some(horizon_client::name_badge::GUI_SPRITE)
         };
         let inputs = TabInputs {

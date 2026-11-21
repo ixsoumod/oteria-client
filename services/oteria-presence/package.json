@@ -1,0 +1,15 @@
+{
+  "name": "oteria-presence",
+  "version": "1.0.0",
+  "description": "Which players play Oteria Client, for Oteria's badge by their names.",
+  "main": "index.js",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test.js"
+  }
+}
