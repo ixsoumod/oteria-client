@@ -242,13 +242,11 @@ impl Game<'_> {
             return;
         }
         if let Some(w) = &self.window {
-            // The task bar takes the window's icons only once it is shown (Windows 11).
-            if self
-                .icon_refresh
-                .is_some_and(|t| t.elapsed() > std::time::Duration::from_millis(1500))
-            {
+            // The task bar takes the window's icons only once it is shown (Windows 11). The
+            // window may come from the loading screen, so this counts from the game's start.
+            if !self.icon_refreshed && self.started.elapsed() > std::time::Duration::from_secs(2) {
                 horizon_client::window::refresh_icon(w);
-                self.icon_refresh = None;
+                self.icon_refreshed = true;
             }
             if self.options.offscreen {
                 // Offscreen frames don't wait for the window to be drawn: an
@@ -336,7 +334,6 @@ impl ApplicationHandler for Game<'_> {
             }
         }
         self.window = Some(window);
-        self.icon_refresh = Some(Instant::now());
         self.ime_allowed = false;
         self.ime_area = None;
         self.apply_settings();
