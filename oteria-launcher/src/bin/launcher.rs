@@ -104,6 +104,13 @@ fn main() -> eframe::Result {
     )
 }
 
+/// One line of `launcher.log`, from a thread that has no `Launcher`.
+fn append_log(path: &Path, line: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "[thread] {line}");
+    }
+}
+
 /// `updater.exe`: beside this launcher, else in the install folder.
 fn updater_path(home: &Path) -> PathBuf {
     let beside = std::env::current_exe()
@@ -291,6 +298,8 @@ struct Launcher {
     started: Instant,
     /// Started again after its update window failed: never tries to update itself this run.
     no_self_update: bool,
+    /// Hidden while the game runs (`hide_while_playing`).
+    hidden: bool,
 }
 
 impl Launcher {
@@ -386,6 +395,7 @@ impl Launcher {
             shot_sent: false,
             started: Instant::now(),
             no_self_update,
+            hidden: false,
         };
         if updated {
             me.notice = Some((
@@ -794,8 +804,8 @@ impl Launcher {
                 if self.child.is_some() && since.elapsed() > Duration::from_millis(2500) =>
             {
                 self.phase = Phase::Running;
-                if self.state.close_on_launch {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                if !self.state.keep_open_while_playing {
+                    self.hide_while_playing(ctx);
                 }
             }
             _ => {}
@@ -806,6 +816,12 @@ impl Launcher {
                     self.log(&format!("jeu fermé : {status}"));
                     self.child = None;
                     self.phase = Phase::Ready;
+                    if self.hidden {
+                        // Back on screen (the watcher already showed the window: egui is told).
+                        self.hidden = false;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
                 }
             }
         }
@@ -963,6 +979,26 @@ impl Launcher {
                 }
             }
         }
+    }
+
+    /// The game has started: the launcher leaves the screen (and the task bar) until it closes.
+    /// egui runs no frame for a hidden window, so a thread waits for the game and shows the
+    /// window again itself; the next frame sees the game gone.
+    fn hide_while_playing(&mut self, ctx: &egui::Context) {
+        let Some(pid) = self.child.as_ref().map(Child::id) else {
+            return;
+        };
+        self.log("launcher masqué pendant le jeu");
+        self.hidden = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        let ctx = ctx.clone();
+        let log = self.home.join("launcher.log");
+        std::thread::spawn(move || {
+            while !install::wait_for_exit(pid, Duration::from_secs(3600)) {}
+            append_log(&log, &format!("jeu terminé (pid {pid}) : le launcher revient"));
+            ui::show_window("Oteria Launcher");
+            ctx.request_repaint();
+        });
     }
 
     fn updater_for_self_update(&self) -> PathBuf {
@@ -2589,7 +2625,7 @@ impl Launcher {
         let area = Rect::from_min_max(Pos2::new(body.left(), top), body.max);
         let game_ram = self.child.as_ref().and_then(|c| memory::of_process(c.id()));
         let busy = matches!(self.phase, Phase::Checking | Phase::Downloading);
-        let close_on_launch = self.state.close_on_launch;
+        let hide_on_launch = !self.state.keep_open_while_playing;
         let mut actions: Vec<&'static str> = Vec::new();
         let resources = self.state.resources_dir(&self.home);
         let source = self.state.source().unwrap_or_default();
@@ -2620,8 +2656,8 @@ impl Launcher {
                 };
                 caption(&p, Pos2::new(rect.left() + 2.0, y), "GÉNÉRAL");
                 y += 28.0;
-                let r = row(&mut y, "controller", "Fermer le launcher au lancement du jeu", "Le launcher se ferme quand le jeu démarre. Rouvre-le avec le raccourci Oteria.");
-                if toggle(ui, Rect::from_center_size(Pos2::new(r.right() - 50.0, r.center().y), Vec2::new(46.0, 24.0)), close_on_launch, "close-on-launch") {
+                let r = row(&mut y, "controller", "Masquer le launcher pendant le jeu", "Le launcher se cache quand le jeu démarre et revient tout seul quand tu le fermes.");
+                if toggle(ui, Rect::from_center_size(Pos2::new(r.right() - 50.0, r.center().y), Vec2::new(46.0, 24.0)), hide_on_launch, "close-on-launch") {
                     actions.push("toggle-close");
                 }
                 let r = row(&mut y, "people-fill", "Compte", &match &self.current {
@@ -2674,7 +2710,7 @@ impl Launcher {
                     self.notice = None;
                     self.start_check();
                 }
-                "toggle-close" => self.update_state(|s| s.close_on_launch = !close_on_launch),
+                "toggle-close" => self.update_state(|s| s.keep_open_while_playing = hide_on_launch),
                 _ => {}
             }
         }

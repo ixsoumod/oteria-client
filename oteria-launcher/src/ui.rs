@@ -851,6 +851,52 @@ pub fn no_window_animations() {
     let _ = &ONCE;
 }
 
+/// Shows this process's window titled `title` again (hidden ones too) and puts it in front, from
+/// any thread: egui runs no frame for a hidden window, so it can't do it itself.
+pub fn show_window(title: &str) {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::Foundation::{HWND, LPARAM};
+        use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetWindowTextW, GetWindowThreadProcessId, SetForegroundWindow,
+            ShowWindow, SW_SHOW,
+        };
+        struct Find {
+            pid: u32,
+            title: Vec<u16>,
+            found: Vec<HWND>,
+        }
+        unsafe extern "system" fn each(hwnd: HWND, l: LPARAM) -> windows_sys::core::BOOL {
+            unsafe {
+                let f = &mut *(l as *mut Find);
+                let mut pid = 0;
+                GetWindowThreadProcessId(hwnd, &mut pid);
+                if pid == f.pid {
+                    let mut buf = [0u16; 256];
+                    let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+                    if n > 0 && buf[..n as usize] == f.title[..] {
+                        f.found.push(hwnd);
+                    }
+                }
+            }
+            1
+        }
+        let mut f = Find {
+            pid: GetCurrentProcessId(),
+            title: title.encode_utf16().collect(),
+            found: Vec::new(),
+        };
+        EnumWindows(Some(each), &mut f as *mut Find as LPARAM);
+        for hwnd in f.found {
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = title;
+}
+
 /// How far a maximized window without a title bar hangs past the screen on each side but the
 /// bottom (Windows keeps room for a frame it does not draw), in points.
 pub fn maximized_overhang(ctx: &egui::Context) -> f32 {

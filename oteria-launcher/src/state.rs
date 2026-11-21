@@ -34,8 +34,10 @@ pub struct State {
     /// Prepared resources somewhere else than `resources/` (a developer's own, given by
     /// `OTERIA_RESOURCES` when the client was installed).
     pub resources: Option<PathBuf>,
-    /// Close the launcher once the game has started (Settings).
-    pub close_on_launch: bool,
+    /// Keep the launcher on screen while the game runs (Settings). Off, the default: it hides
+    /// once the game has started and comes back when the game closes. (The old
+    /// `close_on_launch` is no longer read: everyone starts with the new default.)
+    pub keep_open_while_playing: bool,
     /// The local (offline) accounts: player names.
     pub accounts: Vec<String>,
     /// The Microsoft accounts that signed in.
