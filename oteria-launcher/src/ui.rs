@@ -148,7 +148,12 @@ pub fn svg_texture(
     );
     let image =
         egui::ColorImage::from_rgba_premultiplied([px as usize, px as usize], pixmap.data());
-    Some(ctx.load_texture(name, image, egui::TextureOptions::LINEAR))
+    // Mipmaps: drawn far smaller than rendered, thin strokes (a plus, the arrows) stay visible.
+    let options = egui::TextureOptions {
+        mipmap_mode: Some(egui::TextureFilter::Linear),
+        ..egui::TextureOptions::LINEAR
+    };
+    Some(ctx.load_texture(name, image, options))
 }
 
 /// The Bootstrap Icons the launcher draws, by file name.
@@ -179,6 +184,13 @@ const ICONS: &[(&str, &[u8])] = icon_files![
     "windows",
     "x-lg",
     "dash-lg",
+    "dash",
+    "x",
+    "arrows-angle-expand",
+    "arrows-angle-contract",
+    "cart-fill",
+    "folder-fill",
+    "file-earmark-image-fill",
     "square",
     "check-lg",
     "cpu",
@@ -202,6 +214,20 @@ impl Icons {
                 .filter_map(|(name, svg)| Some((*name, svg_texture(ctx, name, svg, px, true)?)))
                 .collect(),
         )
+    }
+
+    /// Draws icon `name` so that its drawing itself (not its 16×16 box) is `size` points: the
+    /// dash, the x and the play triangle fill only part of their box, the arrows all of it, and
+    /// side by side they should look the same size.
+    pub fn draw_fit(&self, p: &egui::Painter, name: &str, center: Pos2, size: f32, color: Color32) {
+        // The share of the 16-unit box each icon's drawing spans (its larger side).
+        let span = match name {
+            "dash" => 8.0,
+            "x" => 6.8,
+            "play-fill" => 9.0,
+            _ => 16.0,
+        };
+        self.draw(p, name, center, size * 16.0 / span, color);
     }
 
     /// Draws icon `name` centred on `center`, `size` points wide, in `color`.
@@ -794,37 +820,48 @@ impl PlayerFigure {
     }
 }
 
-/// Minimise, maximise and close, at the right of `bar`.
+/// The hover bubble behind an icon: faint white, rounded, a little larger than the icon.
+pub fn bubble(p: &egui::Painter, center: Pos2, size: f32, strength: f32) {
+    p.rect_filled(
+        Rect::from_center_size(center, Vec2::splat(size)),
+        CornerRadius::same((size * 0.28).round() as u8),
+        Color32::from_white_alpha((22.0 * strength).round() as u8),
+    );
+}
+
+/// The window buttons' drawn size and spacing.
+pub const WINDOW_ICON: f32 = 13.0;
+const WINDOW_STEP: f32 = 36.0;
+
+/// Minimise, maximise (or restore) and close, at the top right of `bar`: the same size, the same
+/// distance apart, a bubble behind the one under the mouse.
 pub fn window_controls(ui: &mut egui::Ui, bar: Rect, icons: &Icons) {
     let ctx = ui.ctx().clone();
-    let w = 46.0;
     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-    for (i, kind) in ["x-lg", "square", "dash-lg"].into_iter().enumerate() {
-        let rect = Rect::from_min_size(
-            Pos2::new(bar.right() - w * (i as f32 + 1.0), bar.top()),
-            Vec2::new(w, bar.height().min(40.0)),
-        );
-        let resp = ui.interact(rect, ui.id().with(("winctl", kind)), egui::Sense::click());
+    let resize = if maximized {
+        "arrows-angle-contract"
+    } else {
+        "arrows-angle-expand"
+    };
+    let cy = bar.top() + bar.height().min(60.0) / 2.0;
+    for (i, kind) in ["x", resize, "dash"].into_iter().enumerate() {
+        let center = Pos2::new(bar.right() - 26.0 - WINDOW_STEP * i as f32, cy);
+        let rect = Rect::from_center_size(center, Vec2::splat(WINDOW_STEP - 4.0));
+        let resp = ui.interact(rect, ui.id().with(("winctl", i)), egui::Sense::click());
         let p = ui.painter();
         if resp.hovered() {
-            let fill = if kind == "x-lg" {
-                Color32::from_rgb(0xc4, 0x2b, 0x1c)
-            } else {
-                c::HOVER
-            };
-            p.rect_filled(rect, 0.0, fill);
+            bubble(p, center, WINDOW_ICON + 16.0, 1.0);
         }
         let col = if resp.hovered() {
             Color32::WHITE
         } else {
             c::MUTED
         };
-        let size = if kind == "square" { 12.0 } else { 14.0 };
-        icons.draw(p, kind, rect.center(), size, col);
+        icons.draw_fit(p, kind, center, WINDOW_ICON, col);
         if resp.clicked() {
-            match kind {
-                "x-lg" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                "square" => ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized)),
+            match i {
+                0 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                1 => ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized)),
                 _ => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
             }
         }

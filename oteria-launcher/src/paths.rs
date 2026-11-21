@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 pub const LAUNCHER_EXE: &str = "OteriaLauncher.exe";
 pub const UPDATER_EXE: &str = "updater.exe";
+/// The next launcher, downloaded before `updater.exe self-update` swaps it in.
+pub const LAUNCHER_NEW_EXE: &str = "OteriaLauncher.new.exe";
 /// The game and its resource preparer, as the client package names them
 /// (`tools/oteria/publish_beta.ps1` renames Horizon's `horizon-client.exe`).
 pub const CLIENT_EXE: &str = "Oteria.exe";

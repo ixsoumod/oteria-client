@@ -14,6 +14,7 @@
 //! folder ([`paths::game_dir`], `%APPDATA%\.oteria`) is the one `oteria.cmd` already plays in.
 
 pub mod install;
+pub mod lang;
 pub mod manifest;
 pub mod microsoft;
 pub mod mojang;
@@ -21,6 +22,8 @@ pub mod paths;
 pub mod player;
 pub mod state;
 pub mod ui;
+pub mod video;
+pub mod update_popup;
 
 pub use manifest::{Manifest, NewsItem, Package, PartnerServer};
 pub use state::{AccountError, State};

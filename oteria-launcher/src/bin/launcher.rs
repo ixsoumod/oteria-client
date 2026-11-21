@@ -20,7 +20,7 @@ use eframe::egui::{
 use oteria_dist::microsoft::{self, DeviceCode, Poll, Session, SignedIn};
 use oteria_dist::state::AccountRef;
 use oteria_dist::ui::{self, c, Icons};
-use oteria_dist::{install, paths, player, CheckReport, NewsItem, Progress, State};
+use oteria_dist::{install, paths, player, update_popup, CheckReport, NewsItem, Progress, State};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -29,75 +29,64 @@ use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const SIDE_W: f32 = 100.0;
-const TOP_H: f32 = 72.0;
+/// The icon column: an icon's bubble with the same small gap on each side.
+const SIDE_W: f32 = NAV_GAP * 2.0 + NAV_TILE;
+const NAV_TILE: f32 = 36.0;
+const NAV_GAP: f32 = 12.0;
+/// The content panel's plain dark colour, and the darker frame around it (the top bar, the icon
+/// column, and a thin edge at the right and the bottom).
+const WINDOW_BG: Color32 = Color32::from_rgb(0x14, 0x19, 0x21);
+const SIDE_BG: Color32 = Color32::from_rgb(0x0c, 0x0f, 0x14);
+/// Rows and cards, a step lighter than the plain background so they still stand out on it.
+const PANEL: Color32 = Color32::from_rgb(0x1c, 0x23, 0x2e);
+/// Buttons and chips on those rows, and their hover: lighter again.
+const RAISED: Color32 = Color32::from_rgb(0x26, 0x2f, 0x3c);
+const HOVER: Color32 = Color32::from_rgb(0x2f, 0x3a, 0x49);
+/// The dark top bar: low, its logo, name, account chip and window buttons all `CHIP_H` tall.
+const TOP_H: f32 = 44.0;
+/// The height of everything in the top bar: the window buttons' bubble.
+const CHIP_H: f32 = ui::WINDOW_ICON + 16.0;
+/// The account chip's right edge, from the window's: just left of the three window buttons.
+const CHIP_RIGHT: f32 = 26.0 + 36.0 * 2.0 + CHIP_H / 2.0 + 10.0;
+/// The dark frame's thin right and bottom edges.
+const FRAME: f32 = 8.0;
+/// Inside the content panel: the gap between its rounded edge and what it holds.
+const INSET: f32 = 20.0;
 /// The corner radius of every surface.
 const R: u8 = 8;
-/// The background picture's width over its height.
-const BG_ASPECT: f32 = 864.0 / 505.0;
 const BACKGROUND: &[u8] = include_bytes!("../../assets/background.jpg");
 const FULL_UV: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
 
-/// The banner's own looping video (0:02-0:20 of the clip recorded 2026-11-18, cropped and
-/// resized to `BG_ASPECT`), packed by `tools/oteria/pack_menu_loop.py` as one JPEG frame after
-/// another behind a small header: `u32` frame count, `u32` fps, `u32` reserved, then that many
-/// `u32` lengths, then the frames themselves.
-const MENU_LOOP: &[u8] = include_bytes!("../../assets/menu-loop.bin");
-
-/// The banner's video, decoded one frame at a time (never all at once: 180-odd JPEGs would be
-/// wasteful to keep as textures).
-struct MenuLoop {
-    /// Each frame's `(offset, length)` in `MENU_LOOP`, past the header.
-    frames: Vec<(usize, usize)>,
-    fps: u32,
-    texture: Option<TextureHandle>,
-    shown: Option<usize>,
-    started: Instant,
-}
-
-impl MenuLoop {
-    fn load() -> Self {
-        let mut frames = Vec::new();
-        let mut fps = 10;
-        if MENU_LOOP.len() >= 12 {
-            let u32_at = |i: usize| u32::from_le_bytes(MENU_LOOP[i..i + 4].try_into().unwrap());
-            let count = u32_at(0) as usize;
-            fps = u32_at(4).max(1);
-            let mut offset = 12 + count * 4;
-            for i in 0..count {
-                let len = u32_at(12 + i * 4) as usize;
-                frames.push((offset, len));
-                offset += len;
-            }
-        }
-        Self {
-            frames,
-            fps,
-            texture: None,
-            shown: None,
-            started: Instant::now(),
-        }
-    }
-
-    /// This frame's texture, decoding a new one only when the clock has moved past it.
-    fn texture(&mut self, ctx: &egui::Context) -> Option<&TextureHandle> {
-        if self.frames.is_empty() {
-            return None;
-        }
-        let elapsed = self.started.elapsed().as_secs_f32();
-        let i = (elapsed * self.fps as f32) as usize % self.frames.len();
-        if self.shown != Some(i) {
-            let (off, len) = self.frames[i];
-            if let Some(tex) = ui::texture_from_png(ctx, "menu-loop", &MENU_LOOP[off..off + len]) {
-                self.texture = Some(tex);
-                self.shown = Some(i);
-            }
-        }
-        self.texture.as_ref()
-    }
-}
+/// The banner's looping video: 0:02-0:20 of the clip recorded 2026-11-18, cropped of its black
+/// strip and encoded as raw H.264 at 30 fps by `tools/oteria/make_menu_loop.ps1`.
+const MENU_VIDEO: &[u8] = include_bytes!("../../assets/menu-loop.h264");
+const MENU_VIDEO_FPS: f32 = 30.0;
 
 fn main() -> eframe::Result {
+    let home = paths::home();
+    // Before any window: a newer launcher opens the small update window instead of this one.
+    if let Ok(p) = std::env::var("OTERIA_UPDATE_POPUP_DEMO") {
+        return update_popup::run(update_popup::Options {
+            version: std::env::var("OTERIA_UPDATE_POPUP_VERSION").unwrap_or_else(|_| "1.0.6".into()),
+            updater: updater_path(&home),
+            home,
+            demo: Some(p.parse().unwrap_or(6.0)),
+            shot: std::env::var_os("OTERIA_LAUNCHER_SHOT").map(PathBuf::from),
+        });
+    }
+    let no_self_update = std::env::args().any(|a| a == "--no-self-update");
+    let report = run_check(&updater_path(&home));
+    if let Some(version) = report.launcher_update.clone() {
+        if !no_self_update && is_installed(&home) {
+            return update_popup::run(update_popup::Options {
+                updater: updater_copy(&home),
+                version,
+                home,
+                demo: None,
+                shot: std::env::var_os("OTERIA_LAUNCHER_SHOT").map(PathBuf::from),
+            });
+        }
+    }
     let viewport = egui::ViewportBuilder::default()
         .with_title("Oteria Launcher")
         .with_inner_size([1280.0, 780.0])
@@ -111,8 +100,55 @@ fn main() -> eframe::Result {
             centered: true,
             ..Default::default()
         },
-        Box::new(|cc| Ok(Box::new(Launcher::new(&cc.egui_ctx)))),
+        Box::new(move |cc| Ok(Box::new(Launcher::new(&cc.egui_ctx, report, no_self_update)))),
     )
+}
+
+/// `updater.exe`: beside this launcher, else in the install folder.
+fn updater_path(home: &Path) -> PathBuf {
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(paths::UPDATER_EXE)));
+    beside
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| home.join(paths::UPDATER_EXE))
+}
+
+/// Whether this launcher is the installed one (a developer's build never replaces itself).
+fn is_installed(home: &Path) -> bool {
+    let me = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.canonicalize().ok());
+    let there = home.join(paths::LAUNCHER_EXE).canonicalize().ok();
+    me.is_some() && me == there
+}
+
+/// The updater that replaces this launcher runs from a copy: it may replace itself too.
+fn updater_copy(home: &Path) -> PathBuf {
+    let src = updater_path(home);
+    let copy = home.join("updater.run.exe");
+    if std::fs::copy(&src, &copy).is_ok() {
+        copy
+    } else {
+        src
+    }
+}
+
+/// Asks `updater.exe check` what is new (it also updates the updater itself).
+fn run_check(updater: &Path) -> CheckReport {
+    install::quiet_command(updater)
+        .args(["check", "--launcher-version", oteria_dist::LAUNCHER_VERSION])
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| format!("updater.exe introuvable ({}) : {e}", updater.display()))
+        .and_then(|o| {
+            serde_json::from_slice::<CheckReport>(&o.stdout)
+                .map_err(|e| format!("Réponse de l'updater illisible : {e}"))
+        })
+        .unwrap_or_else(|e| CheckReport {
+            error: Some(e),
+            ..Default::default()
+        })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -224,20 +260,13 @@ struct Launcher {
     skin: Option<ui::Skin>,
     /// The chosen Microsoft account's own skin, kept up to date as it signs in or renews.
     account_skin: Option<ui::Skin>,
-    /// Oteria's own character, drawn when there is neither of the above.
-    default_skin: ui::Skin,
-    /// The shown skin's texture and its posed 3D figure, both rebuilt only when the skin shown
-    /// changes, never once a frame.
-    skin_tex: TextureHandle,
-    figure: ui::PlayerFigure,
-    /// `skin` or `account_skin` changed: `tick` rebuilds `skin_tex` from them next, since that
-    /// needs a `&Context` not every caller has.
-    skin_dirty: bool,
     logo: TextureHandle,
     icons: Icons,
     background: TextureHandle,
-    /// The background video behind the player on the Jouer page, decoded one frame at a time.
-    menu_loop: MenuLoop,
+    /// The video behind the Jouer button, decoded in the background.
+    menu_video: oteria_dist::video::VideoLoop,
+    /// The Jouer button's light, from its top left corner to its bottom right.
+    button_sheen: TextureHandle,
     /// Darkens the bottom of the banner, under the buttons.
     hero_shade: TextureHandle,
     /// Darkens the bottom of a news picture, under its title.
@@ -260,10 +289,12 @@ struct Launcher {
     settled_frames: u32,
     shot_sent: bool,
     started: Instant,
+    /// Started again after its update window failed: never tries to update itself this run.
+    no_self_update: bool,
 }
 
 impl Launcher {
-    fn new(ctx: &egui::Context) -> Self {
+    fn new(ctx: &egui::Context, report: CheckReport, no_self_update: bool) -> Self {
         ui::install_fonts(ctx);
         let home = paths::home();
         let game_dir = paths::game_dir();
@@ -274,23 +305,13 @@ impl Launcher {
         ] {
             let _ = std::fs::remove_file(home.join(leftover));
         }
-        let mut state = State::load(&home);
-        // The first account is the offline name the game already keeps.
-        if state.accounts.is_empty() {
-            state.accounts.push(player::load_or_create(&game_dir));
-            state.account = state.accounts.first().cloned();
-            let _ = state.save(&home);
-        }
+        // No account until the player signs in (Microsoft) or adds a local one: Play waits.
+        let state = State::load(&home);
         let current = state.current();
         let name = current
             .as_ref()
             .map_or("Player".to_owned(), |a| a.name.clone());
         let skin = player::worn_skin(&game_dir).and_then(|p| ui::Skin::load(&p));
-        let default_skin = ui::Skin::default_skin();
-        // A placeholder: corrected right after construction, once `self` exists, by
-        // `rebuild_skin_tex` (which also picks the account's skin over this default one).
-        let skin_tex = default_skin.texture(ctx, "skin");
-        let figure = ui::PlayerFigure::new(&default_skin);
         let logo = ui::svg_texture(ctx, "logo", ui::LOGO_SVG, 192, false)
             .or_else(|| ui::texture_from_png(ctx, "logo", ui::LOGO_PNG))
             .expect("logo");
@@ -334,11 +355,8 @@ impl Launcher {
             ms_cancel: Arc::new(AtomicBool::new(false)),
             skin,
             account_skin: None,
-            default_skin,
-            skin_tex,
-            figure,
-            skin_dirty: false,
-            menu_loop: MenuLoop::load(),
+            menu_video: oteria_dist::video::VideoLoop::start(MENU_VIDEO, MENU_VIDEO_FPS),
+            button_sheen: sheen_texture(ctx),
             logo,
             page,
             phase: Phase::Checking,
@@ -367,8 +385,8 @@ impl Launcher {
             settled_frames: 0,
             shot_sent: false,
             started: Instant::now(),
+            no_self_update,
         };
-        me.rebuild_skin_tex(ctx);
         if updated {
             me.notice = Some((
                 format!("Launcher mis à jour : v{}", oteria_dist::LAUNCHER_VERSION),
@@ -376,7 +394,8 @@ impl Launcher {
             ));
         }
         me.log(&format!("démarrage v{}", oteria_dist::LAUNCHER_VERSION));
-        me.start_check();
+        // `main` already asked the updater, before opening any window.
+        me.on_report(report);
         me.prefetch_session();
         if std::env::var_os("OTERIA_LAUNCHER_MS").is_some() {
             me.add_kind = Kind::Microsoft;
@@ -412,7 +431,6 @@ impl Launcher {
         if self.current.as_ref().map(|a| a.id.clone()) != before {
             self.session = None;
             self.account_skin = None;
-            self.skin_dirty = true;
             self.prefetch_session();
         }
     }
@@ -421,18 +439,6 @@ impl Launcher {
     /// Microsoft account's own skin.
     fn shown_skin(&self) -> Option<&ui::Skin> {
         self.skin.as_ref().or(self.account_skin.as_ref())
-    }
-
-    /// Re-uploads `skin_tex` for whatever `shown_skin` now is (or Oteria's own default
-    /// character, when there is none): call this once whenever `skin` or `account_skin`
-    /// changes, never once a frame.
-    fn rebuild_skin_tex(&mut self, ctx: &egui::Context) {
-        let (tex, figure) = {
-            let s = self.shown_skin().unwrap_or(&self.default_skin);
-            (s.texture(ctx, "skin"), ui::PlayerFigure::new(s))
-        };
-        self.skin_tex = tex;
-        self.figure = figure;
     }
 
     /// The chosen Microsoft account's UUID.
@@ -464,23 +470,12 @@ impl Launcher {
         self.session_rx = Some(rx);
     }
 
-    /// `updater.exe`: beside this launcher, else in the install folder.
     fn updater(&self) -> PathBuf {
-        let beside = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join(paths::UPDATER_EXE)));
-        beside
-            .filter(|p| p.is_file())
-            .unwrap_or_else(|| self.home.join(paths::UPDATER_EXE))
+        updater_path(&self.home)
     }
 
-    /// Whether this launcher is the installed one (a developer's build never replaces itself).
     fn installed(&self) -> bool {
-        let me = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.canonicalize().ok());
-        let there = self.home.join(paths::LAUNCHER_EXE).canonicalize().ok();
-        me.is_some() && me == there
+        is_installed(&self.home)
     }
 
     fn start_check(&mut self) {
@@ -488,19 +483,7 @@ impl Launcher {
         let (tx, rx) = channel();
         let updater = self.updater();
         std::thread::spawn(move || {
-            let report = install::quiet_command(&updater)
-                .args(["check", "--launcher-version", oteria_dist::LAUNCHER_VERSION])
-                .stderr(Stdio::null())
-                .output()
-                .map_err(|e| format!("updater.exe introuvable ({}) : {e}", updater.display()))
-                .and_then(|o| {
-                    serde_json::from_slice::<CheckReport>(&o.stdout)
-                        .map_err(|e| format!("Réponse de l'updater illisible : {e}"))
-                });
-            let _ = tx.send(report.unwrap_or_else(|e| CheckReport {
-                error: Some(e),
-                ..Default::default()
-            }));
+            let _ = tx.send(run_check(&updater));
         });
         self.check_rx = Some(rx);
     }
@@ -518,18 +501,24 @@ impl Launcher {
         let installed = self.state.client_dir(&self.home).is_some();
         self.report = report;
         if let Some(v) = self.report.launcher_update.clone() {
-            if self.installed() {
+            if self.no_self_update {
+                self.notice = Some((
+                    format!("Launcher v{v} disponible, mais sa mise à jour a échoué (voir launcher.log)"),
+                    c::WARN,
+                ));
+            } else if self.installed() {
                 self.phase = Phase::SelfUpdating {
                     version: v,
                     since: Instant::now(),
                     handed_over: false,
                 };
                 return;
+            } else {
+                self.notice = Some((
+                    format!("Launcher v{v} disponible (cette copie n'est pas installée : pas de mise à jour automatique)"),
+                    c::WARN,
+                ));
             }
-            self.notice = Some((
-                format!("Launcher v{v} disponible (cette copie n'est pas installée : pas de mise à jour automatique)"),
-                c::WARN,
-            ));
         }
         self.phase = if let Some(e) = self.report.error.clone() {
             if installed {
@@ -643,6 +632,10 @@ impl Launcher {
     /// Play: starts the game right away for a local account; for a Microsoft one, with its
     /// session, which is usually already there.
     fn launch(&mut self, server: Option<&str>) {
+        if self.current.is_none() {
+            self.page = Page::Accounts;
+            return;
+        }
         if self.state.client_dir(&self.home).is_none() {
             self.phase = Phase::NeedDownload { update: false };
             return;
@@ -748,6 +741,10 @@ impl Launcher {
     }
 
     fn main_action(&mut self) {
+        let busy = matches!(self.phase, Phase::Launching { .. } | Phase::Running);
+        if self.current.is_none() && !busy {
+            return;
+        }
         match self.phase {
             Phase::NeedDownload { .. } => self.start_download(),
             Phase::Ready => self.launch(None),
@@ -758,10 +755,6 @@ impl Launcher {
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
-        if self.skin_dirty {
-            self.rebuild_skin_tex(ctx);
-            self.skin_dirty = false;
-        }
         if let Some(rx) = &self.check_rx {
             if let Ok(r) = rx.try_recv() {
                 self.check_rx = None;
@@ -844,7 +837,6 @@ impl Launcher {
                     signed.session.name
                 ));
                 self.account_skin = signed.skin.as_deref().and_then(ui::Skin::from_bytes);
-                self.skin_dirty = true;
                 self.session = Some(signed.session.clone());
                 if let Some(server) = self.pending_launch.take() {
                     self.start_game(server.as_deref(), Some(signed.session));
@@ -959,7 +951,6 @@ impl Launcher {
                     self.update_state(|s| s.add_ms_account(&uuid, &name));
                     // After `update_state`, which clears it when the account changes.
                     self.account_skin = signed.skin.as_deref().and_then(ui::Skin::from_bytes);
-                    self.skin_dirty = true;
                     self.ms_flow = MsFlow::Done(name);
                     self.ms_rx = None;
                     return;
@@ -974,15 +965,8 @@ impl Launcher {
         }
     }
 
-    /// The updater that replaces this launcher runs from a copy: it may replace itself too.
     fn updater_for_self_update(&self) -> PathBuf {
-        let src = self.updater();
-        let copy = self.home.join("updater.run.exe");
-        if std::fs::copy(&src, &copy).is_ok() {
-            copy
-        } else {
-            src
-        }
+        updater_copy(&self.home)
     }
 
     fn settled(&self) -> bool {
@@ -1076,7 +1060,7 @@ fn over_picture(hovered: bool) -> Color32 {
 
 impl eframe::App for Launcher {
     fn clear_color(&self, _: &egui::Visuals) -> [f32; 4] {
-        c::BG.to_normalized_gamma_f32()
+        WINDOW_BG.to_normalized_gamma_f32()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1115,22 +1099,17 @@ impl eframe::App for Launcher {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(c::BG))
+            .frame(egui::Frame::NONE.fill(SIDE_BG))
             .show(ctx, |ui| {
                 let full = ui.max_rect();
-                // The picture, very dark, behind everything.
-                cover(
-                    &ui.painter().clone(),
-                    full,
-                    0,
-                    &self.background,
-                    0.5,
-                    Color32::from_rgb(15, 19, 27),
+                // The content panel, framed by the dark bars, its corners rounded.
+                let content = Rect::from_min_max(
+                    Pos2::new(full.left() + SIDE_W, full.top() + TOP_H),
+                    full.max - Vec2::splat(FRAME),
                 );
-                let body = Rect::from_min_max(
-                    Pos2::new(full.left() + SIDE_W + 8.0, full.top() + TOP_H),
-                    full.max - Vec2::new(28.0, 24.0),
-                );
+                ui.painter()
+                    .rect_filled(content, CornerRadius::same(12), WINDOW_BG);
+                let body = content.shrink(INSET);
                 match self.page {
                     Page::Play => self.play_page(ui, body),
                     Page::Mods => self.mods_page(ui, body),
@@ -1161,9 +1140,6 @@ impl eframe::App for Launcher {
         );
         ctx.request_repaint_after(if busy || self.shot.is_some() {
             Duration::from_millis(16)
-        } else if self.page == Page::Play {
-            // The banner's video keeps playing.
-            Duration::from_millis(1000 / self.menu_loop.fps.max(1) as u64)
         } else {
             Duration::from_millis(500)
         });
@@ -1176,12 +1152,12 @@ impl eframe::App for Launcher {
 /// what is left over when it is cropped sideways.
 fn cover(p: &egui::Painter, r: Rect, radius: u8, tex: &TextureHandle, u0: f32, tint: Color32) {
     let aspect = r.width() / r.height();
-    let uv = if aspect < BG_ASPECT {
-        let w = aspect / BG_ASPECT;
+    let uv = if aspect < tex.aspect_ratio() {
+        let w = aspect / tex.aspect_ratio();
         let x = (1.0 - w) * u0;
         Rect::from_min_max(Pos2::new(x, 0.0), Pos2::new(x + w, 1.0))
     } else {
-        let h = BG_ASPECT / aspect;
+        let h = tex.aspect_ratio() / aspect;
         let y = (1.0 - h) * 0.4;
         Rect::from_min_max(Pos2::new(0.0, y), Pos2::new(1.0, y + h))
     };
@@ -1204,7 +1180,6 @@ fn surface(p: &egui::Painter, r: Rect, fill: Color32) {
 enum Look {
     Quiet,
     Accent,
-    OverPicture,
 }
 
 /// A flat button: an optional icon and a label. Returns whether it was clicked.
@@ -1230,13 +1205,12 @@ fn button(
     let hovered = enabled && resp.hovered();
     let p = ui.painter();
     let (fill, fg) = match (look, enabled) {
-        (_, false) => (c::PANEL, c::FAINT),
+        (_, false) => (PANEL, c::FAINT),
         (Look::Accent, true) => (
             if hovered { c::ACCENT_HOVER } else { c::ACCENT },
             Color32::WHITE,
         ),
-        (Look::OverPicture, true) => (over_picture(hovered), Color32::WHITE),
-        (Look::Quiet, true) => (if hovered { c::HOVER } else { c::RAISED }, c::TEXT),
+        (Look::Quiet, true) => (if hovered { HOVER } else { RAISED }, c::TEXT),
     };
     surface(p, r, fill);
     let g = p.layout_no_wrap(label.to_owned(), ui::semi(13.5), fg);
@@ -1251,6 +1225,38 @@ fn button(
         fg,
     );
     enabled && resp.clicked()
+}
+
+/// A square button with just an icon, over the video. Returns whether it was clicked.
+fn icon_button(ui: &mut egui::Ui, icons: &Icons, r: Rect, icon: &str, id: &str) -> bool {
+    let resp = ui.interact(r, ui.id().with(("icon-button", id)), Sense::click());
+    let p = ui.painter();
+    surface(p, r, over_picture(resp.hovered()));
+    icons.draw_fit(p, icon, r.center(), 17.0, Color32::WHITE);
+    resp.clicked()
+}
+
+/// The Jouer button's light: white at its top left, a little darker at its bottom right, so a
+/// tint of the button's colour gives it its gradient.
+fn sheen_texture(ctx: &egui::Context) -> TextureHandle {
+    let (w, h) = (128usize, 32usize);
+    let mut pixels = Vec::with_capacity(w * h);
+    for y in 0..h {
+        for x in 0..w {
+            let t = (x as f32 / (w - 1) as f32) * 0.7 + (y as f32 / (h - 1) as f32) * 0.3;
+            let v = (255.0 * (1.0 - 0.22 * t)).round() as u8;
+            pixels.push(Color32::from_gray(v));
+        }
+    }
+    ctx.load_texture(
+        "button-sheen",
+        egui::ColorImage {
+            size: [w, h],
+            source_size: Vec2::new(w as f32, h as f32),
+            pixels,
+        },
+        egui::TextureOptions::LINEAR,
+    )
 }
 
 /// A switch. Returns whether it was clicked.
@@ -1278,22 +1284,22 @@ fn caption(p: &egui::Painter, pos: Pos2, s: &str) -> Rect {
 }
 
 /// "OTERIA" and "LAUNCHER" in one line, left-aligned on `pos` (the line's middle).
-fn wordmark(p: &egui::Painter, pos: Pos2) {
+fn wordmark(p: &egui::Painter, pos: Pos2, size: f32) {
     let mut job = LayoutJob::default();
     job.append(
         "OTERIA",
         0.0,
         TextFormat {
-            font_id: ui::semi(21.0),
+            font_id: ui::semi(size),
             color: c::TEXT,
             ..Default::default()
         },
     );
     job.append(
         "LAUNCHER",
-        8.0,
+        size * 0.4,
         TextFormat {
-            font_id: ui::regular(21.0),
+            font_id: ui::regular(size),
             color: c::MUTED,
             ..Default::default()
         },
@@ -1319,117 +1325,129 @@ impl Launcher {
         let p = ui.painter().clone();
         p.image(
             self.logo.id(),
-            Rect::from_min_size(
-                Pos2::new(bar.left() + 24.0, bar.top() + 14.0),
-                Vec2::splat(44.0),
+            Rect::from_center_size(
+                Pos2::new(bar.left() + SIDE_W / 2.0, bar.center().y),
+                Vec2::splat(CHIP_H),
             ),
             FULL_UV,
             Color32::WHITE,
         );
-        wordmark(&p, Pos2::new(bar.left() + 80.0, bar.center().y));
+        wordmark(&p, Pos2::new(bar.left() + SIDE_W + 2.0, bar.center().y), 17.0);
 
-        // The account: its face, its name, and the menu.
+        // The account: its face, its name, and the menu; with none yet, a plus and "Connexion",
+        // which opens the page to add one. As tall as the window buttons' bubble.
+        let signed_in = self.current.is_some();
+        let label = if signed_in {
+            self.name.clone()
+        } else {
+            "Connexion".to_owned()
+        };
+        let font = ui::semi(13.0);
+        let text_w = p.layout_no_wrap(label.clone(), font.clone(), c::TEXT).size().x;
+        let pad = 6.0;
+        let lead = CHIP_H - pad * 2.0;
+        let w = pad + lead + 8.0 + text_w + if signed_in { 30.0 } else { 12.0 };
         let chip = Rect::from_min_size(
-            Pos2::new(bar.right() - 46.0 * 3.0 - 16.0 - 200.0, bar.top() + 16.0),
-            Vec2::new(200.0, 42.0),
+            Pos2::new(bar.right() - CHIP_RIGHT - w, bar.center().y - CHIP_H / 2.0),
+            Vec2::new(w, CHIP_H),
         );
         let resp = ui.interact(chip, ui.id().with("account-chip"), Sense::click());
-        surface(
-            &p,
+        p.rect_filled(
             chip,
+            CornerRadius::same((CHIP_H * 0.28).round() as u8),
             if resp.hovered() || self.menu_open {
-                c::HOVER
+                HOVER
             } else {
-                c::RAISED
+                RAISED
             },
         );
-        ui::draw_head(
-            &p,
-            Rect::from_min_size(chip.min + Vec2::new(9.0, 8.0), Vec2::splat(26.0)),
-            self.shown_skin(),
+        let lead_rect = Rect::from_min_size(
+            Pos2::new(chip.left() + pad, chip.center().y - lead / 2.0),
+            Vec2::splat(lead),
         );
+        if signed_in {
+            ui::draw_head(&p, lead_rect, self.shown_skin());
+            self.icons.draw(
+                &p,
+                "chevron-down",
+                Pos2::new(chip.right() - 15.0, chip.center().y),
+                10.0,
+                c::MUTED,
+            );
+        } else {
+            self.icons
+                .draw(&p, "plus-lg", lead_rect.center(), 13.0, c::TEXT);
+        }
         ui::text(
             &p,
-            Pos2::new(chip.left() + 46.0, chip.center().y),
+            Pos2::new(lead_rect.right() + 8.0, chip.center().y),
             Align2::LEFT_CENTER,
-            &self.name,
-            ui::semi(14.0),
+            &label,
+            font,
             c::TEXT,
         );
-        self.icons.draw(
-            &p,
-            "chevron-down",
-            Pos2::new(chip.right() - 18.0, chip.center().y),
-            12.0,
-            c::MUTED,
-        );
         if resp.clicked() {
-            self.menu_open = !self.menu_open;
+            if signed_in {
+                self.menu_open = !self.menu_open;
+            } else {
+                self.page = Page::Accounts;
+                self.menu_open = false;
+            }
         }
         ui::window_controls(ui, bar, &self.icons);
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui, rect: Rect) {
         let p = ui.painter().clone();
+        // Each entry: just an icon, all of the same drawn size, and a bubble behind it when it is
+        // hovered or open. Paramètres sits alone at the bottom left, as far from the bottom as
+        // from the left.
+        const ICON: f32 = 20.0;
+        const TILE: Vec2 = Vec2::splat(NAV_TILE);
+        let margin = NAV_GAP;
         let items = [
-            (Page::Play, "controller", "JOUER"),
-            (Page::Mods, "puzzle-fill", "MODS"),
-            (Page::Market, "shop", "MARKETPLACE"),
-            (Page::Settings, "gear-fill", "PARAMÈTRES"),
+            (Page::Play, "play-fill"),
+            (Page::Mods, "puzzle-fill"),
+            (Page::Market, "cart-fill"),
+            (Page::Settings, "gear-fill"),
         ];
-        for (i, (page, icon, label)) in items.into_iter().enumerate() {
-            let r = Rect::from_min_size(
-                Pos2::new(rect.left() + 10.0, rect.top() + 14.0 + i as f32 * 88.0),
-                Vec2::new(rect.width() - 20.0, 78.0),
-            );
+        let last = items.len() - 1;
+        for (i, (page, icon)) in items.into_iter().enumerate() {
+            let min = if i == last {
+                Pos2::new(rect.left() + margin, rect.bottom() - margin - TILE.y)
+            } else {
+                Pos2::new(rect.left() + margin, rect.top() + margin + i as f32 * (TILE.y + 10.0))
+            };
+            let r = Rect::from_min_size(min, TILE);
             let resp = ui.interact(r, ui.id().with(("nav", i)), Sense::click());
             let active = self.page == page
                 || (page == Page::Play && self.page == Page::News)
                 || (page == Page::Settings && self.page == Page::Accounts);
-            if active {
-                surface(&p, r, c::SELECTED);
-            } else if resp.hovered() {
-                surface(&p, r, c::RAISED);
+            let center = r.center();
+            if resp.hovered() || active {
+                ui::bubble(&p, center, NAV_TILE, if resp.hovered() { 1.0 } else { 0.7 });
             }
             let col = if active || resp.hovered() {
                 Color32::WHITE
             } else {
                 c::MUTED
             };
-            self.icons
-                .draw(&p, icon, r.center() - Vec2::new(0.0, 11.0), 26.0, col);
-            ui::text(
-                &p,
-                r.center() + Vec2::new(0.0, 22.0),
-                Align2::CENTER_CENTER,
-                label,
-                ui::semi(10.5),
-                col,
-            );
+            self.icons.draw_fit(&p, icon, center, ICON, col);
             if resp.clicked() {
                 self.page = page;
                 self.menu_open = false;
             }
         }
-        ui::text(
-            &p,
-            Pos2::new(rect.center().x, rect.bottom() - 20.0),
-            Align2::CENTER_CENTER,
-            &format!("v{}", oteria_dist::LAUNCHER_VERSION),
-            ui::medium(12.0),
-            c::FAINT,
-        );
     }
 
     fn play_page(&mut self, ui: &mut egui::Ui, body: Rect) {
-        let side_w = 320.0;
         let gap = 22.0;
-        let main = Rect::from_min_max(
-            body.min,
-            Pos2::new(body.right() - side_w - gap, body.bottom()),
-        );
+        // The banner spans about three quarters of the window, the partner servers the rest.
+        let window_w = ui.ctx().content_rect().width();
+        let main_w = (window_w * 0.75).min(body.width() - 200.0 - gap);
+        let main = Rect::from_min_size(body.min, Vec2::new(main_w, body.height()));
         let side = Rect::from_min_max(Pos2::new(main.right() + gap, body.top()), body.max);
-        let hero = Rect::from_min_size(main.min, Vec2::new(main.width(), main.height() * 0.64));
+        let hero = Rect::from_min_size(main.min, Vec2::new(main.width(), main.height() * 0.48));
         self.hero(ui, hero);
 
         let p = ui.painter().clone();
@@ -1471,69 +1489,30 @@ impl Launcher {
 
     fn hero(&mut self, ui: &mut egui::Ui, r: Rect) {
         let p = ui.painter().clone();
-        match self.menu_loop.texture(ui.ctx()) {
+        match self.menu_video.texture(ui.ctx()) {
             Some(tex) => cover(&p, r, R, tex, 0.5, Color32::WHITE),
             None => cover(&p, r, R, &self.background, 0.5, Color32::WHITE),
         }
         shade(&p, r, R, &self.hero_shade);
 
-        // The main button sits at the bottom, just over the two small ones; the player leans over
-        // it, its hands on its two ends, its legs behind it. The figure is scaled so its head
-        // tops out under the name tag and its hands land on the button.
-        let row_y = r.bottom() - 16.0 - 40.0;
-        let btn_y = row_y - 12.0 - 32.0;
-        let head_y = r.top() + 50.0;
-        let f = &self.figure;
-        let hand_y = (f.hands[0].y + f.hands[1].y) / 2.0;
-        let scale = (btn_y - head_y) / (hand_y - f.head_top).max(1.0);
-        let origin = Pos2::new(r.center().x, head_y - f.head_top * scale);
-        let btn_w = ((f.hands[1].x - f.hands[0].x) * scale).clamp(240.0, 420.0);
-        let btn = Rect::from_center_size(Pos2::new(r.center().x, btn_y), Vec2::new(btn_w, 64.0));
-        f.draw(&p.with_clip_rect(r), &self.skin_tex, origin, scale, false);
-        let g = p.layout_no_wrap(self.name.clone(), ui::minecraft(17.0), Color32::WHITE);
-        let tag = Rect::from_center_size(
-            Pos2::new(r.center().x, head_y - 20.0),
-            g.size() + Vec2::new(24.0, 12.0),
-        );
-        p.rect_filled(
-            tag,
-            CornerRadius::same(4),
-            Color32::from_rgba_unmultiplied(8, 12, 18, 170),
-        );
-        p.galley(tag.min + Vec2::new(12.0, 6.0), g, Color32::WHITE);
-
+        // Jouer, in the middle of the video.
+        let btn = Rect::from_center_size(r.center(), Vec2::new(300.0, 66.0));
         self.main_button(ui, btn);
-        // The hands hold the button: the arms again, over it, only where they cross it.
-        let grip = btn.expand2(Vec2::new(40.0, 4.0)).intersect(r);
-        self.figure
-            .draw(&p.with_clip_rect(grip), &self.skin_tex, origin, scale, true);
-        let w = 176.0;
-        let b1 = Rect::from_min_size(Pos2::new(r.center().x - w - 5.0, row_y), Vec2::new(w, 40.0));
-        let b2 = Rect::from_min_size(Pos2::new(r.center().x + 5.0, row_y), Vec2::new(w, 40.0));
-        if button(
-            ui,
-            &self.icons,
-            b1,
-            Some("folder2-open"),
-            "Dossier du jeu",
-            "game-folder",
-            Look::OverPicture,
-            true,
-        ) {
+
+        // The game folder and its screenshots: two icons, one over the other, bottom left.
+        let size = 40.0;
+        let shots = Rect::from_min_size(
+            Pos2::new(r.left() + 16.0, r.bottom() - 16.0 - size),
+            Vec2::splat(size),
+        );
+        let folder = shots.translate(Vec2::new(0.0, -size - 8.0));
+        if icon_button(ui, &self.icons, folder, "folder-fill", "game-folder") {
             open_folder(&self.game_dir);
         }
-        if button(
-            ui,
-            &self.icons,
-            b2,
-            Some("box-arrow-up-right"),
-            "Captures d'écran",
-            "screenshots",
-            Look::OverPicture,
-            true,
-        ) {
+        if icon_button(ui, &self.icons, shots, "file-earmark-image-fill", "screenshots") {
             open_folder(&self.game_dir.join("screenshots"));
         }
+        let notice_x = shots.right() + 14.0;
 
         // What just happened, in the corner.
         let text = match (&self.notice, &self.phase) {
@@ -1551,7 +1530,7 @@ impl Launcher {
         if let Some((t, col)) = text {
             ui::wrapped(
                 &p,
-                Pos2::new(r.left() + 22.0, r.bottom() - 40.0),
+                Pos2::new(notice_x, r.bottom() - 40.0),
                 &t,
                 ui::medium(13.0),
                 ui::lerp(col, Color32::WHITE, 0.35),
@@ -1592,6 +1571,22 @@ impl Launcher {
             }
             Phase::Failed(_) => ("RÉESSAYER", "Source injoignable".into(), true, false),
         };
+        // No account yet: nothing to download or play until there is one.
+        let locked = self.current.is_none()
+            && matches!(
+                self.phase,
+                Phase::NeedDownload { .. } | Phase::Ready | Phase::Failed(_)
+            );
+        let (label, sub, enabled, danger) = if locked {
+            (
+                "CONNECTEZ-VOUS",
+                "Compte local ou Microsoft requis".to_owned(),
+                false,
+                true,
+            )
+        } else {
+            (label, sub, enabled, danger)
+        };
         let resp = ui.interact(
             btn,
             ui.id().with("main"),
@@ -1603,45 +1598,83 @@ impl Launcher {
         );
         let p = ui.painter().clone();
         let hovered = enabled && resp.hovered();
-        let (fill, edge) = match (enabled, danger, hovered) {
-            (false, _, _) => (
-                Color32::from_rgb(0x2a, 0x3a, 0x4d),
-                Color32::from_rgb(0x20, 0x2d, 0x3d),
+        // Green, or red to stop or when an account is missing, or a muted green while busy.
+        let (base, edge, glow) = match (enabled, danger) {
+            (_, true) => (
+                Color32::from_rgb(0xe0, 0x4b, 0x4b),
+                Color32::from_rgb(0xf2, 0x7a, 0x7a),
+                Color32::from_rgb(0xe0, 0x4b, 0x4b),
             ),
-            (true, true, false) => (c::BAD, c::BAD_EDGE),
-            (true, true, true) => (c::BAD_HOVER, c::BAD_EDGE),
-            (true, false, false) => (c::ACCENT, c::ACCENT_EDGE),
-            (true, false, true) => (c::ACCENT_HOVER, c::ACCENT_EDGE),
+            (true, false) => (
+                Color32::from_rgb(0x22, 0xc5, 0x5e),
+                Color32::from_rgb(0x5e, 0xe6, 0x8f),
+                Color32::from_rgb(0x2e, 0xe0, 0x6e),
+            ),
+            (false, false) => (
+                Color32::from_rgb(0x3f, 0x7a, 0x55),
+                Color32::from_rgb(0x55, 0x8f, 0x6a),
+                Color32::TRANSPARENT,
+            ),
         };
-        // A darker edge under the face, as the game's own buttons have.
-        surface(&p, btn, edge);
-        let face = Rect::from_min_max(btn.min, btn.max - Vec2::new(0.0, 4.0));
-        surface(&p, face, fill);
-        let fg = if enabled {
+        let radius = 9u8;
+        // On hover, a soft light around it.
+        if hovered {
+            p.add(
+                egui::epaint::Shadow {
+                    offset: [0, 0],
+                    blur: 34,
+                    spread: 5,
+                    color: ui::alpha(glow, 0.85),
+                }
+                .as_shape(btn, CornerRadius::same(radius)),
+            );
+        }
+        let base = if hovered {
+            ui::lerp(base, Color32::WHITE, 0.08)
+        } else {
+            base
+        };
+        p.add(
+            RectShape::filled(btn, CornerRadius::same(radius), base)
+                .with_texture(self.button_sheen.id(), FULL_UV),
+        );
+        p.rect_stroke(
+            btn,
+            CornerRadius::same(radius),
+            Stroke::new(1.0_f32, ui::alpha(edge, 0.55)),
+            StrokeKind::Inside,
+        );
+        let fg = if enabled || locked {
             Color32::WHITE
         } else {
-            Color32::from_gray(190)
+            Color32::from_gray(215)
         };
         let two = !sub.is_empty();
         ui::text(
             &p,
-            Pos2::new(
-                face.center().x,
-                face.center().y - if two { 9.0 } else { 0.0 },
-            ),
+            Pos2::new(btn.center().x, btn.center().y - if two { 10.0 } else { 0.0 }),
             Align2::CENTER_CENTER,
             label,
-            ui::semi(19.0),
+            ui::semi(if locked { 19.0 } else { 22.0 }),
             fg,
         );
         if two {
-            ui::text(
-                &p,
-                Pos2::new(face.center().x, face.center().y + 14.0),
-                Align2::CENTER_CENTER,
-                &sub,
-                ui::regular(12.0),
-                ui::alpha(fg, 0.82),
+            // The second line: Oteria's logo, then what will start.
+            let g = p.layout_no_wrap(sub.clone(), ui::medium(12.5), ui::alpha(fg, 0.9));
+            let logo = 15.0;
+            let total = logo + 6.0 + g.size().x;
+            let x0 = btn.center().x - total / 2.0;
+            let y = btn.center().y + 14.0;
+            p.image(
+                self.logo.id(),
+                Rect::from_center_size(Pos2::new(x0 + logo / 2.0, y), Vec2::splat(logo)),
+                FULL_UV,
+                Color32::WHITE,
+            );
+            p.galley(
+                Pos2::new(x0 + logo + 6.0, y - g.size().y / 2.0),
+                g,
+                fg,
             );
         }
         if enabled && resp.clicked() {
@@ -1744,9 +1777,9 @@ impl Launcher {
                 Pos2::new(side.left(), y + 34.0 + i as f32 * 76.0),
                 Vec2::new(side.width(), 68.0),
             );
-            surface(&p, row, c::PANEL);
+            surface(&p, row, PANEL);
             let ic = Rect::from_min_size(row.min + Vec2::new(14.0, 14.0), Vec2::splat(40.0));
-            surface(&p, ic, c::RAISED);
+            surface(&p, ic, RAISED);
             self.icons
                 .draw(&p, "hdd-network", ic.center(), 20.0, c::MUTED);
             ui::text(
@@ -1850,7 +1883,7 @@ impl Launcher {
             if row.bottom() > body.bottom() {
                 break;
             }
-            surface(&p, row, c::PANEL);
+            surface(&p, row, PANEL);
             self.icons.draw(
                 &p,
                 "puzzle-fill",
@@ -1912,7 +1945,7 @@ impl Launcher {
             if row.bottom() > body.bottom() {
                 break;
             }
-            surface(&p, row, c::PANEL);
+            surface(&p, row, PANEL);
             ui::text(
                 &p,
                 row.min + Vec2::new(22.0, 18.0),
@@ -1959,15 +1992,15 @@ impl Launcher {
         // Right-aligned under the chip.
         let r = Rect::from_min_size(
             Pos2::new(
-                full.right() - 46.0 * 3.0 - 16.0 - w,
-                full.top() + TOP_H - 6.0,
+                full.right() - CHIP_RIGHT - w,
+                full.top() + TOP_H + 2.0,
             ),
             Vec2::new(w, h),
         );
         p.rect(
             r,
             CornerRadius::same(10),
-            c::PANEL,
+            PANEL,
             Stroke::new(1.0_f32, c::BORDER),
             StrokeKind::Inside,
         );
@@ -1978,7 +2011,7 @@ impl Launcher {
             let row = Rect::from_min_size(Pos2::new(r.left() + 6.0, y), Vec2::new(w - 12.0, 50.0));
             let resp = ui.interact(row, ui.id().with(("menu-account", i)), Sense::click());
             if resp.hovered() {
-                p.rect_filled(row, CornerRadius::same(6), c::RAISED);
+                p.rect_filled(row, CornerRadius::same(6), RAISED);
             }
             ui::draw_head(
                 &p,
@@ -2032,7 +2065,7 @@ impl Launcher {
             let row = Rect::from_min_size(Pos2::new(r.left() + 6.0, y), Vec2::new(w - 12.0, 44.0));
             let resp = ui.interact(row, ui.id().with(("menu-action", i)), Sense::click());
             if resp.hovered() {
-                p.rect_filled(row, CornerRadius::same(6), c::RAISED);
+                p.rect_filled(row, CornerRadius::same(6), RAISED);
             }
             self.icons.draw(
                 &p,
@@ -2083,7 +2116,7 @@ impl Launcher {
             );
             let resp = ui.interact(t, ui.id().with(("kind", i)), Sense::click());
             let on = self.add_kind == kind;
-            surface(&p, t, if resp.hovered() { c::HOVER } else { c::RAISED });
+            surface(&p, t, if resp.hovered() { HOVER } else { RAISED });
             self.icons.draw(
                 &p,
                 icon,
@@ -2143,7 +2176,7 @@ impl Launcher {
                 break;
             }
             let resp = ui.interact(row, ui.id().with(("account-row", i)), Sense::click());
-            surface(&p, row, if resp.hovered() { c::HOVER } else { c::PANEL });
+            surface(&p, row, if resp.hovered() { HOVER } else { PANEL });
             ui::draw_head(
                 &p,
                 Rect::from_min_size(row.min + Vec2::new(12.0, 10.0), Vec2::splat(32.0)),
@@ -2226,7 +2259,7 @@ impl Launcher {
     fn local_form(&mut self, ui: &mut egui::Ui, p: &egui::Painter, body: Rect, fx: f32, fw: f32) {
         caption(p, Pos2::new(fx, body.top() + 14.0), "COMPTE LOCAL");
         let row = Rect::from_min_size(Pos2::new(fx, body.top() + 40.0), Vec2::new(fw, 66.0));
-        surface(p, row, c::PANEL);
+        surface(p, row, PANEL);
         self.icons.draw(
             p,
             "shuffle",
@@ -2272,7 +2305,7 @@ impl Launcher {
         }
         caption(p, Pos2::new(fx, body.top() + 134.0), "NOM D'UTILISATEUR");
         let field = Rect::from_min_size(Pos2::new(fx, body.top() + 160.0), Vec2::new(fw, 48.0));
-        surface(p, field, c::PANEL);
+        surface(p, field, PANEL);
         let inner = Rect::from_center_size(field.center(), Vec2::new(field.width() - 28.0, 26.0));
         let edit = ui.put(
             inner,
@@ -2339,7 +2372,7 @@ impl Launcher {
         caption(p, Pos2::new(fx, body.top() + 14.0), "COMPTE MICROSOFT");
         let has_id = microsoft::client_id().is_some();
         let row = Rect::from_min_size(Pos2::new(fx, body.top() + 40.0), Vec2::new(fw, 66.0));
-        surface(p, row, c::PANEL);
+        surface(p, row, PANEL);
         self.icons.draw(
             p,
             "windows",
@@ -2420,7 +2453,7 @@ impl Launcher {
                     expires_at.saturating_sub(microsoft::now()),
                 );
                 let card = Rect::from_min_size(Pos2::new(fx, y), Vec2::new(fw, 196.0));
-                surface(p, card, c::PANEL);
+                surface(p, card, PANEL);
                 ui::text(
                     p,
                     Pos2::new(card.center().x, card.top() + 28.0),
@@ -2556,7 +2589,7 @@ impl Launcher {
                 let mut y = rect.top();
                 let row = |y: &mut f32, icon: &str, title: &str, desc: &str| -> Rect {
                     let r = Rect::from_min_size(Pos2::new(rect.left(), *y), Vec2::new(rect.width(), row_h));
-                    surface(&p, r, c::PANEL);
+                    surface(&p, r, PANEL);
                     self.icons.draw(&p, icon, Pos2::new(r.left() + 36.0, r.center().y), 22.0, c::MUTED);
                     ui::text(&p, Pos2::new(r.left() + 70.0, r.top() + 24.0), Align2::LEFT_CENTER, title, ui::semi(14.5), c::TEXT);
                     ui::wrapped(&p, Pos2::new(r.left() + 70.0, r.top() + 42.0), desc, ui::regular(12.5), c::MUTED, r.width() - 260.0, 1);
@@ -2569,7 +2602,11 @@ impl Launcher {
                 if toggle(ui, Rect::from_center_size(Pos2::new(r.right() - 50.0, r.center().y), Vec2::new(46.0, 24.0)), close_on_launch, "close-on-launch") {
                     actions.push("toggle-close");
                 }
-                let r = row(&mut y, "people-fill", "Compte", &format!("{} · compte local", self.name));
+                let r = row(&mut y, "people-fill", "Compte", &match &self.current {
+                    Some(a) if a.microsoft => format!("{} · compte Microsoft", a.name),
+                    Some(a) => format!("{} · compte local", a.name),
+                    None => "Aucun compte : ajoutes-en un pour jouer".to_owned(),
+                });
                 if button(ui, &self.icons, Rect::from_center_size(Pos2::new(r.right() - 82.0, r.center().y), Vec2::new(130.0, 36.0)), None, "Gérer", "manage-accounts", Look::Quiet, true) {
                     actions.push("accounts");
                 }
@@ -2688,7 +2725,7 @@ impl Launcher {
         p.rect(
             r,
             CornerRadius::same(10),
-            c::PANEL,
+            PANEL,
             Stroke::new(1.0_f32, c::BORDER),
             StrokeKind::Inside,
         );
@@ -2721,7 +2758,7 @@ impl Launcher {
             Pos2::new(r.right() - 22.0 - g.size().x - 24.0, r.top() + 23.0),
             g.size() + Vec2::new(24.0, 12.0),
         );
-        p.rect_filled(tag, CornerRadius::same(4), c::RAISED);
+        p.rect_filled(tag, CornerRadius::same(4), RAISED);
         p.galley(tag.min + Vec2::new(12.0, 6.0), g, c::MUTED);
         p.line_segment(
             [
@@ -2733,7 +2770,7 @@ impl Launcher {
 
         // The body.
         let icon_tile = Rect::from_min_size(r.min + Vec2::new(26.0, 92.0), Vec2::splat(52.0));
-        surface(&p, icon_tile, c::RAISED);
+        surface(&p, icon_tile, RAISED);
         self.icons
             .draw(&p, card.icon, icon_tile.center(), 22.0, c::TEXT);
         ui::text(
@@ -2781,7 +2818,7 @@ impl Launcher {
             Pos2::new(r.left() + 26.0, r.top() + 194.0),
             Vec2::new(r.width() - 52.0, 6.0),
         );
-        p.rect_filled(bar, CornerRadius::same(3), c::RAISED);
+        p.rect_filled(bar, CornerRadius::same(3), RAISED);
         p.rect_filled(
             Rect::from_min_size(
                 bar.min,

@@ -152,8 +152,13 @@ fn self_update(home: &Path, pid: Option<u32>, restart: bool) -> Result<String, S
     let source = state.source().ok_or("aucune source")?;
     let manifest = Manifest::load(&source)?;
     let pkg = manifest.launcher.clone();
-    let new = home.join("OteriaLauncher.new.exe");
-    install::fetch(&manifest, &pkg, &new, &mut |_, _| {})?;
+    let new = home.join(paths::LAUNCHER_NEW_EXE);
+    // The launcher's update window may have downloaded it already: kept if it is the right one.
+    let ready = install::sha256_file(&new)
+        .is_ok_and(|h| h.eq_ignore_ascii_case(pkg.sha256.trim()));
+    if !ready {
+        install::fetch(&manifest, &pkg, &new, &mut |_, _| {})?;
+    }
     if let Some(pid) = pid {
         if !install::wait_for_exit(pid, Duration::from_secs(20)) {
             return Err(format!("le launcher (pid {pid}) ne s'est pas fermé"));
