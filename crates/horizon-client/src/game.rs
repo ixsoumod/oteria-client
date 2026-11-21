@@ -6013,6 +6013,7 @@ impl Game<'_> {
                     } else {
                         hud_layout::paint(batch, &g.gui.atlas, &draws);
                     }
+                    g.draw_crosshair_indicator(batch, wi, hi);
                     g.draw_elytra_indicator(batch, wi, hi);
                 });
             }

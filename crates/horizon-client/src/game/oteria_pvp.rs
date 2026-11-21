@@ -163,7 +163,24 @@ impl Game<'_> {
         if !h.enabled || self.title.is_some() || self.debug_entry("entity_hitboxes") {
             return;
         }
-        let width = horizon_client::gizmos::STROKE_WIDTH * f32::from(h.width) / 10.0;
+        let stroke = horizon_client::gizmos::STROKE_WIDTH;
+        let (near_width, far_width) = (
+            stroke * f32::from(h.width) / 10.0,
+            stroke * f32::from(h.far_width) / 10.0,
+        );
+        // Combat Hitbox: the lines thin out (or thicken) past a distance from the eyes.
+        let eye = self.eye_position();
+        let far = f64::from(h.far_distance);
+        let width_at = |at: [f64; 3]| match eye {
+            Some(e)
+                if (at[0] - e[0]).powi(2) + (at[1] - e[1]).powi(2) + (at[2] - e[2]).powi(2)
+                    > far * far =>
+            {
+                far_width
+            }
+            _ => near_width,
+        };
+        let target = self.crosshair_target_mob();
         let a = f64::from(alpha);
         let lerp = |p: horizon_core::geometry::Vec3, n: horizon_core::geometry::Vec3| -> [f64; 3] {
             [p.x + a * (n.x - p.x), p.y + a * (n.y - p.y), p.z + a * (n.z - p.z)]
@@ -181,12 +198,17 @@ impl Game<'_> {
             let half = f64::from(w) / 2.0;
             let min = [at[0] - half, at[1], at[2] - half];
             let max = [at[0] + half, at[1] + f64::from(ht), at[2] + half];
+            let width = width_at(at);
+            // The outline first, thicker, so the box's own lines sit on it.
+            if let Some(outline) = h.outline {
+                g.cuboid(min, max, outline.argb(), width * f32::from(h.outline_size) / 10.0);
+            }
             g.cuboid(min, max, colour.argb(), width);
             if let Some(eye) = eye {
                 let y = at[1] + f64::from(eye);
                 if h.eyes {
                     let d = 0.01;
-                    g.cuboid([min[0], y - d, min[2]], [max[0], y + d, max[2]], 0xFFFF_0000, width);
+                    g.cuboid([min[0], y - d, min[2]], [max[0], y + d, max[2]], h.eye_colour.argb(), width);
                 }
                 if h.look
                     && let Some((pitch, yaw)) = view
@@ -199,21 +221,30 @@ impl Game<'_> {
                     ];
                     let start = [at[0], y, at[2]];
                     let end = [start[0] + v[0] * 2.0, start[1] + v[1] * 2.0, start[2] + v[2] * 2.0];
-                    g.line(start, end, 0xFF00_00FF, width);
+                    g.line(start, end, h.look_colour.argb(), width);
                 }
             }
         };
-        for m in self.mobs.iter() {
+        for (i, m) in self.mobs.iter().enumerate() {
             if m.removed || m.invisible || m.has_effect("minecraft:invisibility") {
                 continue;
             }
-            let colour = if &*m.kind.id == "minecraft:player" {
+            let kind = if &*m.kind.id == "minecraft:player" {
                 h.players
             } else if m.hostile() {
                 h.hostile
             } else {
                 h.passive
             };
+            // Combat Hitbox: the targeted entity's colour, then the hurt one's, over the kind's
+            // (a kind that is off stays off).
+            let colour = kind.and(if target == Some(i) && h.target.is_some() {
+                h.target
+            } else if m.hurt_time > 0 && h.hurt.is_some() {
+                h.hurt
+            } else {
+                kind
+            });
             let view = (
                 lerpf(m.previous_head_pitch, m.head_pitch),
                 lerpf(m.previous_head_yaw, m.head_yaw),
@@ -251,7 +282,7 @@ impl Game<'_> {
         for t in &self.tridents {
             draw(g, h.projectiles, lerp(t.previous, t.position), (0.5, 0.5), None, None);
         }
-        for r in &self.rockets {
+        for r in self.rockets.iter().filter(|_| h.fireworks) {
             draw(g, h.projectiles, lerp(r.previous, r.position), (0.25, 0.25), None, None);
         }
         for a in self.armor_stands.iter().filter(|a| !a.invisible && !a.marker) {

@@ -31,6 +31,18 @@ Each feature is built from what it visibly does, never from another client's or 
 - Colour on entities: another colour while the crosshair is on a living entity, the same target vanilla's
   attack indicator reads (`crosshairPickEntity`).
 - The attack indicator, the F3 axes and the spectator rules stay vanilla's; only the sprite is replaced.
+- Player indicator (`crosshairIndicator`, default off), after the Crosshair Indicator mod (CC0): while the
+  crosshair is on another player in reach, a second 15x15 drawing shows over the crosshair (vanilla's or the
+  custom one), in its colour on entities, else inverted. It starts as four small corners and is drawn pixel by
+  pixel on the mods menu's grid (its "Player indicator" tab); drawing it turns it on.
+
+## Hitboxes (`hitboxes`, default off)
+
+- Every entity's box in its kind's colour, the eye line and the look direction, as F3+B (`game/oteria_pvp.rs`).
+- After the Combat Hitboxes mod (Apache-2.0), rebuilt from what it shows: the targeted entity's box in its own
+  colour (yellow), a hurt entity's box in another (off by default), the eye and look lines' colours, an outline
+  behind each box (colour and size), another line width past a distance, fireworks' boxes on or off, and
+  Hide stuck arrows (the arrows and bee stingers stuck in players, which works without the hitboxes).
 - Cost: the pixels are worked out once per settings change (`CrosshairCache`); a frame adds a few quads.
 
 ## Block outline (`outline`, default off)

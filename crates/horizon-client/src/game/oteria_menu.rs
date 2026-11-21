@@ -490,7 +490,8 @@ impl Game<'_> {
         {
             return true;
         }
-        let drawn = self.settings.extras.pvp.crosshair.pixels;
+        let c = &self.settings.extras.pvp.crosshair;
+        let drawn = [c.pixels, c.indicator_pixels];
         let mut taken = matches!(event, WindowEvent::MouseInput { .. });
         let action = MENU.with(|m| {
             let mut m = m.borrow_mut();
@@ -796,15 +797,24 @@ impl Game<'_> {
                     colour: c.colour,
                     hover: c.hover,
                     pixels: c.pixels,
+                    indicator: c.indicator,
+                    indicator_pixels: c.indicator_pixels,
                     ..preset
                 };
                 self.settings.save(&Self::options_path());
             }
-            Action::Pixels(pixels) => {
+            Action::Pixels(false, pixels) => {
                 let c = &mut self.settings.extras.pvp.crosshair;
                 c.pixels = pixels;
                 c.shape = horizon_client::pvp::Shape::Drawn;
                 c.custom = true;
+                self.settings.save(&Self::options_path());
+            }
+            // The player indicator: drawing it turns it on.
+            Action::Pixels(true, pixels) => {
+                let c = &mut self.settings.extras.pvp.crosshair;
+                c.indicator_pixels = pixels;
+                c.indicator = true;
                 self.settings.save(&Self::options_path());
             }
             Action::Profile(op) => self.profile_op(op),

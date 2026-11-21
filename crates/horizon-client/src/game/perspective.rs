@@ -1245,6 +1245,10 @@ impl Game<'_> {
         light: u32,
         out: &mut Vec<horizon_client::mesher::Vertex>,
     ) {
+        // Combat Hitbox's Hide Stuck Arrows.
+        if self.settings.extras.pvp.hitboxes.hide_stuck {
+            return;
+        }
         let sprites = &self.gui.atlas.sprites;
         let layers = [
             (

@@ -318,6 +318,10 @@ pub struct Crosshair {
     /// The drawn shape's pixels: a 15x15 grid as vanilla's sprite, bit `x` of row `y`, the
     /// middle pixel at (7, 7).
     pub pixels: [u16; DRAWN],
+    /// Crosshair Indicator (CC0): while the crosshair is on a player in reach, these pixels are
+    /// drawn over it too, on the same grid as `pixels` (vanilla's crosshair or the custom one).
+    pub indicator: bool,
+    pub indicator_pixels: [u16; DRAWN],
 }
 /// The drawn crosshair's grid side, in GUI pixels.
 pub const DRAWN: usize = 15;
@@ -337,8 +341,32 @@ impl Default for Crosshair {
             dot: false,
             hover: None,
             pixels: plus_pixels(),
+            indicator: false,
+            indicator_pixels: indicator_pixels(),
         }
     }
+}
+/// Crosshair Indicator's sprite: four small corners around the middle, the box a player's
+/// hitbox makes in the sights.
+pub fn indicator_pixels() -> [u16; DRAWN] {
+    let mut p = [0u16; DRAWN];
+    let corner = 1 << 4 | 1 << 10;
+    let pair = 1 << 4 | 1 << 5 | 1 << 9 | 1 << 10;
+    (p[4], p[5], p[9], p[10]) = (pair, corner, corner, pair);
+    p
+}
+/// The mask of a 15x15 grid of pixels, centred as the crosshair's.
+pub fn pixels_mask(pixels: &[u16; DRAWN]) -> Mask {
+    let mut m = Mask([0; 64]);
+    let mid = (DRAWN / 2) as i32;
+    for (y, row) in pixels.iter().enumerate() {
+        for x in 0..DRAWN {
+            if row >> x & 1 == 1 {
+                m.set(x as i32 - mid, y as i32 - mid);
+            }
+        }
+    }
+    m
 }
 /// A plus to start drawing from: vanilla's crosshair.
 pub fn plus_pixels() -> [u16; DRAWN] {
@@ -979,6 +1007,23 @@ pub struct Hitboxes {
     pub width: u8,
     /// Your own box, in third person.
     pub own: bool,
+    /// Combat Hitbox (Apache-2.0): the box of the entity under the crosshair, in this colour.
+    pub target: Option<Colour>,
+    /// The box of an entity that was just hit (its hurt time), in this colour.
+    pub hurt: Option<Colour>,
+    pub eye_colour: Colour,
+    pub look_colour: Colour,
+    /// A thicker line behind each box, in this colour.
+    pub outline: Option<Colour>,
+    /// The outline's width, in tenths of the box's (`HITBOX_OUTLINE_SIZES`).
+    pub outline_size: u8,
+    /// The lines' width past `far_distance` blocks, as `width`.
+    pub far_width: u8,
+    pub far_distance: u8,
+    /// Fireworks' boxes.
+    pub fireworks: bool,
+    /// Hides the arrows and bee stingers stuck in players.
+    pub hide_stuck: bool,
 }
 impl Default for Hitboxes {
     fn default() -> Self {
@@ -995,10 +1040,22 @@ impl Default for Hitboxes {
             look: true,
             width: 10,
             own: false,
+            target: Some(Colour::Yellow),
+            hurt: None,
+            eye_colour: Colour::Red,
+            look_colour: Colour::Blue,
+            outline: None,
+            outline_size: 20,
+            far_width: 10,
+            far_distance: 32,
+            fireworks: true,
+            hide_stuck: false,
         }
     }
 }
 pub const HITBOX_WIDTHS: (u8, u8) = (4, 30);
+pub const HITBOX_OUTLINE_SIZES: (u8, u8) = (12, 40);
+pub const HITBOX_FAR: (u8, u8) = (4, 64);
 
 /// Super Secret Settings (the 1.8 button, after fooxy's mod, MIT): a fun effect over the whole
 /// screen, picked at random by the button of Options or its key (`key.oteria.secret`), or chosen
@@ -1471,6 +1528,16 @@ impl Pvp {
                     c.pixels.copy_from_slice(&rows);
                 }
             }
+            "crosshairIndicator" => c.indicator = flag(value, c.indicator),
+            "crosshairIndicatorPixels" => {
+                let rows: Vec<u16> = value
+                    .split(',')
+                    .filter_map(|v| u16::from_str_radix(v, 16).ok())
+                    .collect();
+                if rows.len() == DRAWN {
+                    c.indicator_pixels.copy_from_slice(&rows);
+                }
+            }
             "crosshairHover" => {
                 c.hover = match value {
                     "off" => None,
@@ -1546,6 +1613,23 @@ impl Pvp {
             "hitboxesLook" => self.hitboxes.look = flag(value, self.hitboxes.look),
             "hitboxesOwn" => self.hitboxes.own = flag(value, self.hitboxes.own),
             "hitboxesWidth" => self.hitboxes.width = num(value, HITBOX_WIDTHS, self.hitboxes.width),
+            "hitboxesFarWidth" => {
+                self.hitboxes.far_width = num(value, HITBOX_WIDTHS, self.hitboxes.far_width)
+            }
+            "hitboxesFarDistance" => {
+                self.hitboxes.far_distance = num(value, HITBOX_FAR, self.hitboxes.far_distance)
+            }
+            "hitboxesOutlineSize" => {
+                self.hitboxes.outline_size = num(value, HITBOX_OUTLINE_SIZES, self.hitboxes.outline_size)
+            }
+            "hitboxesFireworks" => self.hitboxes.fireworks = flag(value, self.hitboxes.fireworks),
+            "hitboxesHideStuck" => self.hitboxes.hide_stuck = flag(value, self.hitboxes.hide_stuck),
+            "hitboxesEyeColour" => {
+                self.hitboxes.eye_colour = Colour::parse(value).unwrap_or(self.hitboxes.eye_colour)
+            }
+            "hitboxesLookColour" => {
+                self.hitboxes.look_colour = Colour::parse(value).unwrap_or(self.hitboxes.look_colour)
+            }
             k if k.starts_with("hitboxes") => {
                 let off_or = |v: Option<Colour>| match value {
                     "off" => None,
@@ -1560,6 +1644,9 @@ impl Pvp {
                     "hitboxesProjectiles" => h.projectiles = off_or(h.projectiles),
                     "hitboxesCrystals" => h.crystals = off_or(h.crystals),
                     "hitboxesOthers" => h.others = off_or(h.others),
+                    "hitboxesTarget" => h.target = off_or(h.target),
+                    "hitboxesHurt" => h.hurt = off_or(h.hurt),
+                    "hitboxesOutline" => h.outline = off_or(h.outline),
                     _ => return false,
                 }
             }
@@ -1771,6 +1858,9 @@ impl Pvp {
         );
         let pixels: Vec<String> = c.pixels.iter().map(|row| format!("{row:x}")).collect();
         let _ = writeln!(out, "crosshairPixels:{}", pixels.join(","));
+        let indicator: Vec<String> = c.indicator_pixels.iter().map(|row| format!("{row:x}")).collect();
+        let _ = writeln!(out, "crosshairIndicator:{}", c.indicator);
+        let _ = writeln!(out, "crosshairIndicatorPixels:{}", indicator.join(","));
         let (o, h) = (&self.outline, &self.hit);
         let _ = write!(
             out,
@@ -1884,7 +1974,7 @@ impl Pvp {
             s.enabled, s.held, s.exhaustion, s.tooltip,
         );
         let off = |c: Option<Colour>| c.map_or_else(|| "off".into(), Colour::save);
-        let lines: [(&str, String); 24] = [
+        let lines: [(&str, String); 34] = [
             ("hudCooldowns", u.cooldowns.to_string()),
             ("hudCooldownsCorner", u.cooldowns_corner.name().into()),
             ("hudTotems", u.totems.to_string()),
@@ -1909,6 +1999,16 @@ impl Pvp {
             ("hitboxesProjectiles", off(self.hitboxes.projectiles)),
             ("hitboxesCrystals", off(self.hitboxes.crystals)),
             ("hitboxesOthers", off(self.hitboxes.others)),
+            ("hitboxesTarget", off(self.hitboxes.target)),
+            ("hitboxesHurt", off(self.hitboxes.hurt)),
+            ("hitboxesOutline", off(self.hitboxes.outline)),
+            ("hitboxesOutlineSize", self.hitboxes.outline_size.to_string()),
+            ("hitboxesFarWidth", self.hitboxes.far_width.to_string()),
+            ("hitboxesFarDistance", self.hitboxes.far_distance.to_string()),
+            ("hitboxesFireworks", self.hitboxes.fireworks.to_string()),
+            ("hitboxesHideStuck", self.hitboxes.hide_stuck.to_string()),
+            ("hitboxesEyeColour", self.hitboxes.eye_colour.save()),
+            ("hitboxesLookColour", self.hitboxes.look_colour.save()),
         ];
         for (key, value) in lines {
             let _ = writeln!(out, "{key}:{value}");
@@ -2079,6 +2179,8 @@ opts! {
     CrosshairDot, "crosshair_dot", "Centre dot", "A dot in the middle of the crosshair.";
     CrosshairHover, "crosshair_hover", "Colour on entities",
         "Another colour while the crosshair is over a mob or a player you could hit, as vanilla's attack indicator knows it.";
+    CrosshairIndicator, "crosshair_indicator", "Player indicator",
+        "While the crosshair is on a player you can hit, a second drawing shows over it (Crosshair Indicator). Draw it pixel by pixel below the crosshair's grid.";
     Outline, "outline", "Custom block outline", "Changes the outline around the block you look at.";
     OutlineColour, "outline_colour", "Colour", "The outline's colour. Black at 40% is vanilla's.";
     OutlineOpacity, "outline_opacity", "Opacity", "How solid the outline is.";
@@ -2281,6 +2383,16 @@ opts! {
     HitboxLook, "hitbox_look", "Look direction", "An arrow from the eyes, where the entity looks.";
     HitboxWidth, "hitbox_width", "Line width", "How thick the lines are.";
     HitboxOwn, "hitbox_own", "Your own", "Your own box too, in third person.";
+    HitboxTarget, "hitbox_target", "Targeted entity", "The box of the entity under your crosshair, in this colour (Combat Hitbox).";
+    HitboxHurt, "hitbox_hurt", "When hit", "The box of an entity that was just hit, in this colour, to time your next hit.";
+    HitboxEyeColour, "hitbox_eye_colour", "Eye line colour", "The colour of the line at the eyes.";
+    HitboxLookColour, "hitbox_look_colour", "Look direction colour", "The colour of the line where the entity looks.";
+    HitboxOutline, "hitbox_outline", "Outline", "A thicker line behind each box, in this colour, so it shows on any background.";
+    HitboxOutlineSize, "hitbox_outline_size", "Outline size", "How much wider than the box's lines the outline is.";
+    HitboxFarWidth, "hitbox_far_width", "Width far away", "The lines' width for the entities farther than the distance below.";
+    HitboxFarDistance, "hitbox_far_distance", "Far away from", "From how many blocks away the far width is used.";
+    HitboxFireworks, "hitbox_fireworks", "Fireworks", "Fireworks' boxes too.";
+    HitboxStuck, "hitbox_stuck", "Hide stuck arrows", "Hides the arrows and bee stingers stuck in players.";
     Pops, "pops", "Pop Counter",
         "A chat line each time a player near you uses a totem, with how many they popped, and when they die after popping.";
     Secret, "secret", "Super Secret Settings",
@@ -2327,7 +2439,11 @@ impl Opt {
             | Opt::HitboxItems
             | Opt::HitboxProjectiles
             | Opt::HitboxCrystals
-            | Opt::HitboxOthers => (true, false),
+            | Opt::HitboxOthers
+            | Opt::HitboxTarget
+            | Opt::HitboxHurt
+            | Opt::HitboxOutline => (true, false),
+            Opt::HitboxEyeColour | Opt::HitboxLookColour => (false, false),
             _ => return None,
         };
         Some(ColourChoice { off, inverted })
@@ -2355,6 +2471,11 @@ impl Opt {
             Opt::HitboxProjectiles => p.hitboxes.projectiles,
             Opt::HitboxCrystals => p.hitboxes.crystals,
             Opt::HitboxOthers => p.hitboxes.others,
+            Opt::HitboxTarget => p.hitboxes.target,
+            Opt::HitboxHurt => p.hitboxes.hurt,
+            Opt::HitboxOutline => p.hitboxes.outline,
+            Opt::HitboxEyeColour => Some(p.hitboxes.eye_colour),
+            Opt::HitboxLookColour => Some(p.hitboxes.look_colour),
             _ => return None,
         })
     }
@@ -2387,6 +2508,11 @@ impl Opt {
             (Opt::HitboxProjectiles, c) => p.hitboxes.projectiles = c,
             (Opt::HitboxCrystals, c) => p.hitboxes.crystals = c,
             (Opt::HitboxOthers, c) => p.hitboxes.others = c,
+            (Opt::HitboxTarget, c) => p.hitboxes.target = c,
+            (Opt::HitboxHurt, c) => p.hitboxes.hurt = c,
+            (Opt::HitboxOutline, c) => p.hitboxes.outline = c,
+            (Opt::HitboxEyeColour, Some(c)) => p.hitboxes.eye_colour = c,
+            (Opt::HitboxLookColour, Some(c)) => p.hitboxes.look_colour = c,
             _ => {}
         }
     }
@@ -2410,7 +2536,9 @@ impl Opt {
             Opt::EnvGroundRadius => (ENV_RADII, ""),
             Opt::EnvParticlesAmount | Opt::EnvFogDensity => (ENV_AMOUNTS, "%"),
             Opt::BarrelSensitivity => (BARREL_SENSITIVITIES, "%"),
-            Opt::HitboxWidth => (HITBOX_WIDTHS, ""),
+            Opt::HitboxWidth | Opt::HitboxFarWidth => (HITBOX_WIDTHS, ""),
+            Opt::HitboxOutlineSize => (HITBOX_OUTLINE_SIZES, "x"),
+            Opt::HitboxFarDistance => (HITBOX_FAR, ""),
             _ => return None,
         })
     }
@@ -2437,6 +2565,9 @@ impl Opt {
             Opt::EnvParticlesAmount => p.environment.particles_amount,
             Opt::EnvFogDensity => p.environment.fog_density,
             Opt::HitboxWidth => p.hitboxes.width,
+            Opt::HitboxFarWidth => p.hitboxes.far_width,
+            Opt::HitboxOutlineSize => p.hitboxes.outline_size,
+            Opt::HitboxFarDistance => p.hitboxes.far_distance,
             _ => return None,
         })
     }
@@ -2489,6 +2620,9 @@ impl Opt {
             Opt::EnvParticlesAmount => &mut p.environment.particles_amount,
             Opt::EnvFogDensity => &mut p.environment.fog_density,
             Opt::HitboxWidth => &mut p.hitboxes.width,
+            Opt::HitboxFarWidth => &mut p.hitboxes.far_width,
+            Opt::HitboxOutlineSize => &mut p.hitboxes.outline_size,
+            Opt::HitboxFarDistance => &mut p.hitboxes.far_distance,
             _ => return,
         };
         *field = v;
@@ -2510,6 +2644,7 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
             CrosshairOutline,
             CrosshairDot,
             CrosshairHover,
+            CrosshairIndicator,
         ]
         .map(Ok),
     );
@@ -2659,6 +2794,16 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
             HitboxLook,
             HitboxWidth,
             HitboxOwn,
+            HitboxTarget,
+            HitboxHurt,
+            HitboxEyeColour,
+            HitboxLookColour,
+            HitboxOutline,
+            HitboxOutlineSize,
+            HitboxFarWidth,
+            HitboxFarDistance,
+            HitboxFireworks,
+            HitboxStuck,
         ]
         .map(Ok),
     );
@@ -2732,9 +2877,13 @@ impl Opt {
             CrystalKeep => Some(Crystal),
             AnchorCharge => Some(Anchor),
             HitboxPlayers | HitboxHostile | HitboxPassive | HitboxItems | HitboxProjectiles
-            | HitboxCrystals | HitboxOthers | HitboxEyes | HitboxLook | HitboxWidth | HitboxOwn => {
+            | HitboxCrystals | HitboxOthers | HitboxEyes | HitboxLook | HitboxWidth | HitboxOwn
+            | HitboxTarget | HitboxHurt | HitboxEyeColour | HitboxLookColour | HitboxOutline
+            | HitboxOutlineSize | HitboxFarWidth | HitboxFarDistance | HitboxFireworks => {
                 Some(Hitboxes)
             }
+            // It works without the hitboxes, as its own mod.
+            HitboxStuck => None,
             _ => Some(Crosshair),
         }
     }
@@ -2818,6 +2967,9 @@ impl Opt {
             Opt::HitboxEyes => p.hitboxes.eyes,
             Opt::HitboxLook => p.hitboxes.look,
             Opt::HitboxOwn => p.hitboxes.own,
+            Opt::HitboxFireworks => p.hitboxes.fireworks,
+            Opt::HitboxStuck => p.hitboxes.hide_stuck,
+            Opt::CrosshairIndicator => c.indicator,
             _ => return None,
         })
     }
@@ -2941,6 +3093,9 @@ impl Opt {
             Opt::HudTotemsCorner => corner_label(p.hud.totems_corner),
             Opt::HudPotsCorner => corner_label(p.hud.pots_corner),
             Opt::HitboxWidth => format!("{:.1}", f32::from(p.hitboxes.width) / 10.0),
+            Opt::HitboxFarWidth => format!("{:.1}", f32::from(p.hitboxes.far_width) / 10.0),
+            Opt::HitboxOutlineSize => format!("{:.1}x", f32::from(p.hitboxes.outline_size) / 10.0),
+            Opt::HitboxFarDistance => format!("{}", p.hitboxes.far_distance),
             Opt::Secret => secret_label(p.secret.effect),
             o @ (Opt::HitboxPlayers
             | Opt::HitboxHostile
@@ -2948,7 +3103,12 @@ impl Opt {
             | Opt::HitboxItems
             | Opt::HitboxProjectiles
             | Opt::HitboxCrystals
-            | Opt::HitboxOthers) => match o.colour(p).flatten() {
+            | Opt::HitboxOthers
+            | Opt::HitboxTarget
+            | Opt::HitboxHurt
+            | Opt::HitboxOutline
+            | Opt::HitboxEyeColour
+            | Opt::HitboxLookColour) => match o.colour(p).flatten() {
                 Some(colour) => colour.label(),
                 None => crate::lang::get_or("Off", "Off"),
             },
@@ -2979,6 +3139,7 @@ impl Opt {
             Opt::CrosshairColour => c.colour = c.colour.step(back),
             Opt::CrosshairOutline => c.outline = !c.outline,
             Opt::CrosshairDot => c.dot = !c.dot,
+            Opt::CrosshairIndicator => c.indicator = !c.indicator,
             Opt::CrosshairHover => {
                 // Off, then every colour.
                 let all: Vec<Option<Colour>> = std::iter::once(None)
@@ -3179,13 +3340,29 @@ impl Opt {
             Opt::HitboxLook => p.hitboxes.look = !p.hitboxes.look,
             Opt::HitboxOwn => p.hitboxes.own = !p.hitboxes.own,
             Opt::HitboxWidth => p.hitboxes.width = step_by(p.hitboxes.width, HITBOX_WIDTHS, 2, back),
+            Opt::HitboxFarWidth => {
+                p.hitboxes.far_width = step_by(p.hitboxes.far_width, HITBOX_WIDTHS, 2, back)
+            }
+            Opt::HitboxOutlineSize => {
+                p.hitboxes.outline_size = step_by(p.hitboxes.outline_size, HITBOX_OUTLINE_SIZES, 2, back)
+            }
+            Opt::HitboxFarDistance => {
+                p.hitboxes.far_distance = step_by(p.hitboxes.far_distance, HITBOX_FAR, 4, back)
+            }
+            Opt::HitboxFireworks => p.hitboxes.fireworks = !p.hitboxes.fireworks,
+            Opt::HitboxStuck => p.hitboxes.hide_stuck = !p.hitboxes.hide_stuck,
+            Opt::HitboxEyeColour => p.hitboxes.eye_colour = p.hitboxes.eye_colour.step_solid(back),
+            Opt::HitboxLookColour => p.hitboxes.look_colour = p.hitboxes.look_colour.step_solid(back),
             o @ (Opt::HitboxPlayers
             | Opt::HitboxHostile
             | Opt::HitboxPassive
             | Opt::HitboxItems
             | Opt::HitboxProjectiles
             | Opt::HitboxCrystals
-            | Opt::HitboxOthers) => {
+            | Opt::HitboxOthers
+            | Opt::HitboxTarget
+            | Opt::HitboxHurt
+            | Opt::HitboxOutline) => {
                 let next = solid_or_off(o.colour(p).flatten());
                 o.set_colour(p, next);
             }

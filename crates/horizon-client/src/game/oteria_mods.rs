@@ -159,6 +159,16 @@ pub(super) static TILES: [Tile; 46] = [
         Item::Pvp(Opt::HitboxLook),
         Item::Pvp(Opt::HitboxWidth),
         Item::Pvp(Opt::HitboxOwn),
+        Item::Pvp(Opt::HitboxTarget),
+        Item::Pvp(Opt::HitboxHurt),
+        Item::Pvp(Opt::HitboxEyeColour),
+        Item::Pvp(Opt::HitboxLookColour),
+        Item::Pvp(Opt::HitboxOutline),
+        Item::Pvp(Opt::HitboxOutlineSize),
+        Item::Pvp(Opt::HitboxFarWidth),
+        Item::Pvp(Opt::HitboxFarDistance),
+        Item::Pvp(Opt::HitboxFireworks),
+        Item::Pvp(Opt::HitboxStuck),
     ], e => e.pvp.hitboxes.enabled),
     Tile {
         key: "oteria.mod.secret",
@@ -179,6 +189,7 @@ pub(super) static TILES: [Tile; 46] = [
         Item::Pvp(Opt::CrosshairOutline),
         Item::Pvp(Opt::CrosshairDot),
         Item::Pvp(Opt::CrosshairHover),
+        Item::Pvp(Opt::CrosshairIndicator),
     ], e => e.pvp.crosshair.custom),
     tile!("oteria.mod.hit", "Hit Color", icon::DROPLET, Pvp,
         &[Item::Pvp(Opt::HitColour), Item::Pvp(Opt::HitOpacity)], e => e.pvp.hit.custom),
@@ -301,8 +312,8 @@ pub(super) enum Action {
     Cycle(Item, bool),
     /// One of `pvp::crosshair_presets`.
     Preset(usize),
-    /// The drawn crosshair's pixels, once the stroke is done.
-    Pixels([u16; DRAWN]),
+    /// The drawn crosshair's pixels (the player indicator's, when true), once the stroke is done.
+    Pixels(bool, [u16; DRAWN]),
     /// A colour option set (`None`: off); saved when the last field is true (a drag puts each
     /// step on, and saves when let go).
     SetColour(Opt, Option<Colour>, bool),
@@ -360,6 +371,8 @@ pub(super) struct Mods {
     rows: Vec<f32>,
     /// The drawn crosshair while a stroke is on: its pixels, and what the stroke paints.
     pixels: Option<[u16; DRAWN]>,
+    /// The grid draws the player indicator (Crosshair Indicator), not the crosshair.
+    indicator: bool,
     paint: Option<bool>,
     /// The stroke's last cell: the next one is joined to it by a line, however fast it moves.
     last: Option<(usize, usize)>,
@@ -459,6 +472,8 @@ enum Hit {
     Preset(usize),
     Grid,
     ClearGrid,
+    /// Which drawing the grid edits: the crosshair (false) or the player indicator (true).
+    GridTarget(bool),
     NewProfile,
     UseProfile(usize),
     RenameProfile(usize),
@@ -502,6 +517,7 @@ impl Default for Mods {
             detail: 0.0,
             rows: Vec::new(),
             pixels: None,
+            indicator: false,
             paint: None,
             last: None,
             grid: ([0.0; 4], 1.0),
@@ -554,7 +570,7 @@ impl Mods {
     #[cfg(test)]
     fn click_test_picker(&mut self, opt: Opt) {
         self.hits = vec![([0.0, 0.0, 10.0, 10.0], Hit::ColourRow(opt))];
-        self.click((1.0, 1.0), [0; DRAWN]);
+        self.click((1.0, 1.0), [[0; DRAWN]; 2]);
     }
 
     /// The tiles the filter and the search leave, by index.
@@ -589,7 +605,9 @@ impl Mods {
     }
 
     /// A press at `cursor` (GUI pixels): what the game should do, if anything.
-    pub(super) fn click(&mut self, cursor: (f32, f32), crosshair: [u16; DRAWN]) -> Option<Action> {
+    /// `drawn`: the crosshair's pixels and the player indicator's.
+    pub(super) fn click(&mut self, cursor: (f32, f32), drawn: [[u16; DRAWN]; 2]) -> Option<Action> {
+        let crosshair = drawn[usize::from(self.indicator)];
         let found = self
             .hits
             .iter()
@@ -727,7 +745,11 @@ impl Mods {
             }
             Hit::Row(item, back) => Some(Action::Cycle(item, back)),
             Hit::Preset(k) => Some(Action::Preset(k)),
-            Hit::ClearGrid => Some(Action::Pixels([0; DRAWN])),
+            Hit::ClearGrid => Some(Action::Pixels(self.indicator, [0; DRAWN])),
+            Hit::GridTarget(indicator) => {
+                self.indicator = indicator;
+                None
+            }
             Hit::Grid => {
                 // A stroke: it paints what the first cell was not, as long as the button is down.
                 let mut pixels = crosshair;
@@ -763,7 +785,8 @@ impl Mods {
         self.stroke(cursor);
         self.paint = None;
         self.last = None;
-        self.pixels.take().map(Action::Pixels)
+        let indicator = self.indicator;
+        self.pixels.take().map(|p| Action::Pixels(indicator, p))
     }
 
     /// The stroke goes on to the cell under `cursor`, painting every cell on the way.
@@ -1971,7 +1994,43 @@ impl Mods {
                 &lang::get_or("oteria.crosshair.draw", "Draw your own"),
             );
             y += 22.0;
-            let pixels = self.pixels.unwrap_or(c.pixels);
+            // Which drawing: the crosshair, or the player indicator over it.
+            let mut tx = vx;
+            for (indicator, key, english) in [
+                (false, "oteria.crosshair.grid_crosshair", "Crosshair"),
+                (true, "oteria.crosshair.grid_indicator", "Player indicator"),
+            ] {
+                let label = lang::get_or(key, english);
+                let tw = ui.measure(Face::Medium, 11.0, &label) + 24.0;
+                let r = [tx, y, tw, 24.0];
+                let chosen = self.indicator == indicator;
+                let over = within(r) && inside(r, pointer);
+                ui.rounded(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    7.0,
+                    if chosen {
+                        argb(ACCENT, 0.85 * a)
+                    } else {
+                        argb(WHITE, if over { 0.14 } else { 0.07 } * a)
+                    },
+                );
+                ui.text(Face::Medium, 11.0, r[0] + 12.0, r[1] + 5.0, argb(WHITE, a), &label);
+                if within(r) {
+                    page.hit(clipped(r), Hit::GridTarget(indicator));
+                    horizon_client::widgets::record(
+                        if indicator { "oteria-grid-indicator" } else { "oteria-grid-crosshair" },
+                        clipped(r).map(gui),
+                        true,
+                    );
+                }
+                tx += tw + 8.0;
+            }
+            y += 34.0;
+            let own = if self.indicator { c.indicator_pixels } else { c.pixels };
+            let pixels = self.pixels.unwrap_or(own);
             let cell = 13.0;
             let side = cell * DRAWN as f32;
             let grid = [vx, y, side, side];
@@ -2013,20 +2072,28 @@ impl Mods {
             let real = lang::get_or("oteria.crosshair.preview", "Real size");
             ui.text(Face::Regular, 11.0, sx, sy, argb(WHITE, 0.6 * a), &real);
             ui.rounded(sx, sy + 20.0, 64.0, 64.0, 8.0, argb(0x6E8B5A, 0.9 * a));
-            let drawn = pvp::Crosshair {
-                shape: pvp::Shape::Drawn,
-                pixels,
-                dot: false,
-                ..*c
+            // The indicator shows over the crosshair as it is; the crosshair as drawn.
+            let (under, over_mask) = if self.indicator {
+                let crosshair = if c.custom {
+                    c.mask()
+                } else {
+                    pvp::pixels_mask(&pvp::plus_pixels())
+                };
+                (crosshair, Some(pvp::pixels_mask(&pixels)))
+            } else {
+                let drawn = pvp::Crosshair {
+                    shape: pvp::Shape::Drawn,
+                    pixels,
+                    dot: false,
+                    ..*c
+                };
+                (drawn.mask(), None)
             };
-            draw_mask(
-                ui,
-                &drawn.mask(),
-                sx + 32.0,
-                sy + 52.0,
-                ui_gui_scale(ui) / page.d,
-                argb(WHITE, a),
-            );
+            let scale = ui_gui_scale(ui) / page.d;
+            draw_mask(ui, &under, sx + 32.0, sy + 52.0, scale, argb(WHITE, a));
+            if let Some(m) = &over_mask {
+                draw_mask(ui, m, sx + 32.0, sy + 52.0, scale, argb(ACCENT, a));
+            }
             let clear = [sx, sy + 96.0, 120.0, 30.0];
             let over = within(clear) && inside(clear, pointer);
             ui.rounded(
@@ -2050,10 +2117,17 @@ impl Mods {
             if within(clear) {
                 page.hit(clipped(clear), Hit::ClearGrid);
             }
-            let hint = lang::get_or(
-                "oteria.crosshair.hint",
-                "Click or drag to paint. Drawing switches the shape to Drawn.",
-            );
+            let hint = if self.indicator {
+                lang::get_or(
+                    "oteria.crosshair.hint_indicator",
+                    "Shown over the crosshair while it is on a player you can hit.",
+                )
+            } else {
+                lang::get_or(
+                    "oteria.crosshair.hint",
+                    "Click or drag to paint. Drawing switches the shape to Drawn.",
+                )
+            };
             let hint = fit(ui, Face::Regular, 11.0, &hint, vw - side - 30.0);
             ui.text(
                 Face::Regular,
@@ -2919,10 +2993,10 @@ mod tests {
             hits: vec![([0.0, 0.0, 150.0, 150.0], Hit::Grid)],
             ..Mods::default()
         };
-        assert_eq!(m.click((5.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.click((5.0, 5.0), [[0; DRAWN]; 2]), None);
         assert_eq!(m.paint, Some(true));
         // Let go far along the row: the cells between are painted too.
-        let Some(Action::Pixels(p)) = m.release((95.0, 5.0)) else {
+        let Some(Action::Pixels(false, p)) = m.release((95.0, 5.0)) else {
             panic!("a stroke ends in pixels")
         };
         assert_eq!(p[0], (1 << 10) - 1);
@@ -2940,13 +3014,13 @@ mod tests {
             ],
             ..Mods::default()
         };
-        assert_eq!(m.click((5.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.click((5.0, 5.0), [[0; DRAWN]; 2]), None);
         assert!(m.wants_keys());
         assert!(m.type_key(Some("Bed"), false) && m.type_key(Some("wars!"), false));
         // A press in the field keeps typing; one elsewhere gives the name.
-        assert_eq!(m.click((45.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.click((45.0, 5.0), [[0; DRAWN]; 2]), None);
         let renamed = Action::Profile(ProfileOp::Rename(1, "Bedwars!".into()));
-        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), Some(renamed));
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), Some(renamed));
         assert!(!m.wants_keys());
         // Nothing typed: the name stays.
         m.renaming = Some((1, String::new()));
@@ -2955,15 +3029,15 @@ mod tests {
         m.renaming = Some((1, "x".into()));
         assert!(m.back() && m.renaming.is_none());
         // Delete asks once.
-        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), None);
         assert_eq!(
-            m.click((25.0, 5.0), [0; DRAWN]),
+            m.click((25.0, 5.0), [[0; DRAWN]; 2]),
             Some(Action::Profile(ProfileOp::Delete(1)))
         );
         // Pressed once, then elsewhere: it asks again.
-        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
-        assert_eq!(m.click((100.0, 100.0), [0; DRAWN]), None);
-        assert_eq!(m.click((25.0, 5.0), [0; DRAWN]), None);
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), None);
+        assert_eq!(m.click((100.0, 100.0), [[0; DRAWN]; 2]), None);
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), None);
     }
 
     #[test]

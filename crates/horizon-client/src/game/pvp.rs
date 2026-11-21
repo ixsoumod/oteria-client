@@ -161,6 +161,49 @@ impl Game<'_> {
             batch.invert_since(start);
         }
     }
+    /// Crosshair Indicator (CC0): while the crosshair is on a player in reach, the player's
+    /// indicator drawing over the crosshair (vanilla's or the custom one), in the crosshair's
+    /// colour (its colour on entities, if it has one; inverted otherwise, as the mod's sprite).
+    pub(super) fn draw_crosshair_indicator(&mut self, batch: &mut HudBatch, w: i32, h: i32) {
+        let c = self.settings.extras.pvp.crosshair;
+        if !c.indicator || !self.crosshair_on_player() {
+            return;
+        }
+        let colour = match (c.custom, c.hover) {
+            (_, Some(hover)) => hover,
+            (true, None) => c.colour,
+            (false, None) => Colour::Inverted,
+        };
+        let (cx, cy) = ((w - 15) / 2 + 7, (h - 15) / 2 + 7);
+        let atlas = &self.gui.atlas;
+        let mask = horizon_client::pvp::pixels_mask(&c.indicator_pixels);
+        if c.custom && c.outline {
+            for (x0, y, x1) in mask.rim().runs() {
+                batch.fill(atlas, (cx + x0) as f32, (cy + y) as f32, (x1 - x0) as f32, 1.0, rgba(0, 0, 0, 255));
+            }
+        }
+        let start = batch.vertices.len();
+        let [a, r, g, b] = colour.argb().to_be_bytes();
+        for (x0, y, x1) in mask.runs() {
+            batch.fill(atlas, (cx + x0) as f32, (cy + y) as f32, (x1 - x0) as f32, 1.0, rgba(r, g, b, a));
+        }
+        if colour == Colour::Inverted {
+            batch.invert_since(start);
+        }
+    }
+    /// Whether the crosshair is on another player the local one can hit
+    /// (`Minecraft.crosshairPickEntity` a player).
+    pub(super) fn crosshair_on_player(&self) -> bool {
+        self.crosshair_target_mob()
+            .is_some_and(|i| &*self.mobs.iter().nth(i).map_or("", |m| &*m.kind.id) == "minecraft:player")
+    }
+    /// The mob under the crosshair, in reach and in front of any block, by its index in `mobs`.
+    pub(super) fn crosshair_target_mob(&self) -> Option<usize> {
+        if self.crosshair_living() != Some(true) {
+            return None;
+        }
+        self.mob_hit().map(|(i, _, _)| i)
+    }
     /// The block outline's fill: each box of the targeted block's shape (`getShape`, the boxes
     /// the outline's edges come from) as translucent faces drawn after translucent terrain,
     /// pushed out a little so they don't fight the block's own faces. Only while the outline
