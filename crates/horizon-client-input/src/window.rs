@@ -684,11 +684,48 @@ pub fn with_icon(attributes: winit::window::WindowAttributes) -> winit::window::
     let icon =
         icon_png().map(|png| decode_icon(png).expect("the window icon must decode on Windows"));
 
+    // Windows 11's task bar ignores an icon built from pixels (`Icon::from_rgba`) and shows the
+    // generic window icon: it takes the one embedded in the executable (resource 1, see
+    // `packaging/windows/exe.rs`), loaded at the size each slot wants. The pixels stay the
+    // fallback for an executable without it.
+    #[cfg(target_os = "windows")]
+    let (icon, taskbar) = {
+        use winit::platform::windows::IconExtWindows;
+        // `None`: Windows' own size for the slot (`LR_DEFAULTSIZE`, 32 px at 100%); a larger
+        // one is ignored by the task bar too.
+        let embedded = |size: Option<u32>| {
+            let size = size.map(|px| winit::dpi::PhysicalSize::new(px, px));
+            winit::window::Icon::from_resource(1, size).ok()
+        };
+        (
+            embedded(Some(16)).or_else(|| icon.clone()),
+            embedded(None).or(icon),
+        )
+    };
+
     let attributes = attributes.with_window_icon(icon.clone());
     #[cfg(target_os = "windows")]
     let attributes =
-        winit::platform::windows::WindowAttributesExtWindows::with_taskbar_icon(attributes, icon);
+        winit::platform::windows::WindowAttributesExtWindows::with_taskbar_icon(attributes, taskbar);
     attributes
+}
+
+/// Gives `window` its icons again (Windows): the task bar keeps the generic window icon when they
+/// are only given at creation, and takes them once set on the shown window. The game calls it a
+/// moment after its window opens.
+pub fn refresh_icon(window: &winit::window::Window) {
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::{IconExtWindows, WindowExtWindows};
+        let embedded = |size: Option<u32>| {
+            let size = size.map(|px| winit::dpi::PhysicalSize::new(px, px));
+            winit::window::Icon::from_resource(1, size).ok().or_else(icon)
+        };
+        window.set_window_icon(embedded(Some(16)));
+        window.set_taskbar_icon(embedded(None));
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
 }
 
 /// The screen a window is on: its size in physical pixels, its refresh rate where the OS gives

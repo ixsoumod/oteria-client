@@ -242,6 +242,14 @@ impl Game<'_> {
             return;
         }
         if let Some(w) = &self.window {
+            // The task bar takes the window's icons only once it is shown (Windows 11).
+            if self
+                .icon_refresh
+                .is_some_and(|t| t.elapsed() > std::time::Duration::from_millis(1500))
+            {
+                horizon_client::window::refresh_icon(w);
+                self.icon_refresh = None;
+            }
             if self.options.offscreen {
                 // Offscreen frames don't wait for the window to be drawn: an
                 // occluded window (a locked macOS session) gets no redraws.
@@ -328,6 +336,7 @@ impl ApplicationHandler for Game<'_> {
             }
         }
         self.window = Some(window);
+        self.icon_refresh = Some(Instant::now());
         self.ime_allowed = false;
         self.ime_area = None;
         self.apply_settings();

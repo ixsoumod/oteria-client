@@ -2321,6 +2321,8 @@ struct Game<'a> {
     /// without the focus, and its pointer grab stays inside the game as `--offscreen`'s does,
     /// so the person's pointer is never taken, hidden or moved.
     unclaimed_window: bool,
+    /// When the window opened, until its icons are given again (`window::refresh_icon`).
+    icon_refresh: Option<Instant>,
     /// The window's last focus change during a scripted run, applied once the run ends.
     focus_after_run: Option<bool>,
     /// Whether the window currently accepts input method events.
@@ -11721,6 +11723,7 @@ impl<'a> Game<'a> {
             split_auth: None,
             focused: true,
             unclaimed_window: false,
+            icon_refresh: None,
             focus_after_run: None,
             ime_allowed: false,
             ime_area: None,
