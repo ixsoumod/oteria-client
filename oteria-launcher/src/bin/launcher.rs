@@ -265,6 +265,9 @@ struct Launcher {
     ms_cancel: Arc<AtomicBool>,
     /// The skin chosen in Cosmetics, overriding the account's for this client only.
     skin: Option<ui::Skin>,
+    /// When the game's settings (where it keeps that choice) were last read, and when checked.
+    skin_stamp: Option<std::time::SystemTime>,
+    skin_checked: Instant,
     /// The chosen Microsoft account's own skin, kept up to date as it signs in or renews.
     account_skin: Option<ui::Skin>,
     logo: TextureHandle,
@@ -321,6 +324,7 @@ impl Launcher {
             .as_ref()
             .map_or("Player".to_owned(), |a| a.name.clone());
         let skin = player::worn_skin(&game_dir).and_then(|p| ui::Skin::load(&p));
+        let skin_stamp = player::worn_skin_stamp(&game_dir);
         let logo = ui::svg_texture(ctx, "logo", ui::LOGO_SVG, 192, false)
             .or_else(|| ui::texture_from_png(ctx, "logo", ui::LOGO_PNG))
             .expect("logo");
@@ -363,6 +367,8 @@ impl Launcher {
             ms_rx: None,
             ms_cancel: Arc::new(AtomicBool::new(false)),
             skin,
+            skin_stamp,
+            skin_checked: Instant::now(),
             account_skin: None,
             menu_video: oteria_dist::video::VideoLoop::start(MENU_VIDEO, MENU_VIDEO_FPS),
             button_sheen: sheen_texture(ctx),
@@ -764,7 +770,23 @@ impl Launcher {
         }
     }
 
+    /// The skin worn in the game, read again when the game's settings change (a skin picked in
+    /// Cosmetics while the game ran): checked every two seconds, and when the game closes.
+    fn refresh_worn_skin(&mut self, now: bool) {
+        if !now && self.skin_checked.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        self.skin_checked = Instant::now();
+        let stamp = player::worn_skin_stamp(&self.game_dir);
+        if stamp == self.skin_stamp && !now {
+            return;
+        }
+        self.skin_stamp = stamp;
+        self.skin = player::worn_skin(&self.game_dir).and_then(|p| ui::Skin::load(&p));
+    }
+
     fn tick(&mut self, ctx: &egui::Context) {
+        self.refresh_worn_skin(false);
         if let Some(rx) = &self.check_rx {
             if let Ok(r) = rx.try_recv() {
                 self.check_rx = None;
@@ -815,6 +837,7 @@ impl Launcher {
                 if let Ok(Some(status)) = child.try_wait() {
                     self.log(&format!("jeu fermé : {status}"));
                     self.child = None;
+                    self.refresh_worn_skin(true);
                     self.phase = Phase::Ready;
                     if self.hidden {
                         // Back on screen (the watcher already showed the window: egui is told).

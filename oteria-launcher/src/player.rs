@@ -43,25 +43,30 @@ pub fn load_or_create(game_dir: &Path) -> String {
     name
 }
 
-/// The skin the player wears in Oteria: the first of `oteria-skins/history.txt`, else the newest
-/// PNG of that folder. `None` before any skin was picked.
+/// The skin the player wears in Oteria, as the game reads it: the `playerSkin` line of
+/// `oteria-extras.txt` (the id of a PNG in `oteria-skins`, the Cosmetics page's choice). `None`
+/// when none is worn there: the account's own skin shows. (The history's first skin is only the
+/// last one added, not necessarily the one worn.)
 pub fn worn_skin(game_dir: &Path) -> Option<PathBuf> {
-    let dir = game_dir.join("oteria-skins");
-    if let Ok(text) = std::fs::read_to_string(dir.join("history.txt")) {
-        for line in text.lines() {
-            let id = line.split('\t').next().unwrap_or("");
-            let png = dir.join(format!("{id}.png"));
-            if !id.is_empty() && png.is_file() {
-                return Some(png);
-            }
-        }
+    let text = std::fs::read_to_string(game_dir.join(EXTRAS)).ok()?;
+    let id = text
+        .lines()
+        .rev()
+        .find_map(|l| l.strip_prefix("playerSkin:"))?
+        .trim();
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
     }
-    std::fs::read_dir(&dir)
-        .ok()?
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
-        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
-        .map(|e| e.path())
+    let png = game_dir.join("oteria-skins").join(format!("{id}.png"));
+    png.is_file().then_some(png)
+}
+
+/// The game's own settings, where it keeps the worn skin.
+pub const EXTRAS: &str = "oteria-extras.txt";
+
+/// What says the worn skin may have changed: the settings' last write.
+pub fn worn_skin_stamp(game_dir: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(game_dir.join(EXTRAS)).and_then(|m| m.modified()).ok()
 }
 
 #[cfg(test)]
@@ -77,6 +82,29 @@ mod tests {
         assert_eq!(load_or_create(&dir), first);
         std::fs::write(dir.join(FILE), "name:Ixsou_mod\n").unwrap();
         assert_eq!(load_or_create(&dir), "Ixsou_mod");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_worn_skin_is_the_games_choice_not_the_newest() {
+        let dir = std::env::temp_dir().join(format!("oteria-worn-{}", std::process::id()));
+        let skins = dir.join("oteria-skins");
+        std::fs::create_dir_all(&skins).unwrap();
+        for id in ["aa11", "bb22"] {
+            std::fs::write(skins.join(format!("{id}.png")), b"png").unwrap();
+        }
+        // The history's first skin is the newest, not the one worn.
+        std::fs::write(skins.join("history.txt"), "bb22	new	classic
+aa11	old	classic
+").unwrap();
+        assert_eq!(worn_skin(&dir), None);
+        std::fs::write(dir.join(EXTRAS), "skinKnife:true
+playerSkin:aa11
+").unwrap();
+        assert_eq!(worn_skin(&dir), Some(skins.join("aa11.png")));
+        std::fs::write(dir.join(EXTRAS), "playerSkin:
+").unwrap();
+        assert_eq!(worn_skin(&dir), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
