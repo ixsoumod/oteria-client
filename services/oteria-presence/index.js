@@ -64,6 +64,17 @@ function sweep() {
   for (const [id, until] of serverIds) if (now >= until) serverIds.delete(id);
 }
 
+/** The last requests' summaries, in trace.log beside this file (read over SFTP to debug). */
+const traced = [];
+function trace(line) {
+  traced.push(`${new Date().toISOString()} ${line}`);
+  if (traced.length > 300) traced.splice(0, traced.length - 300);
+}
+const NL = String.fromCharCode(10);
+setInterval(() => {
+  fs.writeFile(path.join(__dirname, 'trace.log'), traced.join(NL) + NL, () => {});
+}, 5000).unref();
+
 function send(res, status, body) {
   const text = JSON.stringify(body);
   res.writeHead(status, {
@@ -153,6 +164,7 @@ async function handle(req, res) {
     case 'POST /v1/presence': {
       const s = sessionOf(req);
       if (!s) return send(res, 401, { error: 'no session' });
+      trace(`presence ${s.uuid} listed=${body.listed === true}`);
       if (body.listed === true) listed.set(s.uuid, Date.now());
       else listed.delete(s.uuid);
       save();
@@ -162,6 +174,7 @@ async function handle(req, res) {
       const players = Array.isArray(body.players) ? body.players.slice(0, BATCH) : [];
       const now = Date.now();
       const oteria = players.filter((u) => isUuid(u) && now - (listed.get(u) || 0) < PRESENCE_WINDOW);
+      trace(`worn asked=${players.length} [${players.slice(0, 8).join(',')}] oteria=[${oteria.join(',')}]`);
       return send(res, 200, { ttl: WORN_TTL, players: {}, horizon: oteria });
     }
     case 'GET /v1/me': {
@@ -184,6 +197,10 @@ async function handle(req, res) {
 }
 
 load();
+// Tests only: these UUIDs count as listed from the start (offline players can't sign in).
+for (const uuid of (process.env.OTERIA_PRESENCE_LIST || '').split(',')) {
+  if (isUuid(uuid)) listed.set(uuid, Date.now());
+}
 setInterval(sweep, 60 * 1000).unref();
 setInterval(save, 10 * 60 * 1000).unref();
 http

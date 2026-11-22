@@ -912,32 +912,36 @@ impl Game<'_> {
         // name are not the player's: the row is theirs by UUID, or when its name or the name it
         // shows holds the player's name as a word ("[VIP] Name"), legacy colour codes ("§7")
         // taken out first.
+        // The other players in the world whom the service says play Oteria, by name: their rows
+        // carry the badge the same way, even when the list's entries are the server's own.
+        let oteria_names: Vec<String> = self
+            .mobs
+            .iter()
+            .filter(|m| &*m.kind.id == "minecraft:player")
+            .filter_map(|m| {
+                let uuid = self.remote_player_uuid(m.id)?;
+                horizon_hooks::engine::player_mark(uuid)?;
+                self.remote_player_name(m.id).map(str::to_owned)
+            })
+            .collect();
         let own_rows: std::collections::HashSet<u128> = match self.remote.as_ref() {
             Some(r) => {
-                let name = r.profile_name.as_str();
-                let holds = |text: &str| {
-                    let mut plain = String::with_capacity(text.len());
-                    let mut chars = text.chars();
-                    while let Some(c) = chars.next() {
-                        if c == '§' {
-                            chars.next();
-                        } else {
-                            plain.push(c);
-                        }
-                    }
-                    plain
-                        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                        .any(|word| word.eq_ignore_ascii_case(name))
-                };
+                let mut names = oteria_names;
+                names.push(r.profile_name.clone());
+                names.retain(|n| !n.is_empty());
                 players
                     .iter()
                     .filter(|p| {
                         p.uuid == r.profile()
-                            || (!name.is_empty()
-                                && (holds(&p.name)
+                            || names.iter().any(|name| {
+                                row_holds(&p.name, name)
                                     || p.display_name.as_ref().is_some_and(|d| {
-                                        holds(&horizon_client::scoreboard::comp_text(d).plain())
-                                    })))
+                                        row_holds(
+                                            &horizon_client::scoreboard::comp_text(d).plain(),
+                                            name,
+                                        )
+                                    })
+                            })
                     })
                     .map(|p| p.uuid)
                     .collect()
@@ -1285,3 +1289,20 @@ mod criterion_tests;
 mod empty_tag_tests;
 #[cfg(test)]
 mod guest_advancement_tests;
+
+/// Whether a player list row's text holds `name` as a word ("[VIP] Name"), legacy colour codes
+/// ("§7") taken out first.
+fn row_holds(text: &str, name: &str) -> bool {
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '§' {
+            chars.next();
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|word| word.eq_ignore_ascii_case(name))
+}
