@@ -188,11 +188,7 @@ pub(super) static TILES: [Tile; 51] = [
     ], e => e.pvp.clear_view.enabled),
     tile!("oteria.mod.hurtcam", "HurtCam", icon::EYE, Visual,
         &[Item::Pvp(Opt::HurtCamStrength)], e => e.pvp.hurtcam.enabled),
-    tile!("oteria.mod.fast_totem", "Fast Totem", icon::SHIELD, Pvp, &[
-        Item::Pvp(Opt::FastTotemAuto),
-        Item::Pvp(Opt::FastTotemDelay),
-        Item::Pvp(Opt::FastTotemShift),
-    ], e => e.pvp.fast_totem.enabled),
+    tile!("oteria.mod.fast_totem", "Fast Totem", icon::SHIELD, Pvp, &[], e => e.pvp.fast_totem.enabled),
     tile!("oteria.mod.crystal", "Crystal Optimizer", icon::SPARKLES, Pvp,
         &[Item::Pvp(Opt::CrystalKeep)], e => e.pvp.crystal.enabled),
     tile!("oteria.mod.anchor", "Anchor Optimizer", icon::BULB, Pvp,

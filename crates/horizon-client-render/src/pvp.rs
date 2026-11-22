@@ -1059,30 +1059,14 @@ impl ClearView {
     }
 }
 
-/// Oteria's Fast Totem (`game/oteria_totem.rs`): a totem of undying from the inventory into the
-/// off hand, by itself when the off hand is empty (after a pop), and with Shift + click on a
-/// totem in the inventory. Each is a SWAP with the off hand, as the F key over a slot sends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Oteria's Fast Totem (`game/oteria_totem.rs`): a shortcut, not a cheat. In an open inventory,
+/// Shift + click on a totem of undying puts it in the off hand when that is empty, where vanilla
+/// would move it to the hotbar. Nothing happens by itself: the player clicks, and the click is
+/// the SWAP with the off hand that the F key over a slot sends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FastTotem {
     pub enabled: bool,
-    /// An empty off hand takes a totem from the inventory by itself.
-    pub auto: bool,
-    /// How long the off hand stays empty before, ticks (`TOTEM_DELAYS`).
-    pub delay: u8,
-    /// Shift + click on a totem in the inventory puts it in the off hand.
-    pub shift_click: bool,
 }
-impl Default for FastTotem {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            auto: true,
-            delay: 2,
-            shift_click: true,
-        }
-    }
-}
-pub const TOTEM_DELAYS: (u8, u8) = (0, 20);
 
 /// Oteria's HurtCam (`game/fov.rs`): how much the camera shakes when the player is hurt, from 0
 /// (none) to 10. 4 is vanilla's tilt; above it the tilt grows and a shake is added. Off: vanilla's
@@ -2087,9 +2071,6 @@ impl Pvp {
             "clearViewBlindness" => self.clear_view.blindness = flag(value, self.clear_view.blindness),
             "clearViewNausea" => self.clear_view.nausea = flag(value, self.clear_view.nausea),
             "fastTotem" => self.fast_totem.enabled = flag(value, self.fast_totem.enabled),
-            "fastTotemAuto" => self.fast_totem.auto = flag(value, self.fast_totem.auto),
-            "fastTotemDelay" => self.fast_totem.delay = num(value, TOTEM_DELAYS, self.fast_totem.delay),
-            "fastTotemShiftClick" => self.fast_totem.shift_click = flag(value, self.fast_totem.shift_click),
             "hurtCam" => self.hurtcam.enabled = flag(value, self.hurtcam.enabled),
             "hurtCamStrength" => self.hurtcam.strength = num(value, HURTCAM_STRENGTHS, self.hurtcam.strength),
             "oteriaVideoDefaults" => self.video_defaults = flag(value, self.video_defaults),
@@ -2469,8 +2450,8 @@ impl Pvp {
         let ft = &self.fast_totem;
         let _ = write!(
             out,
-            "fastTotem:{}\nfastTotemAuto:{}\nfastTotemDelay:{}\nfastTotemShiftClick:{}\nhurtCam:{}\nhurtCamStrength:{}\n",
-            ft.enabled, ft.auto, ft.delay, ft.shift_click, self.hurtcam.enabled, self.hurtcam.strength,
+            "fastTotem:{}\nhurtCam:{}\nhurtCamStrength:{}\n",
+            ft.enabled, self.hurtcam.enabled, self.hurtcam.strength,
         );
         let e = &self.environment;
         let ep: Vec<String> = e.particles_pixels.iter().map(|row| format!("{row:x}")).collect();
@@ -2830,10 +2811,7 @@ opts! {
     ClearBlindness, "clear_blindness", "Blindness", "No Blindness fog.";
     ClearNausea, "clear_nausea", "Nausea", "No Nausea wobble nor its overlay.";
     FastTotem, "fast_totem", "Fast Totem",
-        "Totems of undying into your off hand: by themselves when it is empty, or with Shift + click on a totem in your inventory.";
-    FastTotemAuto, "fast_totem_auto", "Refill by itself", "An empty off hand (after a pop) takes a totem from your inventory.";
-    FastTotemDelay, "fast_totem_delay", "Delay", "How many ticks the off hand stays empty before the totem comes (20 ticks: one second).";
-    FastTotemShift, "fast_totem_shift", "Shift + click", "Shift + click on a totem in your inventory puts it in your off hand.";
+        "Shift + click on a totem in your inventory puts it in your empty off hand instead of the hotbar.";
     HurtCam, "hurtcam", "HurtCam",
         "How much the camera shakes when you are hit or hurt: 0 never, 4 as vanilla, 10 a lot.";
     HurtCamStrength, "hurtcam_strength", "Strength", "0: no shake at all; 4: vanilla; 10: the strongest.";
@@ -3022,7 +3000,6 @@ impl Opt {
             Opt::EnvGroundRadius => (ENV_RADII, ""),
             Opt::EnvParticlesAmount | Opt::EnvFogDensity => (ENV_AMOUNTS, "%"),
             Opt::EnvParticlesSize => (ENV_SIZES, "%"),
-            Opt::FastTotemDelay => (TOTEM_DELAYS, ""),
             Opt::HurtCamStrength => (HURTCAM_STRENGTHS, ""),
             Opt::BarrelSensitivity => (BARREL_SENSITIVITIES, "%"),
             Opt::HitboxWidth | Opt::HitboxFarWidth => (HITBOX_WIDTHS, ""),
@@ -3056,7 +3033,6 @@ impl Opt {
             Opt::EnvGroundRadius => p.environment.ground_radius,
             Opt::EnvParticlesAmount => p.environment.particles_amount,
             Opt::EnvParticlesSize => p.environment.particles_size,
-            Opt::FastTotemDelay => p.fast_totem.delay,
             Opt::HurtCamStrength => p.hurtcam.strength,
             Opt::EnvFogDensity => p.environment.fog_density,
             Opt::HitboxWidth => p.hitboxes.width,
@@ -3145,7 +3121,6 @@ impl Opt {
             Opt::EnvGroundRadius => &mut p.environment.ground_radius,
             Opt::EnvParticlesAmount => &mut p.environment.particles_amount,
             Opt::EnvParticlesSize => &mut p.environment.particles_size,
-            Opt::FastTotemDelay => &mut p.fast_totem.delay,
             Opt::HurtCamStrength => &mut p.hurtcam.strength,
             Opt::EnvFogDensity => &mut p.environment.fog_density,
             Opt::HitboxWidth => &mut p.hitboxes.width,
@@ -3299,7 +3274,7 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
     rows.push(Err("horizon.pvp.header.clear_view"));
     rows.extend([ClearView, ClearPumpkin, ClearDarkness, ClearBlindness, ClearNausea].map(Ok));
     rows.push(Err("horizon.pvp.header.fast_totem"));
-    rows.extend([FastTotem, FastTotemAuto, FastTotemDelay, FastTotemShift].map(Ok));
+    rows.push(Ok(FastTotem));
     rows.push(Err("horizon.pvp.header.hurtcam"));
     rows.extend([HurtCam, HurtCamStrength].map(Ok));
     rows.push(Err("horizon.pvp.header.barrel"));
@@ -3406,8 +3381,6 @@ impl Opt {
             ScoreboardOpacity => Some(ScoreboardBackground),
             ClearPumpkin | ClearDarkness | ClearBlindness | ClearNausea => Some(ClearView),
             FastTotem | HurtCam => None,
-            FastTotemAuto | FastTotemShift => Some(FastTotem),
-            FastTotemDelay => Some(FastTotemAuto),
             HurtCamStrength => Some(HurtCam),
             BarrelBanking | BarrelRighting | BarrelInvert | BarrelSwitch | BarrelSensitivity => Some(Barrel),
             BlurStrength => Some(Blur),
@@ -3544,8 +3517,6 @@ impl Opt {
             Opt::ClearBlindness => p.clear_view.blindness,
             Opt::ClearNausea => p.clear_view.nausea,
             Opt::FastTotem => p.fast_totem.enabled,
-            Opt::FastTotemAuto => p.fast_totem.auto,
-            Opt::FastTotemShift => p.fast_totem.shift_click,
             Opt::HurtCam => p.hurtcam.enabled,
             _ => return None,
         })
@@ -3639,7 +3610,6 @@ impl Opt {
             Opt::EnvParticlesAmount => format!("{}%", p.environment.particles_amount),
             Opt::EnvParticlesShape => p.environment.particles_shape.label(),
             Opt::EnvParticlesSize => format!("{}%", p.environment.particles_size),
-            Opt::FastTotemDelay => p.fast_totem.delay.to_string(),
             Opt::HurtCamStrength => p.hurtcam.strength.to_string(),
             Opt::EnvFogDensity => format!("{}%", p.environment.fog_density),
             Opt::BarrelSensitivity => format!("{}%", p.barrel.sensitivity),
@@ -3836,9 +3806,6 @@ impl Opt {
             Opt::ClearBlindness => p.clear_view.blindness = !p.clear_view.blindness,
             Opt::ClearNausea => p.clear_view.nausea = !p.clear_view.nausea,
             Opt::FastTotem => p.fast_totem.enabled = !p.fast_totem.enabled,
-            Opt::FastTotemAuto => p.fast_totem.auto = !p.fast_totem.auto,
-            Opt::FastTotemShift => p.fast_totem.shift_click = !p.fast_totem.shift_click,
-            Opt::FastTotemDelay => p.fast_totem.delay = step_by(p.fast_totem.delay, TOTEM_DELAYS, 1, back),
             Opt::HurtCam => p.hurtcam.enabled = !p.hurtcam.enabled,
             Opt::HurtCamStrength => {
                 p.hurtcam.strength = step_by(p.hurtcam.strength, HURTCAM_STRENGTHS, 1, back)
