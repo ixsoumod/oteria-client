@@ -3,7 +3,7 @@
 //! 8 damage plus Impaling, the reversed bounce off a hit, sticking, Loyalty's
 //! return to the owner, pickup) with `ThrownTridentRenderer`, and Channeling's
 //! lightning on a hit (`channeling.json`).
-use super::{Game, view_vector};
+use super::Game;
 use horizon_client::{
     arrows::{Pickup, back_off, clip_block_hit},
     collisions::SceneCollisions,
@@ -517,12 +517,12 @@ impl Game<'_> {
             }
             // trident_spin_attack_strength: 1.5 + 0.75 per level above the first.
             let strength = 1.5 + 0.75 * (riptide as f32 - 1.0);
-            let d = view_vector(self.yaw, self.pitch);
+            let d = riptide_push(self.yaw, self.pitch, strength);
             if let Some(p) = self.player.as_mut() {
                 p.velocity = Vec3::new(
-                    p.velocity.x + d[0] * f64::from(strength),
-                    p.velocity.y + d[1] * f64::from(strength),
-                    p.velocity.z + d[2] * f64::from(strength),
+                    p.velocity.x + d[0],
+                    p.velocity.y + d[1],
+                    p.velocity.z + d[2],
                 );
                 // Player.startAutoSpinAttack(20, 8, stack).
                 p.auto_spin_attack_ticks = 20;
@@ -545,6 +545,18 @@ impl Game<'_> {
                 let moved = scene.resolve(bounds, up, 0.0, true).unwrap_or(Vec3::ZERO);
                 if let Some(p) = self.player.as_mut() {
                     p.position.y += moved.y;
+                    // Entity.move's setOnGroundWithMovement: a move up is never on the ground, and
+                    // a straight lift touches no wall. The tick's travel then takes the air's
+                    // friction, as the server's simulation (an anticheat's) does: keeping the
+                    // ground's set Riptide launches from the ground back.
+                    p.ground.on_ground = false;
+                    p.ground.horizontal_collision = false;
+                    p.ground.on_ground_no_blocks = false;
+                    p.ground.supporting_block = None;
+                    p.collision.horizontal = false;
+                    p.collision.minor = false;
+                    p.collision.vertical = moved.y != up.y;
+                    p.collision.below = false;
                 }
             }
             if !server_client {
@@ -1358,6 +1370,51 @@ impl Game<'_> {
     }
 }
 horizon_client::impl_joined!(ThrownTrident);
+
+/// `TridentItem.releaseUsing`'s Riptide push for a player looking at `yaw`/`pitch`: the look
+/// from `Mth.sin`/`Mth.cos` (vanilla's quantized table) in floats, scaled to `strength` over its
+/// own length. A server's simulation of the player (Grim's) works it out this way to the bit: the
+/// exact sine and cosine drift by up to 1e-4 a block, which Riptide's speed carries past an
+/// anticheat's tolerance and gets the launch set back.
+fn riptide_push(yaw: f32, pitch: f32, strength: f32) -> [f64; 3] {
+    use horizon_core::geometry::trig;
+    let (y_rot, x_rot) = (
+        f64::from(yaw * trig::DEG_TO_RAD),
+        f64::from(pitch * trig::DEG_TO_RAD),
+    );
+    let x = -trig::sin(y_rot) * trig::cos(x_rot);
+    let y = -trig::sin(x_rot);
+    let z = trig::cos(y_rot) * trig::cos(x_rot);
+    // Mth.sqrt(float): (float) Math.sqrt.
+    let dist = (f64::from(x * x + y * y + z * z)).sqrt() as f32;
+    let scale = strength / dist;
+    [x * scale, y * scale, z * scale].map(f64::from)
+}
+
+#[cfg(test)]
+mod riptide_tests {
+    use super::riptide_push;
+
+    #[test]
+    fn riptide_pushes_along_the_look_with_vanillas_table_and_floats() {
+        // Straight ahead (south): all of it along +Z.
+        let [x, y, z] = riptide_push(0.0, 0.0, 3.0);
+        assert_eq!((x, y, z), (-0.0, -0.0, 3.0));
+        // Straight up: pitch -90.
+        let [_, y, _] = riptide_push(0.0, -90.0, 1.5);
+        assert!((y - 1.5).abs() < 1e-6, "{y}");
+        // Its length is the strength, in floats.
+        let p = riptide_push(37.3, -21.9, 3.75);
+        let len = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+        assert!((len - 3.75).abs() < 1e-5, "{len}");
+        // Every component is a float, as the push's floats widened to doubles.
+        assert!(p.iter().all(|v| f64::from(*v as f32) == *v));
+        // The table, not the exact sine: an angle where they part.
+        let exact = -(37.3f64.to_radians().sin()) * (-21.9f64).to_radians().cos();
+        let exact_len = 1.0f64;
+        assert_ne!(p[0], exact * 3.75 / exact_len);
+    }
+}
 
 #[cfg(test)]
 mod tests {
