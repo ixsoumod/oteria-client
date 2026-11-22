@@ -793,7 +793,11 @@ impl Game<'_> {
     }
 
     /// `Hud.extractScoreboardSidebar` / `displayScoreboardSidebar`.
-    pub(super) fn draw_scoreboard(&self, batch: &mut HudBatch) {
+    pub(super) fn draw_scoreboard(&mut self, batch: &mut HudBatch) {
+        if self.settings.extras.pvp.scoreboard.enabled {
+            self.draw_oteria_scoreboard(batch);
+            return;
+        }
         let board = &self.score.board;
         let Some(objective) = self.sidebar_objective() else {
             return;
@@ -808,6 +812,74 @@ impl Game<'_> {
             self.settings.text_background(0.4),
         );
         hud_layout::paint(batch, &self.gui.atlas, &draws);
+    }
+    /// Oteria's Scoreboard: vanilla's sidebar with the player's background (or none, rounded or
+    /// not) and the numbers shown or not, at the place and size the HUD editor gave it
+    /// (`WidgetId::Scoreboard`). Until it is moved it keeps vanilla's right edge and middle.
+    fn draw_oteria_scoreboard(&mut self, batch: &mut HudBatch) {
+        use horizon_client::pvp_hud::{self, WidgetId};
+        let style = self.settings.extras.pvp.scoreboard;
+        let colours = style.colours();
+        let flat = colours.filter(|_| !style.rounded);
+        let Some(objective) = self.sidebar_objective() else {
+            return;
+        };
+        let (draws, [x0, y0, x1, y1]) = hud_overlays::sidebar_with(
+            batch.width as i32,
+            batch.height as i32,
+            &self.score.board,
+            objective,
+            &self.gui.atlas.font,
+            flat.map(|c| c.0),
+            flat.map(|c| c.1),
+            style.numbers,
+        );
+        let place = self.settings.extras.pvp.layout.get(WidgetId::Scoreboard);
+        let s = f32::from(place.scale) / 100.0;
+        let (bw, bh) = ((x1 - x0) as f32, (y1 - y0) as f32);
+        let size = (bw * s, bh * s);
+        let (px, py) = match place.at {
+            Some(at) => pvp_hud::from_fractions(at, size, (batch.width, batch.height)),
+            None => (
+                (x1 as f32 - size.0).round(),
+                (y0 as f32 + bh / 2.0 - size.1 / 2.0).round(),
+            ),
+        };
+        let atlas = &self.gui.atlas;
+        if style.rounded
+            && let Some((body, _)) = colours
+        {
+            let r = 3.0 * s;
+            horizon_client::graphics_style::rounded(
+                batch,
+                atlas,
+                [px, py, size.0, size.1],
+                r,
+                hud_layout::abgr(body),
+            );
+            // The title's band a little darker, as vanilla's.
+            let band = (body & 0x00FF_FFFF) | 0x1A00_0000;
+            horizon_client::graphics_style::rounded(
+                batch,
+                atlas,
+                [px, py, size.0, 10.0 * s],
+                r,
+                hud_layout::abgr(band),
+            );
+        }
+        use hud_layout::{GuiDraw, PoseOp};
+        let mut posed = Vec::with_capacity(draws.len() + 2);
+        posed.push(GuiDraw::Push(vec![
+            PoseOp::Translate(px, py),
+            PoseOp::Scale(s, s),
+            PoseOp::Translate(-(x0 as f32), -(y0 as f32)),
+        ]));
+        posed.extend(draws);
+        posed.push(GuiDraw::Pop);
+        hud_layout::paint(batch, atlas, &posed);
+        self.pvp
+            .boxes
+            .push((WidgetId::Scoreboard, [px, py, size.0, size.1]));
     }
 }
 

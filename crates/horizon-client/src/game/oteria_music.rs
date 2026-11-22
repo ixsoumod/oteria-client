@@ -725,7 +725,9 @@ const LIFE: f32 = 1.7;
 /// Word `k` of line `line`, sung now, put in the air ahead of the player looking `(yaw, pitch)`
 /// from `camera`: off to a side by up to 50 degrees, 3.5 to 9 blocks away, above or below the
 /// look, facing the player, turned and tilted a little. Bigger further, so far words still read.
-/// `attempt` tries another place, nearer each time (where the first was in a block).
+/// `attempt` tries another place, nearer each time (where the first was in a block). `reach` is
+/// the Music tile's lyrics distance, blocks: words land from 0.58 to 1.5 times it (6: 3.5 to 9).
+#[allow(clippy::too_many_arguments)]
 fn spawn_word(
     text: String,
     line: usize,
@@ -734,11 +736,13 @@ fn spawn_word(
     (yaw, pitch): (f32, f32),
     clock: f32,
     attempt: u64,
+    reach: f32,
 ) -> FloatWord {
     let seed = (line as u64) << 8 | k as u64;
     let r = |n: u64| hash(seed * 31 + n + attempt * 1009);
     let side = (r(1) - 0.5) * 100.0;
-    let distance = (3.5 + 5.5 * r(2)) * (1.0 - attempt as f32 * 0.06).max(0.45);
+    let (near, far) = (reach * 0.583, reach * 1.5);
+    let distance = (near + (far - near) * r(2)) * (1.0 - attempt as f32 * 0.06).max(0.45);
     let dir = (yaw + side).to_radians();
     let flat = glam::DVec3::new(-f64::from(dir.sin()), 0.0, f64::from(dir.cos()));
     let rise = -f64::from(pitch.to_radians().sin()) * f64::from(distance) * 0.8
@@ -1184,8 +1188,9 @@ impl Game<'_> {
         look: (f32, f32),
         clock: f32,
     ) -> Option<FloatWord> {
+        let reach = f32::from(self.settings.extras.pvp.music.distance);
         (0..12).find_map(|attempt| {
-            let w = spawn_word(text.clone(), line, k, camera, look, clock, attempt);
+            let w = spawn_word(text.clone(), line, k, camera, look, clock, attempt, reach);
             self.word_seen(camera, &w).then_some(w)
         })
     }
@@ -1396,8 +1401,8 @@ mod tests {
     #[test]
     fn another_try_is_another_place_nearer() {
         let camera = glam::DVec3::ZERO;
-        let first = spawn_word("x".into(), 3, 2, camera, (0.0, 0.0), 0.0, 0);
-        let later = spawn_word("x".into(), 3, 2, camera, (0.0, 0.0), 0.0, 11);
+        let first = spawn_word("x".into(), 3, 2, camera, (0.0, 0.0), 0.0, 0, 6.0);
+        let later = spawn_word("x".into(), 3, 2, camera, (0.0, 0.0), 0.0, 11, 6.0);
         assert_ne!(first.at, later.at);
         assert!(later.at.with_y(0.0).length() < 9.0 * 0.45 + 1e-6);
     }
@@ -1407,7 +1412,7 @@ mod tests {
         let camera = glam::DVec3::new(10.0, 70.0, -4.0);
         for line in 0..10 {
             for k in 0..8 {
-                let w = spawn_word("x".into(), line, k, camera, (30.0, 0.0), 0.0, 0);
+                let w = spawn_word("x".into(), line, k, camera, (30.0, 0.0), 0.0, 0, 6.0);
                 let d = w.at - camera;
                 let flat = d.x.hypot(d.z);
                 assert!((3.4..=9.1).contains(&flat), "{flat} away");

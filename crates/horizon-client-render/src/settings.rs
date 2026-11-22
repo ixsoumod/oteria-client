@@ -231,10 +231,10 @@ impl Default for Settings {
             gui_scale: 0,
             view_bobbing: true,
             gamma: 0.5,
-            // Vanilla's default, as for an options.txt without the key: a
-            // capped frame rate leaves the cores idle when VSync is off.
-            max_fps: 120,
-            vsync: true,
+            // Oteria's defaults, as for an options.txt without the keys: no frame
+            // limit and no VSync (vanilla caps at 120 with VSync on).
+            max_fps: 260,
+            vsync: false,
             fullscreen: false,
             smooth_lighting: true,
             clouds: "true".into(),
@@ -419,6 +419,13 @@ impl Settings {
         settings.keys.set("key.oteria.music.play", &m.play_key);
         settings.keys.set("key.oteria.music.next", &m.next_key);
         settings.keys.set("key.oteria.music.previous", &m.previous_key);
+        // Oteria's video defaults (VSync off, no frame limit), put once on settings made before
+        // they changed; the player's own choice after that stays.
+        if !settings.extras.pvp.video_defaults {
+            settings.extras.pvp.video_defaults = true;
+            settings.vsync = false;
+            settings.max_fps = 260;
+        }
         // `Options.load`: `sharePresence` decides what the friends service posts.
         crate::social::set_share_presence(crate::social::SharePresence::of(
             settings.file.int("sharePresence").clamp(0, 2) as u8,
@@ -1205,7 +1212,7 @@ mod tests {
     #[test]
     fn no_options_txt_paces_frames_like_an_empty_one() {
         let (fresh, empty) = (Settings::default(), Settings::parse(""));
-        assert_eq!(fresh.max_fps, 120);
+        assert_eq!(fresh.max_fps, 260);
         assert_eq!(fresh.max_fps, empty.max_fps);
         assert_eq!(fresh.vsync, empty.vsync);
         assert_eq!(fresh.inactivity_fps_limit, empty.inactivity_fps_limit);

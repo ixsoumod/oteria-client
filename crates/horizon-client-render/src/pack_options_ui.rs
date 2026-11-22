@@ -331,6 +331,7 @@ impl PackOptionsUi {
                     focused: false,
                     held: self.dragging == Some(row),
                     key: None,
+                    segments: None,
                 };
                 shell::row(batch, atlas, &cols, y, &view);
             },

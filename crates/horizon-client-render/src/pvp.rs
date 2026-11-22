@@ -936,9 +936,123 @@ pub struct Pvp {
     /// Pop Counter: a chat line each time a player near you uses a totem, and when one dies
     /// after popping (`game/oteria_pvp.rs`).
     pub pops: bool,
-    /// AppleSkin (after the Fabric mod, MIT): a saturation overlay on the hunger bar and food
-    /// values in tooltips.
+    /// Food Saturation (after the Fabric mod AppleSkin): a saturation overlay on the hunger bar
+    /// and food values in tooltips.
     pub saturation: Saturation,
+    /// Viewmodel: where the items in hand sit in first person.
+    pub viewmodel: Viewmodel,
+    /// Scoreboard: the sidebar's look, place and size.
+    pub scoreboard: ScoreboardStyle,
+    /// Clear View: screen effects this player doesn't want drawn.
+    pub clear_view: ClearView,
+    /// Whether Oteria's video defaults (VSync off, unlimited frames) were put on these settings
+    /// once (`Settings::load`).
+    pub video_defaults: bool,
+}
+
+/// Oteria's Viewmodel (`game/frame_geometry.rs`): each hand's item moved in first person, along
+/// the screen's right (X), up (Y) and towards the player (Z). Each value is hundredths of a
+/// block from 0 to 200, 100 being vanilla's place. Off by default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Viewmodel {
+    pub enabled: bool,
+    pub main: [u8; 3],
+    pub off: [u8; 3],
+}
+impl Default for Viewmodel {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            main: [100; 3],
+            off: [100; 3],
+        }
+    }
+}
+/// A viewmodel value's ends; the middle is vanilla's place.
+pub const VIEWMODEL_RANGE: (u32, u32) = (0, 200);
+impl Viewmodel {
+    /// The offset of one hand, blocks, in view space (x right, y up, z towards the player).
+    pub fn offset(&self, main: bool) -> [f32; 3] {
+        let v = if main { self.main } else { self.off };
+        v.map(|c| (f32::from(c) - 100.0) / 100.0)
+    }
+}
+
+/// Oteria's Scoreboard (`game/scoreboard.rs`): the sidebar sized and moved in the HUD editor
+/// (`WidgetId::Scoreboard`), with its own background, rounded or not, and the red numbers shown
+/// or not. Off: vanilla's sidebar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScoreboardStyle {
+    pub enabled: bool,
+    /// The background's colour; `None` draws no background.
+    pub background: Option<Colour>,
+    /// The background's opacity, percent.
+    pub opacity: u8,
+    pub rounded: bool,
+    /// The scores (the red numbers on the right).
+    pub numbers: bool,
+}
+impl Default for ScoreboardStyle {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            background: Some(Colour::Black),
+            opacity: 30,
+            rounded: false,
+            numbers: true,
+        }
+    }
+}
+pub const SCOREBOARD_OPACITIES: (u8, u8) = (0, 100);
+impl ScoreboardStyle {
+    /// The body's colour, ARGB; the title's band a little darker. `None`: no background.
+    pub fn colours(&self) -> Option<(u32, u32)> {
+        let rgb = self.background?.argb() & 0x00FF_FFFF;
+        let a = |pct: f32| ((pct.clamp(0.0, 100.0) / 100.0 * 255.0).round() as u32) << 24;
+        let body = f32::from(self.opacity);
+        Some((a(body) | rgb, a(body + 10.0) | rgb))
+    }
+}
+
+/// Oteria's Clear View: what this player's screen leaves out, each its own switch, all on once
+/// the mod is (`game/fov.rs`, `game/sculk.rs`, `game/render_tick.rs`). Only the picture changes:
+/// the effects still act as vanilla's (Blindness still stops sprinting).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClearView {
+    pub enabled: bool,
+    /// The carved pumpkin's overlay worn on the head.
+    pub pumpkin: bool,
+    /// The Warden's Darkness: its fog and its pulsing dark.
+    pub darkness: bool,
+    /// Blindness' fog.
+    pub blindness: bool,
+    /// Nausea's wobble and its green overlay.
+    pub nausea: bool,
+}
+impl Default for ClearView {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pumpkin: true,
+            darkness: true,
+            blindness: true,
+            nausea: true,
+        }
+    }
+}
+impl ClearView {
+    pub fn hides_pumpkin(&self) -> bool {
+        self.enabled && self.pumpkin
+    }
+    pub fn hides_darkness(&self) -> bool {
+        self.enabled && self.darkness
+    }
+    pub fn hides_blindness(&self) -> bool {
+        self.enabled && self.blindness
+    }
+    pub fn hides_nausea(&self) -> bool {
+        self.enabled && self.nausea
+    }
 }
 
 /// Oteria's AppleSkin, after the Fabric mod AppleSkin (public domain, `THIRD_PARTY_NOTICES.md`):
@@ -1105,6 +1219,9 @@ pub struct Music {
     pub lyrics: bool,
     /// The song's card at the top right.
     pub card: bool,
+    /// How far the floating lyrics land, blocks (`LYRICS_DISTANCES`): the words spread from a
+    /// little nearer to a little farther than this.
+    pub distance: u8,
     /// The keys: play/pause, next, previous (unbound at first, set in Controls).
     pub play_key: String,
     pub next_key: String,
@@ -1116,6 +1233,7 @@ impl Default for Music {
             enabled: false,
             lyrics: true,
             card: true,
+            distance: 6,
             play_key: "key.keyboard.unknown".into(),
             next_key: "key.keyboard.unknown".into(),
             previous_key: "key.keyboard.unknown".into(),
@@ -1150,6 +1268,7 @@ impl Default for Barrel {
     }
 }
 pub const BARREL_SENSITIVITIES: (u8, u8) = (25, 250);
+pub const LYRICS_DISTANCES: (u8, u8) = (2, 24);
 
 /// Oteria's motion blur (`gfx/motion_blur.rs`): off by default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1491,6 +1610,10 @@ impl Default for Pvp {
             secret: Secret::default(),
             pops: false,
             saturation: Saturation::default(),
+            viewmodel: Viewmodel::default(),
+            scoreboard: ScoreboardStyle::default(),
+            clear_view: ClearView::default(),
+            video_defaults: false,
         }
     }
 }
@@ -1701,6 +1824,42 @@ impl Pvp {
             "music" => self.music.enabled = flag(value, self.music.enabled),
             "musicLyrics" => self.music.lyrics = flag(value, self.music.lyrics),
             "musicCard" => self.music.card = flag(value, self.music.card),
+            "musicDistance" => self.music.distance = num(value, LYRICS_DISTANCES, self.music.distance),
+            "viewmodel" => self.viewmodel.enabled = flag(value, self.viewmodel.enabled),
+            "viewmodelMain" | "viewmodelOff" => {
+                let parts: Vec<u8> = value
+                    .split(',')
+                    .filter_map(|v| v.trim().parse::<u8>().ok())
+                    .map(|v| v.min(VIEWMODEL_RANGE.1 as u8))
+                    .collect();
+                if let [x, y, z] = parts[..] {
+                    if key == "viewmodelMain" {
+                        self.viewmodel.main = [x, y, z];
+                    } else {
+                        self.viewmodel.off = [x, y, z];
+                    }
+                }
+            }
+            "scoreboard" => self.scoreboard.enabled = flag(value, self.scoreboard.enabled),
+            "scoreboardBackground" => {
+                self.scoreboard.background = match value {
+                    "off" => None,
+                    v => Colour::parse(v)
+                        .filter(|c| *c != Colour::Inverted)
+                        .or(self.scoreboard.background),
+                }
+            }
+            "scoreboardOpacity" => {
+                self.scoreboard.opacity = num(value, SCOREBOARD_OPACITIES, self.scoreboard.opacity)
+            }
+            "scoreboardRounded" => self.scoreboard.rounded = flag(value, self.scoreboard.rounded),
+            "scoreboardNumbers" => self.scoreboard.numbers = flag(value, self.scoreboard.numbers),
+            "clearView" => self.clear_view.enabled = flag(value, self.clear_view.enabled),
+            "clearViewPumpkin" => self.clear_view.pumpkin = flag(value, self.clear_view.pumpkin),
+            "clearViewDarkness" => self.clear_view.darkness = flag(value, self.clear_view.darkness),
+            "clearViewBlindness" => self.clear_view.blindness = flag(value, self.clear_view.blindness),
+            "clearViewNausea" => self.clear_view.nausea = flag(value, self.clear_view.nausea),
+            "oteriaVideoDefaults" => self.video_defaults = flag(value, self.video_defaults),
             "musicPlayKey" if value.starts_with("key.") => self.music.play_key = value.to_owned(),
             "musicNextKey" if value.starts_with("key.") => self.music.next_key = value.to_owned(),
             "musicPreviousKey" if value.starts_with("key.") => self.music.previous_key = value.to_owned(),
@@ -2032,6 +2191,33 @@ impl Pvp {
             "music:{}\nmusicLyrics:{}\nmusicCard:{}\nmusicPlayKey:{}\nmusicNextKey:{}\nmusicPreviousKey:{}\n",
             m.enabled, m.lyrics, m.card, m.play_key, m.next_key, m.previous_key
         );
+        let _ = writeln!(out, "musicDistance:{}", m.distance);
+        let vm = &self.viewmodel;
+        let triple = |v: [u8; 3]| format!("{},{},{}", v[0], v[1], v[2]);
+        let _ = write!(
+            out,
+            "viewmodel:{}\nviewmodelMain:{}\nviewmodelOff:{}\n",
+            vm.enabled,
+            triple(vm.main),
+            triple(vm.off)
+        );
+        let sb = &self.scoreboard;
+        let _ = write!(
+            out,
+            "scoreboard:{}\nscoreboardBackground:{}\nscoreboardOpacity:{}\nscoreboardRounded:{}\nscoreboardNumbers:{}\n",
+            sb.enabled,
+            sb.background.map_or_else(|| "off".into(), Colour::save),
+            sb.opacity,
+            sb.rounded,
+            sb.numbers,
+        );
+        let cv = &self.clear_view;
+        let _ = write!(
+            out,
+            "clearView:{}\nclearViewPumpkin:{}\nclearViewDarkness:{}\nclearViewBlindness:{}\nclearViewNausea:{}\n",
+            cv.enabled, cv.pumpkin, cv.darkness, cv.blindness, cv.nausea,
+        );
+        let _ = writeln!(out, "oteriaVideoDefaults:{}", self.video_defaults);
         let b = &self.barrel;
         let _ = write!(
             out,
@@ -2268,14 +2454,14 @@ opts! {
         "A small elytra under the crosshair while you wear one, with how worn it is.";
     ElytraColour, "elytra_colour", "Colour",
         "Tints the elytra icon. Off follows your crosshair's colour, or white without a custom one. Move and size it in Edit HUD.";
-    Saturation, "saturation", "AppleSkin",
-        "Your saturation as gold outlines over the hunger bar, as AppleSkin shows it.";
+    Saturation, "saturation", "Food Saturation",
+        "Your saturation as gold outlines over the hunger bar.";
     SaturationHeld, "saturation_held", "Food in hand",
         "Holding food, the hunger, saturation and health it would give you flash on the bars.";
     SaturationExhaustion, "saturation_exhaustion", "Exhaustion",
         "A bar behind the hunger icons fills as you tire; once full, you lose a point of saturation, or of hunger.";
     SaturationTooltip, "saturation_tooltip", "Food values in tooltips",
-        "Hunger and saturation points shown on food items' tooltips, as AppleSkin does.";
+        "Hunger and saturation points shown on food items' tooltips.";
     Voice, "voice", "Voice chat",
         "Talk with the players near you on servers running Simple Voice Chat, Fabric players included.";
     VoiceActivation, "voice_activation", "Talk",
@@ -2354,6 +2540,29 @@ opts! {
         "The song playing on this computer (Spotify, or any player Windows' media controls know) and its synced lyrics, from LRCLIB. Play/pause, next and previous have keys in Controls, under Oteria.";
     MusicLyrics, "music_lyrics", "Floating lyrics", "The line sung now floats in the air ahead of you, the next one under it.";
     MusicCard, "music_card", "Song card", "The song, its artist and how far it has played, at the top right.";
+    MusicDistance, "music_distance", "Lyrics distance",
+        "How far from you the floating lyrics land, in blocks: the words spread a little nearer and a little farther than this.";
+    Viewmodel, "viewmodel", "Viewmodel",
+        "Moves the items in your hands in first person, each hand on its own: left and right (X), up and down (Y), nearer and farther (Z). 0 is vanilla's place.";
+    ViewMainX, "view_main_x", "Main hand X", "The main hand's item to the left (below 0) or the right (above 0).";
+    ViewMainY, "view_main_y", "Main hand Y", "The main hand's item down (below 0) or up (above 0).";
+    ViewMainZ, "view_main_z", "Main hand Z", "The main hand's item farther (below 0) or nearer (above 0).";
+    ViewOffX, "view_off_x", "Off hand X", "The off hand's item to the left (below 0) or the right (above 0).";
+    ViewOffY, "view_off_y", "Off hand Y", "The off hand's item down (below 0) or up (above 0).";
+    ViewOffZ, "view_off_z", "Off hand Z", "The off hand's item farther (below 0) or nearer (above 0).";
+    Scoreboard, "scoreboard", "Custom scoreboard",
+        "Your own look for the scoreboard on the right of the screen. Move it and size it in Edit HUD, or with Size here.";
+    ScoreboardSize, "scoreboard_size", "Size", "How big the scoreboard is.";
+    ScoreboardBackground, "scoreboard_background", "Background", "The background's colour, or none.";
+    ScoreboardOpacity, "scoreboard_opacity", "Opacity", "How solid the background is.";
+    ScoreboardRounded, "scoreboard_rounded", "Rounded corners", "The background with rounded corners.";
+    ScoreboardNumbers, "scoreboard_numbers", "Numbers", "The red scores on the right of each line.";
+    ClearView, "clear_view", "Clear View",
+        "Leaves screen effects out of your view, each with its own switch. Only the picture changes: the effects still act.";
+    ClearPumpkin, "clear_pumpkin", "Pumpkin overlay", "No carved pumpkin over the screen when you wear one on your head.";
+    ClearDarkness, "clear_darkness", "Darkness", "No Warden's Darkness: neither its fog nor its pulsing dark.";
+    ClearBlindness, "clear_blindness", "Blindness", "No Blindness fog.";
+    ClearNausea, "clear_nausea", "Nausea", "No Nausea wobble nor its overlay.";
     HudCooldowns, "hud_cooldowns", "Cooldowns",
         "The items cooling down in your hotbar and hands (ender pearl, chorus fruit, wind charge, shield...), with a bar and the seconds left.";
     HudCooldownsCorner, "hud_cooldowns_corner", "Cooldowns corner", "Where the cooldowns show.";
@@ -2444,6 +2653,7 @@ impl Opt {
             | Opt::HitboxHurt
             | Opt::HitboxOutline => (true, false),
             Opt::HitboxEyeColour | Opt::HitboxLookColour => (false, false),
+            Opt::ScoreboardBackground => (true, false),
             _ => return None,
         };
         Some(ColourChoice { off, inverted })
@@ -2476,6 +2686,7 @@ impl Opt {
             Opt::HitboxOutline => p.hitboxes.outline,
             Opt::HitboxEyeColour => Some(p.hitboxes.eye_colour),
             Opt::HitboxLookColour => Some(p.hitboxes.look_colour),
+            Opt::ScoreboardBackground => p.scoreboard.background,
             _ => return None,
         })
     }
@@ -2513,6 +2724,7 @@ impl Opt {
             (Opt::HitboxOutline, c) => p.hitboxes.outline = c,
             (Opt::HitboxEyeColour, Some(c)) => p.hitboxes.eye_colour = c,
             (Opt::HitboxLookColour, Some(c)) => p.hitboxes.look_colour = c,
+            (Opt::ScoreboardBackground, c) => p.scoreboard.background = c,
             _ => {}
         }
     }
@@ -2539,6 +2751,9 @@ impl Opt {
             Opt::HitboxWidth | Opt::HitboxFarWidth => (HITBOX_WIDTHS, ""),
             Opt::HitboxOutlineSize => (HITBOX_OUTLINE_SIZES, "x"),
             Opt::HitboxFarDistance => (HITBOX_FAR, ""),
+            Opt::MusicDistance => (LYRICS_DISTANCES, ""),
+            Opt::ScoreboardOpacity => (SCOREBOARD_OPACITIES, "%"),
+            Opt::ScoreboardSize => (crate::pvp_hud::SCALES, "%"),
             _ => return None,
         })
     }
@@ -2568,6 +2783,21 @@ impl Opt {
             Opt::HitboxFarWidth => p.hitboxes.far_width,
             Opt::HitboxOutlineSize => p.hitboxes.outline_size,
             Opt::HitboxFarDistance => p.hitboxes.far_distance,
+            Opt::MusicDistance => p.music.distance,
+            Opt::ScoreboardOpacity => p.scoreboard.opacity,
+            Opt::ScoreboardSize => p.layout.get(crate::pvp_hud::WidgetId::Scoreboard).scale,
+            _ => return None,
+        })
+    }
+    /// A viewmodel option's hand (main or not) and axis.
+    fn viewmodel_axis(self) -> Option<(bool, usize)> {
+        Some(match self {
+            Opt::ViewMainX => (true, 0),
+            Opt::ViewMainY => (true, 1),
+            Opt::ViewMainZ => (true, 2),
+            Opt::ViewOffX => (false, 0),
+            Opt::ViewOffY => (false, 1),
+            Opt::ViewOffZ => (false, 2),
             _ => return None,
         })
     }
@@ -2575,11 +2805,16 @@ impl Opt {
     pub fn slider(self) -> Option<(u32, u32)> {
         match self {
             Opt::ClockTime => Some(DAY_TICKS),
+            _ if self.viewmodel_axis().is_some() => Some(VIEWMODEL_RANGE),
             _ => None,
         }
     }
     /// A slider option's value now.
     pub fn slider_value(self, p: &Pvp) -> Option<u32> {
+        if let Some((main, axis)) = self.viewmodel_axis() {
+            let v = if main { p.viewmodel.main } else { p.viewmodel.off };
+            return Some(u32::from(v[axis]));
+        }
         match self {
             Opt::ClockTime => Some(u32::from(p.clock.time)),
             _ => None,
@@ -2587,10 +2822,15 @@ impl Opt {
     }
     /// Sets a slider option, kept between its ends.
     pub fn set_slider(self, p: &mut Pvp, v: u32) {
-        if let Some((lo, hi)) = self.slider()
-            && self == Opt::ClockTime
-        {
-            p.clock.time = v.clamp(lo, hi) as u16;
+        let Some((lo, hi)) = self.slider() else {
+            return;
+        };
+        let v = v.clamp(lo, hi);
+        if let Some((main, axis)) = self.viewmodel_axis() {
+            let hand = if main { &mut p.viewmodel.main } else { &mut p.viewmodel.off };
+            hand[axis] = v as u8;
+        } else if self == Opt::ClockTime {
+            p.clock.time = v as u16;
         }
     }
     /// Sets a number option, kept within its range.
@@ -2599,7 +2839,13 @@ impl Opt {
             return;
         };
         let v = v.clamp(u32::from(lo), u32::from(hi)) as u8;
+        if self == Opt::ScoreboardSize {
+            p.layout.get_mut(crate::pvp_hud::WidgetId::Scoreboard).scale = v;
+            return;
+        }
         let field = match self {
+            Opt::MusicDistance => &mut p.music.distance,
+            Opt::ScoreboardOpacity => &mut p.scoreboard.opacity,
             Opt::CrosshairSize => &mut p.crosshair.size,
             Opt::CrosshairGap => &mut p.crosshair.gap,
             Opt::CrosshairThickness => &mut p.crosshair.thickness,
@@ -2750,7 +2996,23 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
         .map(Ok),
     );
     rows.push(Err("horizon.pvp.header.music"));
-    rows.extend([Music, MusicLyrics, MusicCard].map(Ok));
+    rows.extend([Music, MusicLyrics, MusicDistance, MusicCard].map(Ok));
+    rows.push(Err("horizon.pvp.header.viewmodel"));
+    rows.extend([Viewmodel, ViewMainX, ViewMainY, ViewMainZ, ViewOffX, ViewOffY, ViewOffZ].map(Ok));
+    rows.push(Err("horizon.pvp.header.scoreboard"));
+    rows.extend(
+        [
+            Scoreboard,
+            ScoreboardSize,
+            ScoreboardBackground,
+            ScoreboardOpacity,
+            ScoreboardRounded,
+            ScoreboardNumbers,
+        ]
+        .map(Ok),
+    );
+    rows.push(Err("horizon.pvp.header.clear_view"));
+    rows.extend([ClearView, ClearPumpkin, ClearDarkness, ClearBlindness, ClearNausea].map(Ok));
     rows.push(Err("horizon.pvp.header.barrel"));
     rows.extend([Barrel, BarrelBanking, BarrelRighting, BarrelInvert, BarrelSwitch, BarrelSensitivity].map(Ok));
     rows.push(Err("horizon.pvp.header.tiers"));
@@ -2846,6 +3108,14 @@ impl Opt {
             SkyPack => Some(Sky),
             Zoom | Tiers | Blur | Clock | SkyWeather | Barrel | Music => None,
             MusicLyrics | MusicCard => Some(Music),
+            MusicDistance => Some(MusicLyrics),
+            Viewmodel | Scoreboard | ClearView => None,
+            ViewMainX | ViewMainY | ViewMainZ | ViewOffX | ViewOffY | ViewOffZ => Some(Viewmodel),
+            ScoreboardSize | ScoreboardBackground | ScoreboardRounded | ScoreboardNumbers => {
+                Some(Scoreboard)
+            }
+            ScoreboardOpacity => Some(ScoreboardBackground),
+            ClearPumpkin | ClearDarkness | ClearBlindness | ClearNausea => Some(ClearView),
             BarrelBanking | BarrelRighting | BarrelInvert | BarrelSwitch | BarrelSensitivity => Some(Barrel),
             BlurStrength => Some(Blur),
             Env => None,
@@ -2970,6 +3240,15 @@ impl Opt {
             Opt::HitboxFireworks => p.hitboxes.fireworks,
             Opt::HitboxStuck => p.hitboxes.hide_stuck,
             Opt::CrosshairIndicator => c.indicator,
+            Opt::Viewmodel => p.viewmodel.enabled,
+            Opt::Scoreboard => p.scoreboard.enabled,
+            Opt::ScoreboardRounded => p.scoreboard.rounded,
+            Opt::ScoreboardNumbers => p.scoreboard.numbers,
+            Opt::ClearView => p.clear_view.enabled,
+            Opt::ClearPumpkin => p.clear_view.pumpkin,
+            Opt::ClearDarkness => p.clear_view.darkness,
+            Opt::ClearBlindness => p.clear_view.blindness,
+            Opt::ClearNausea => p.clear_view.nausea,
             _ => return None,
         })
     }
@@ -3097,6 +3376,20 @@ impl Opt {
             Opt::HitboxOutlineSize => format!("{:.1}x", f32::from(p.hitboxes.outline_size) / 10.0),
             Opt::HitboxFarDistance => format!("{}", p.hitboxes.far_distance),
             Opt::Secret => secret_label(p.secret.effect),
+            Opt::MusicDistance => format!("{}", p.music.distance),
+            Opt::ScoreboardOpacity => format!("{}%", p.scoreboard.opacity),
+            Opt::ScoreboardSize => format!(
+                "{}%",
+                p.layout.get(crate::pvp_hud::WidgetId::Scoreboard).scale
+            ),
+            Opt::ScoreboardBackground => match p.scoreboard.background {
+                Some(colour) => colour.label(),
+                None => crate::lang::get_or("Off", "Off"),
+            },
+            o if o.viewmodel_axis().is_some() => {
+                let v = o.slider_value(p).unwrap_or(100) as i32 - 100;
+                format!("{:+.2}", v as f32 / 100.0)
+            }
             o @ (Opt::HitboxPlayers
             | Opt::HitboxHostile
             | Opt::HitboxPassive
@@ -3212,6 +3505,34 @@ impl Opt {
             Opt::Music => p.music.enabled = !p.music.enabled,
             Opt::MusicLyrics => p.music.lyrics = !p.music.lyrics,
             Opt::MusicCard => p.music.card = !p.music.card,
+            Opt::MusicDistance => p.music.distance = step_by(p.music.distance, LYRICS_DISTANCES, 1, back),
+            Opt::Viewmodel => p.viewmodel.enabled = !p.viewmodel.enabled,
+            o @ (Opt::ViewMainX
+            | Opt::ViewMainY
+            | Opt::ViewMainZ
+            | Opt::ViewOffX
+            | Opt::ViewOffY
+            | Opt::ViewOffZ) => {
+                // Five hundredths a click.
+                let v = o.slider_value(p).unwrap_or(100) as i32 + if back { -5 } else { 5 };
+                o.set_slider(p, v.max(0) as u32);
+            }
+            Opt::Scoreboard => p.scoreboard.enabled = !p.scoreboard.enabled,
+            Opt::ScoreboardSize => {
+                let place = p.layout.get_mut(crate::pvp_hud::WidgetId::Scoreboard);
+                place.scale = step_by(place.scale, crate::pvp_hud::SCALES, 10, back);
+            }
+            Opt::ScoreboardBackground => p.scoreboard.background = solid_or_off(p.scoreboard.background),
+            Opt::ScoreboardOpacity => {
+                p.scoreboard.opacity = step_by(p.scoreboard.opacity, SCOREBOARD_OPACITIES, 10, back)
+            }
+            Opt::ScoreboardRounded => p.scoreboard.rounded = !p.scoreboard.rounded,
+            Opt::ScoreboardNumbers => p.scoreboard.numbers = !p.scoreboard.numbers,
+            Opt::ClearView => p.clear_view.enabled = !p.clear_view.enabled,
+            Opt::ClearPumpkin => p.clear_view.pumpkin = !p.clear_view.pumpkin,
+            Opt::ClearDarkness => p.clear_view.darkness = !p.clear_view.darkness,
+            Opt::ClearBlindness => p.clear_view.blindness = !p.clear_view.blindness,
+            Opt::ClearNausea => p.clear_view.nausea = !p.clear_view.nausea,
             Opt::BarrelBanking => p.barrel.banking = !p.barrel.banking,
             Opt::BarrelRighting => p.barrel.righting = !p.barrel.righting,
             Opt::BarrelInvert => p.barrel.invert_pitch = !p.barrel.invert_pitch,

@@ -538,8 +538,10 @@ pub(super) fn stage_pack(
     japanese: bool,
     progress: &super::Progress,
 ) -> horizon_client::Result<StagedPack> {
+    let started = Instant::now();
     let base = super::mods::content_root(vanilla_root, mods_enabled, mods_disabled, dev_mods);
     let root = startup_root(vanilla_root, &base, selected, server)?;
+    let overlay_ms = started.elapsed().as_millis();
     progress.set(1);
     // The world's models and sprites and the GUI atlas read the same root and nothing of
     // each other: about a second each, side by side.
@@ -592,6 +594,15 @@ pub(super) fn stage_pack(
     ));
     let block_entity_shapes = res.block_entity_render().shapes_for(&root);
     progress.set(3);
+    // Where a slow pack load spends its time: the unpacked overlay (cached per pack), then the
+    // models, atlases and sounds read from it.
+    log::info!(
+        "Oteria: packs staged in {} ms ({} server, {} selected): overlay {overlay_ms} ms, resources {} ms",
+        started.elapsed().as_millis(),
+        server.len(),
+        selected.len(),
+        started.elapsed().as_millis() - overlay_ms,
+    );
     Ok(StagedPack {
         root,
         gui,

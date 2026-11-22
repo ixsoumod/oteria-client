@@ -9713,8 +9713,8 @@ impl Game<'_> {
         let (celestial, stars) = if title {
             (Vec::new(), None)
         } else if self.dim == Dim::Overworld
-            && self.potions.effects.get("darkness").is_none()
-            && self.potions.effects.get("blindness").is_none()
+            && !self.darkness_drawn()
+            && !self.blindness_drawn()
         {
             // Camera.doesMobEffectBlockSky: no sun, moon or stars.
             self.celestial_geometry(&sky, rain)
@@ -9828,8 +9828,7 @@ impl Game<'_> {
                     [camera.x, camera.y, camera.z],
                     &self.near_plane(),
                 ),
-                self.potions.effects.get("blindness").is_some()
-                    || self.potions.effects.get("darkness").is_some(),
+                self.blindness_drawn() || self.darkness_drawn(),
                 self.boss_overlay.should_create_world_fog(),
             ),
             skybox: self.dim == Dim::Overworld && self.settings.horizon.sky,

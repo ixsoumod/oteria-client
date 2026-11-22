@@ -458,7 +458,7 @@ impl Game<'_> {
                 CameraFluid::Lava => 2,
                 CameraFluid::PowderSnow => 3,
             },
-            blindness: f32::from(u8::from(self.potions.effects.get("blindness").is_some())),
+            blindness: f32::from(u8::from(self.blindness_drawn())),
             eye_light: [i32::from(light & 15), i32::from(light >> 4)],
             hide_gui: self.ui.hide_gui,
             brightness: self.settings.gamma,

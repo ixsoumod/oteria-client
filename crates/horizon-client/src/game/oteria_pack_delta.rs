@@ -1,59 +1,70 @@
-//! Oteria: incremental re-download of a server's resource pack.
+//! Oteria: fast server resource pack downloads.
 //!
-//! A server that gives no SHA-1 for its pack (`ResourcePackPush.hash` empty)
-//! defeats vanilla's own cache: `server_packs::download` names the file after
-//! the hash of whatever came back, so a pack rebuilt with new file
-//! timestamps, even with every actual file unchanged, downloads again in
-//! full on every reconnect. This re-downloads only the zip entries whose
-//! *content* (name, CRC-32 and sizes) differs from the last time this pack
-//! id was fetched, raw-copying the rest from the file already on disk, and
-//! drops entries the server removed.
+//! Vanilla (`HttpUtil.downloadFile`, kept as [`download::download_file`])
+//! fetches a pack as one stream on a fresh connection every time the server
+//! names no hash, or whenever the named hash isn't cached yet. This does three
+//! things on top of the same `downloads/<pack id>/<SHA-1>` cache, in order:
 //!
-//! Used only when the server gave no hash: with one, vanilla must end up
-//! with the exact bytes it named, and a pack rebuilt by a different zip tool
-//! run rarely reproduces the old bytes for an "unchanged" entry (a fresh
-//! timestamp in its local header, say), so a mismatch there would only ever
-//! fall back to a full download anyway. Entirely best-effort: any failure
-//! here (a server with no Range support, a pack too odd to diff, almost
-//! everything changed) falls back to [`download::download_file`] exactly as
-//! before, so correctness never depends on this module.
+//! 1. **A conditional request.** The last download of a pack id remembers the
+//!    server's `ETag` / `Last-Modified`; the next one asks with
+//!    `If-None-Match` / `If-Modified-Since`, and a `304 Not Modified` reuses the
+//!    file on disk with no body at all.
+//! 2. **Only what changed.** When the pack did change, its central directory
+//!    (the zip's tail) is compared with the last download: the byte spans of
+//!    the changed or new entries are sorted, merged when they are close, and
+//!    fetched as a handful of Range requests in parallel on pooled keep-alive
+//!    connections; unchanged entries are raw-copied from the file on disk.
+//! 3. **Parallel segments.** A full download (first time, most of the pack
+//!    changed, or a pack with a declared hash not in the cache) is split into
+//!    segments fetched at once over several connections, so a CDN that paces
+//!    each connection doesn't pace the whole pack.
+//!
+//! Progress goes to the same [`download::Progress`] channel as vanilla's, so
+//! the loading screen's bar moves during every path. Any failure (no Range
+//! support, an odd zip, a short answer) falls back to the plain
+//! [`download::download_file`], so correctness never depends on this module;
+//! a declared hash is always checked before the file is used.
 use super::super::server_packs::{Batch, Request, download};
 use sha1::{Digest, Sha1};
 use std::{
     collections::HashMap,
     fs,
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, BufWriter, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
         Arc,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{Receiver, Sender, channel},
     },
-    time::Duration,
+    time::{Duration, Instant, SystemTime},
 };
 
 const NET_TIMEOUT: Duration = Duration::from_secs(30);
-/// The suffix fetched first to find the end-of-central-directory record and,
-/// usually, the whole central directory with it. When a pack's directory is
-/// bigger than this, [`HttpRangeReader`] simply fetches more as `zip` asks
-/// for it; this only sizes the common case's single round trip. Tiny in
-/// tests, so even a fixture of a few kilobytes still exercises that fetch,
-/// rather than fitting whole in this first request.
+/// The suffix fetched first: the end record and, nearly always, the whole
+/// central directory with it. Tiny in tests so a fixture still needs it.
 #[cfg(not(test))]
 const TAIL_GUESS: u64 = 1 << 20;
 #[cfg(test)]
 const TAIL_GUESS: u64 = 64;
-/// A "before the tail" read that misses the window fetches at least this
-/// much more, so a changed entry's data rarely needs a second request.
-const WINDOW: u64 = 1 << 20;
-/// Below this share of the pack's compressed bytes actually changed, the
-/// per-entry requests are worth it; past it, one plain download is faster
-/// than many small ones for little saved.
-const WORTHWHILE_CHANGE: f64 = 0.7;
+/// A second, bigger tail when the central directory didn't fit the first.
+const TAIL_RETRY: u64 = 16 << 20;
+/// Connections used at once for one pack.
+const CONNECTIONS: usize = 6;
+/// Below this, one stream is as fast as segments.
+#[cfg(not(test))]
+const SEGMENTED_MIN: u64 = 2 << 20;
+#[cfg(test)]
+const SEGMENTED_MIN: u64 = 256;
+/// Changed entries closer than this are fetched as one range: one request
+/// with a few unchanged bytes in it beats two round trips.
+const MERGE_GAP: u64 = 64 << 10;
+/// Past this share of the pack changed, a segmented full download is simpler
+/// and about as fast.
+const WORTHWHILE_CHANGE: f64 = 0.6;
+/// How often the loading bar hears about progress.
+const PROGRESS_EVERY: Duration = Duration::from_millis(50);
 
-/// One entry's identity across two downloads of the same pack id: unchanged
-/// content keeps every one of these (a rebuilt entry with new metadata but
-/// the same bytes is still "changed" by this and simply re-fetched, safe but
-/// not optimal).
+/// One entry's identity across two downloads of the same pack id.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct EntryKey {
     name: String,
@@ -63,16 +74,22 @@ struct EntryKey {
 }
 
 /// What a pack id's last successful download looked like.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 struct Manifest {
-    /// The full pack file on disk (in `downloads/<id>/`) that an unchanged
-    /// entry's bytes are raw-copied from.
+    /// The full pack file on disk (in `downloads/<id>/`).
     previous_file: PathBuf,
     entries: Vec<EntryKey>,
+    /// The URL it came from: validators only mean something for the same one.
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    etag: Option<String>,
+    #[serde(default)]
+    last_modified: Option<String>,
 }
 
-/// Where manifests live: beside `downloads/`, never inside it, so vanilla's
-/// own cache cleaner ([`download::vacuum`]) never counts or deletes them.
+/// Beside `downloads/`, never inside it, so vanilla's cache cleaner
+/// ([`download::vacuum`]) never counts or deletes them.
 fn delta_dir(downloads_dir: &Path) -> PathBuf {
     downloads_dir
         .parent()
@@ -101,155 +118,301 @@ fn save_manifest(delta_dir: &Path, id: u128, manifest: &Manifest) {
     }
 }
 
-/// A single Range request, as a fresh connection (like
-/// [`download::download_file`]'s own requests): the status, the body, and
-/// the archive's total length from `Content-Range` (or `Content-Length` when
-/// the server ignored the range and sent the whole thing, status 200).
-fn range_get(
-    url: &str,
-    headers: &[(&'static str, String)],
-    range: &str,
-) -> io::Result<(u16, Vec<u8>, Option<u64>)> {
-    let mut call = ureq::AgentBuilder::new()
-        .timeout_connect(NET_TIMEOUT)
-        .timeout_read(NET_TIMEOUT)
-        .build()
-        .get(url)
-        .set("Range", range);
-    for (name, value) in headers {
-        call = call.set(name, value);
-    }
-    let response = call.call().map_err(io::Error::other)?;
-    let status = response.status();
-    let total = response
-        .header("Content-Range")
-        .and_then(|r| r.rsplit('/').next())
-        .and_then(|s| s.parse().ok())
-        .or_else(|| {
-            (status == 200)
-                .then(|| response.header("Content-Length"))
-                .flatten()
-                .and_then(|s| s.parse().ok())
-        });
-    let mut body = Vec::new();
-    response
-        .into_reader()
-        .take(download::MAX_SIZE + 1)
-        .read_to_end(&mut body)
-        .map_err(io::Error::other)?;
-    Ok((status, body, total))
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+fn sha1_of(path: &Path) -> io::Result<String> {
+    let mut hasher = Sha1::new();
+    let mut file = io::BufReader::with_capacity(1 << 20, fs::File::open(path)?);
+    io::copy(&mut file, &mut hasher)?;
+    Ok(hex(&hasher.finalize()))
+}
+/// `updateModificationTime`: used now, so the cleaner keeps it longest.
+fn touch(path: &Path) {
+    let _ = fs::File::options()
+        .append(true)
+        .open(path)
+        .and_then(|f| f.set_modified(SystemTime::now()));
+}
+fn temp_name() -> String {
+    use std::hash::{BuildHasher, RandomState};
+    format!(
+        "download{:016x}.tmp",
+        RandomState::new().hash_one(Instant::now())
+    )
 }
 
-/// A remote zip, read through Range requests: the tail (central directory
-/// and end record) fetched once, everything earlier fetched in a sliding
-/// window as `zip` asks for it. `Seek`/`Read` so `zip::ZipArchive` can read
-/// it exactly as a local file, parsing local headers itself: this never
-/// hand-parses the zip format.
-struct HttpRangeReader {
-    url: String,
+/// The connections of one download thread: kept alive and reused across
+/// requests and packs, instead of a new TCP + TLS handshake for each.
+#[derive(Clone)]
+struct Net {
+    agent: ureq::Agent,
     headers: Vec<(&'static str, String)>,
-    len: u64,
-    tail: Arc<[u8]>,
-    tail_at: u64,
-    window: Option<(u64, Vec<u8>)>,
-    position: u64,
 }
-impl HttpRangeReader {
-    fn open(url: String, headers: Vec<(&'static str, String)>) -> io::Result<Self> {
-        let (status, body, total) = range_get(&url, &headers, &format!("bytes=-{TAIL_GUESS}"))?;
-        if status != 206 {
-            return Err(io::Error::other(
-                "the server did not answer a Range request with 206 Partial Content",
-            ));
+impl Net {
+    fn new(agent: ureq::Agent, headers: &[(&'static str, String)]) -> Self {
+        Self {
+            agent,
+            headers: headers.to_vec(),
         }
-        let len =
-            total.ok_or_else(|| io::Error::other("no Content-Range total on a 206 response"))?;
-        if len > download::MAX_SIZE {
-            return Err(io::Error::other(
-                "the pack is bigger than the download limit",
-            ));
-        }
-        let tail_at = len.saturating_sub(body.len() as u64);
-        Ok(Self {
-            url,
-            headers,
-            len,
-            tail: Arc::from(body),
-            tail_at,
-            window: None,
-            position: 0,
-        })
     }
-    fn fill_before_tail(&mut self, want: usize) -> io::Result<()> {
-        if let Some((start, data)) = &self.window
-            && self.position >= *start
-            && self.position < start + data.len() as u64
-        {
-            return Ok(());
+    fn get(&self, url: &str) -> ureq::Request {
+        let mut call = self.agent.get(url);
+        for (name, value) in &self.headers {
+            call = call.set(name, value);
         }
-        let end = (self.position + (want as u64).max(WINDOW)).min(self.tail_at);
-        let range = format!("bytes={}-{}", self.position, end.saturating_sub(1));
-        let (status, body, _) = range_get(&self.url, &self.headers, &range)?;
-        if status != 206 {
+        call
+    }
+    /// Bytes `start..end` (exclusive) of `url`, counted into `counter` as
+    /// they arrive. Fails unless the server answers exactly that range.
+    fn range(&self, url: &str, start: u64, end: u64, counter: &AtomicU64) -> io::Result<Vec<u8>> {
+        let response = self
+            .get(url)
+            .set("Range", &format!("bytes={start}-{}", end - 1))
+            .call()
+            .map_err(io::Error::other)?;
+        let answered = response
+            .header("Content-Range")
+            .and_then(|r| r.strip_prefix("bytes "))
+            .and_then(|r| r.split('-').next())
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        if response.status() != 206 || answered != Some(start) {
             return Err(io::Error::other(
-                "the server did not answer a Range request with 206 Partial Content",
+                "the server did not answer the Range request as asked",
             ));
         }
-        self.window = Some((self.position, body));
-        Ok(())
-    }
-}
-impl Read for HttpRangeReader {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        if out.is_empty() || self.position >= self.len {
-            return Ok(0);
+        let want = (end - start) as usize;
+        let mut body = Vec::with_capacity(want);
+        let mut reader = response.into_reader().take(want as u64);
+        let mut buffer = vec![0u8; 256 << 10];
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            body.extend_from_slice(&buffer[..n]);
+            counter.fetch_add(n as u64, Ordering::Relaxed);
         }
-        if self.position >= self.tail_at {
-            let into = (self.position - self.tail_at) as usize;
-            let rest = self.tail.get(into..).unwrap_or(&[]);
-            let n = rest.len().min(out.len());
-            out[..n].copy_from_slice(&rest[..n]);
-            self.position += n as u64;
-            return Ok(n);
-        }
-        self.fill_before_tail(out.len())?;
-        let (start, data) = self.window.as_ref().expect("just filled");
-        let into = (self.position - start) as usize;
-        let rest = data.get(into..).unwrap_or(&[]);
-        let n = rest
-            .len()
-            .min(out.len())
-            .min((self.tail_at - self.position) as usize);
-        if n == 0 {
+        if body.len() != want {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "short range response",
             ));
         }
+        Ok(body)
+    }
+}
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(NET_TIMEOUT)
+        .timeout_read(NET_TIMEOUT)
+        .max_idle_connections_per_host(CONNECTIONS + 2)
+        .build()
+}
+
+/// Runs `work` while sending the bytes counted so far to the loading bar.
+fn with_progress<T: Send>(
+    counter: &AtomicU64,
+    progress: &Sender<download::Progress>,
+    work: impl FnOnce() -> T + Send,
+) -> T {
+    std::thread::scope(|s| {
+        let handle = s.spawn(work);
+        let mut sent = u64::MAX;
+        while !handle.is_finished() {
+            let now = counter.load(Ordering::Relaxed);
+            if now != sent {
+                let _ = progress.send(download::Progress::Bytes(now));
+                sent = now;
+            }
+            std::thread::sleep(PROGRESS_EVERY);
+        }
+        let _ = progress.send(download::Progress::Bytes(counter.load(Ordering::Relaxed)));
+        handle.join().expect("download worker panicked")
+    })
+}
+
+/// Fetches `ranges` (start, end exclusive) on up to [`CONNECTIONS`] at once,
+/// each result in the order asked.
+fn fetch_all(
+    net: &Net,
+    url: &str,
+    ranges: &[(u64, u64)],
+    counter: &AtomicU64,
+) -> io::Result<Vec<Vec<u8>>> {
+    let next = AtomicUsize::new(0);
+    let results: Vec<std::sync::Mutex<Option<io::Result<Vec<u8>>>>> =
+        ranges.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|s| {
+        for _ in 0..CONNECTIONS.min(ranges.len()) {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(&(start, end)) = ranges.get(i) else {
+                        break;
+                    };
+                    let result = net.range(url, start, end, counter);
+                    let failed = result.is_err();
+                    *results[i].lock().unwrap() = Some(result);
+                    if failed {
+                        // The others stop after their current range.
+                        next.store(ranges.len(), Ordering::Relaxed);
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    results
+        .into_iter()
+        .map(|r| {
+            r.into_inner()
+                .unwrap()
+                .unwrap_or_else(|| Err(io::Error::other("a range was never fetched")))
+        })
+        .collect()
+}
+
+/// What the first request learned: the tail of the zip and its size, or that
+/// nothing changed, or (a server ignoring `Range`) the whole body already.
+enum Probe {
+    NotModified,
+    Partial {
+        len: u64,
+        tail: Vec<u8>,
+        etag: Option<String>,
+        last_modified: Option<String>,
+    },
+    Whole(ureq::Response),
+}
+fn probe(net: &Net, url: &str, previous: Option<&Manifest>) -> io::Result<Probe> {
+    let mut call = net.get(url).set("Range", &format!("bytes=-{TAIL_GUESS}"));
+    if let Some(m) = previous {
+        if let Some(etag) = &m.etag {
+            call = call.set("If-None-Match", etag);
+        }
+        if let Some(date) = &m.last_modified {
+            call = call.set("If-Modified-Since", date);
+        }
+    }
+    let response = call.call().map_err(io::Error::other)?;
+    match response.status() {
+        304 => Ok(Probe::NotModified),
+        206 => {
+            let len = response
+                .header("Content-Range")
+                .and_then(|r| r.rsplit('/').next())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .ok_or_else(|| io::Error::other("no total in Content-Range"))?;
+            if len > download::MAX_SIZE {
+                return Err(io::Error::other("the pack is bigger than the download limit"));
+            }
+            let etag = response.header("ETag").map(str::to_owned);
+            let last_modified = response.header("Last-Modified").map(str::to_owned);
+            let mut tail = Vec::new();
+            response
+                .into_reader()
+                .take(TAIL_GUESS + 1)
+                .read_to_end(&mut tail)?;
+            Ok(Probe::Partial {
+                len,
+                tail,
+                etag,
+                last_modified,
+            })
+        }
+        200 => Ok(Probe::Whole(response)),
+        status => Err(io::Error::other(format!("unexpected HTTP status {status}"))),
+    }
+}
+
+/// A remote zip of which only some byte spans are known: enough for `zip`
+/// to read the central directory and the entries that were fetched. Reading
+/// anywhere else is an error, never a hidden request.
+#[derive(Clone)]
+struct Sparse {
+    len: u64,
+    /// (start, bytes), sorted by start; shared so spans fetched after the
+    /// central directory was read still reach the archive's own copy.
+    spans: Arc<std::sync::Mutex<Vec<(u64, Arc<[u8]>)>>>,
+    position: u64,
+}
+impl Sparse {
+    fn new(len: u64, start: u64, bytes: Vec<u8>) -> Self {
+        Self {
+            len,
+            spans: Arc::new(std::sync::Mutex::new(vec![(start, Arc::from(bytes))])),
+            position: 0,
+        }
+    }
+    fn add(&self, start: u64, bytes: Vec<u8>) {
+        let mut spans = self.spans.lock().unwrap();
+        spans.push((start, Arc::from(bytes)));
+        spans.sort_by_key(|s| s.0);
+    }
+}
+impl Read for Sparse {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if out.is_empty() || self.position >= self.len {
+            return Ok(0);
+        }
+        let at = self.position;
+        let (span, first) = {
+            let spans = self.spans.lock().unwrap();
+            let span = spans
+                .iter()
+                .rev()
+                .find(|(start, bytes)| *start <= at && at < start + bytes.len() as u64)
+                .cloned();
+            (span, spans.first().map_or(self.len, |s| s.0))
+        };
+        let Some((start, bytes)) = span else {
+            // Before every fetched span, zeros: `zip` looks for the end record in a block
+            // reaching back before the tail. No entry read here ever lies there (the changed
+            // ones are fetched first); a gap between spans stays an error.
+            if at < first {
+                let n = out.len().min((first - at) as usize);
+                out[..n].fill(0);
+                self.position += n as u64;
+                return Ok(n);
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "read outside the fetched spans",
+            ));
+        };
+        let rest = &bytes[(at - start) as usize..];
+        let n = rest.len().min(out.len());
         out[..n].copy_from_slice(&rest[..n]);
         self.position += n as u64;
         Ok(n)
     }
 }
-impl Seek for HttpRangeReader {
+impl Seek for Sparse {
     fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
         let position = match to {
             SeekFrom::Start(at) => Some(at),
             SeekFrom::End(by) => self.len.checked_add_signed(by),
             SeekFrom::Current(by) => self.position.checked_add_signed(by),
         };
-        self.position =
-            position.ok_or_else(|| io::Error::other("seek before the archive's start"))?;
+        self.position = position.ok_or_else(|| io::Error::other("seek before the start"))?;
         Ok(self.position)
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+/// Where the central directory starts, from the end-of-central-directory record in the tail
+/// fetched at `tail_at` (its offset field, `PK\x05\x06` + 16). `None` without one in the tail,
+/// or for a Zip64 archive (the field is `0xFFFFFFFF` there).
+fn directory_start(sparse: &Sparse, tail_at: u64) -> Option<u64> {
+    let spans = sparse.spans.lock().ok()?;
+    let (_, tail) = spans.iter().find(|(start, _)| *start == tail_at)?;
+    let at = tail.windows(4).rposition(|w| w == [0x50, 0x4B, 0x05, 0x06])?;
+    let field = tail.get(at + 16..at + 20)?;
+    let offset = u32::from_le_bytes(field.try_into().ok()?);
+    (offset != u32::MAX).then_some(u64::from(offset))
 }
 
-/// Every entry's identity in the zip at `path`, read locally (no network):
-/// what [`try_delta`] compares a later download against.
+/// Every entry's identity in the zip at `path`, read locally.
 fn snapshot(path: &Path) -> io::Result<Vec<EntryKey>> {
     let archive = zip::ZipArchive::new(io::BufReader::new(fs::File::open(path)?))
         .map_err(io::Error::other)?;
@@ -266,165 +429,401 @@ fn snapshot(path: &Path) -> io::Result<Vec<EntryKey>> {
         .collect()
 }
 
-/// After a plain [`download::download_file`] succeeds with no declared
-/// hash, index it so the next download of this pack id can diff against it.
-fn remember(downloads_dir: &Path, request: &Request, path: &Path) {
-    if request.sha1.is_some() {
-        return;
+/// Moves a finished temporary file to `<dir>/<its SHA-1>` (checked against a
+/// declared hash), reusing an identical file already there.
+fn settle(dir: &Path, tmp: &Path, declared: Option<&str>) -> io::Result<PathBuf> {
+    let actual = sha1_of(tmp)?;
+    if let Some(sha1) = declared
+        && actual != sha1
+    {
+        let _ = fs::remove_file(tmp);
+        return Err(io::Error::other(format!(
+            "Hash of downloaded file ({actual}) did not match requested ({sha1})"
+        )));
     }
-    match snapshot(path) {
-        Ok(entries) => save_manifest(
-            &delta_dir(downloads_dir),
-            request.id,
-            &Manifest {
-                previous_file: path.to_path_buf(),
-                entries,
-            },
-        ),
-        Err(e) => log::debug!(
-            "Horizon: could not index {} for incremental pack downloads: {e}",
-            path.display()
-        ),
+    let path = dir.join(&actual);
+    if path.exists() {
+        let _ = fs::remove_file(tmp);
+        touch(&path);
+    } else {
+        fs::rename(tmp, &path)?;
+    }
+    Ok(path)
+}
+
+/// The whole pack, `len` bytes, in parallel segments written in place.
+fn segmented(
+    net: &Net,
+    url: &str,
+    len: u64,
+    dir: &Path,
+    declared: Option<&str>,
+    progress: &Sender<download::Progress>,
+) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let tmp = dir.join(temp_name());
+    let file = fs::File::create(&tmp)?;
+    file.set_len(len)?;
+    drop(file);
+    let _ = progress.send(download::Progress::DownloadStart(Some(len)));
+    let counter = AtomicU64::new(0);
+    let parts = CONNECTIONS as u64;
+    let step = len.div_ceil(parts).max(1);
+    let ranges: Vec<(u64, u64)> = (0..parts)
+        .map(|i| (i * step, ((i + 1) * step).min(len)))
+        .filter(|(a, b)| a < b)
+        .collect();
+    let result = with_progress(&counter, progress, || -> io::Result<()> {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = ranges
+                .iter()
+                .map(|&(start, end)| {
+                    let (tmp, counter) = (&tmp, &counter);
+                    s.spawn(move || -> io::Result<()> {
+                        let response = net
+                            .get(url)
+                            .set("Range", &format!("bytes={start}-{}", end - 1))
+                            .call()
+                            .map_err(io::Error::other)?;
+                        if response.status() != 206 {
+                            return Err(io::Error::other("no Range support for a segment"));
+                        }
+                        let mut out = fs::OpenOptions::new().write(true).open(tmp)?;
+                        out.seek(SeekFrom::Start(start))?;
+                        let mut out = BufWriter::with_capacity(1 << 20, out);
+                        let mut reader = response.into_reader().take(end - start);
+                        let mut buffer = vec![0u8; 256 << 10];
+                        let mut got = 0u64;
+                        loop {
+                            let n = reader.read(&mut buffer)?;
+                            if n == 0 {
+                                break;
+                            }
+                            out.write_all(&buffer[..n])?;
+                            got += n as u64;
+                            counter.fetch_add(n as u64, Ordering::Relaxed);
+                        }
+                        out.flush()?;
+                        if got != end - start {
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "short segment",
+                            ));
+                        }
+                        Ok(())
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .try_for_each(|h| h.join().expect("segment worker panicked"))
+        })
+    });
+    match result {
+        Ok(()) => settle(dir, &tmp, declared),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
     }
 }
 
-/// Tries to reconstruct the pack from the last one downloaded for this id,
-/// fetching only the entries that changed. `None` when there is no earlier
-/// download to diff against (the very first time, which downloads in full
-/// as usual) or the server gave a hash (vanilla must match it exactly, and a
-/// rebuilt pack's "unchanged" entries rarely still have byte-identical
-/// headers). Errors are all the ways this can safely give up partway.
-fn try_delta(
-    downloads_dir: &Path,
-    request: &Request,
-    headers: &[(&'static str, String)],
-) -> Option<Result<PathBuf, io::Error>> {
-    if request.sha1.is_some() {
-        return None;
-    }
-    let delta_dir = delta_dir(downloads_dir);
-    let manifest = load_manifest(&delta_dir, request.id)?;
-    Some(reconstruct(
-        downloads_dir,
-        &delta_dir,
-        request,
-        headers,
-        &manifest,
-    ))
-}
-fn reconstruct(
-    downloads_dir: &Path,
-    delta_dir: &Path,
-    request: &Request,
-    headers: &[(&'static str, String)],
-    manifest: &Manifest,
+/// A `200 OK` body (a server that ignores `Range`), streamed to disk.
+fn stream(
+    response: ureq::Response,
+    dir: &Path,
+    declared: Option<&str>,
+    progress: &Sender<download::Progress>,
 ) -> io::Result<PathBuf> {
-    let old_file = io::BufReader::new(fs::File::open(&manifest.previous_file)?);
-    let mut old = zip::ZipArchive::new(old_file).map_err(io::Error::other)?;
-    let known: HashMap<&str, &EntryKey> = manifest
+    fs::create_dir_all(dir)?;
+    let size = response
+        .header("Content-Length")
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    if size.is_some_and(|s| s > download::MAX_SIZE) {
+        return Err(io::Error::other("the pack is bigger than the download limit"));
+    }
+    let _ = progress.send(download::Progress::DownloadStart(size));
+    let tmp = dir.join(temp_name());
+    let counter = AtomicU64::new(0);
+    let result = with_progress(&counter, progress, || -> io::Result<()> {
+        let mut out = BufWriter::with_capacity(1 << 20, fs::File::create(&tmp)?);
+        let mut reader = response.into_reader().take(download::MAX_SIZE + 1);
+        let mut buffer = vec![0u8; 256 << 10];
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(&buffer[..n])?;
+            if counter.fetch_add(n as u64, Ordering::Relaxed) + n as u64 > download::MAX_SIZE {
+                return Err(io::Error::other("the pack is bigger than the download limit"));
+            }
+        }
+        out.flush()
+    });
+    match result {
+        Ok(()) => settle(dir, &tmp, declared),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// The pack rebuilt from `previous` plus the changed entries' spans, or an
+/// error when that isn't possible or not worth it.
+#[allow(clippy::too_many_arguments)]
+fn delta(
+    net: &Net,
+    url: &str,
+    len: u64,
+    tail: Vec<u8>,
+    previous: &Manifest,
+    dir: &Path,
+    progress: &Sender<download::Progress>,
+) -> io::Result<(PathBuf, Vec<EntryKey>)> {
+    let mut old = zip::ZipArchive::new(io::BufReader::new(fs::File::open(
+        &previous.previous_file,
+    )?))
+    .map_err(io::Error::other)?;
+    let known: HashMap<&str, &EntryKey> = previous
         .entries
         .iter()
         .map(|e| (e.name.as_str(), e))
         .collect();
 
-    let reader = HttpRangeReader::open(request.url.clone(), headers.to_vec())?;
-    let mut live = zip::ZipArchive::new(reader).map_err(io::Error::other)?;
+    let tail_at = len - tail.len() as u64;
+    let sparse = Sparse::new(len, tail_at, tail);
+    let mut live = match zip::ZipArchive::new(sparse.clone()) {
+        Ok(live) => live,
+        Err(_) if tail_at > 0 => {
+            // The central directory starts before the first tail: its start from the end
+            // record when the tail holds one, else a bigger tail.
+            let start = directory_start(&sparse, tail_at)
+                .filter(|&s| s < tail_at)
+                .unwrap_or_else(|| len.saturating_sub(TAIL_RETRY));
+            let bytes = net.range(url, start, tail_at, &AtomicU64::new(0))?;
+            sparse.add(start, bytes);
+            zip::ZipArchive::new(sparse.clone()).map_err(io::Error::other)?
+        }
+        Err(e) => return Err(io::Error::other(e)),
+    };
 
+    // Each entry's span runs from its local header to the next one's (or the
+    // central directory): header, data and data descriptor.
     let mut keys = Vec::with_capacity(live.len());
-    let (mut total, mut changed) = (0u64, 0u64);
+    let mut starts = Vec::with_capacity(live.len());
+    let mut directory = len;
     for i in 0..live.len() {
         let entry = live.by_index_data(i).map_err(io::Error::other)?;
-        let key = EntryKey {
+        keys.push(EntryKey {
             name: entry.name().map_err(io::Error::other)?.into_owned(),
             crc32: entry.crc32(),
             size: entry.size(),
             compressed_size: entry.compressed_size(),
-        };
-        total += key.compressed_size;
-        if known.get(key.name.as_str()) != Some(&&key) {
-            changed += key.compressed_size;
-        }
-        keys.push(key);
+        });
+        starts.push(entry.header_start());
+        directory = directory.min(entry.central_header_start());
     }
-    if total > 0 && changed as f64 > total as f64 * WORTHWHILE_CHANGE {
-        return Err(io::Error::other(
-            "most of the pack changed: a plain download is faster",
-        ));
+    let mut sorted: Vec<u64> = starts.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let span_end = |start: u64| {
+        let i = sorted.partition_point(|&s| s <= start);
+        sorted.get(i).copied().unwrap_or(directory).min(directory)
+    };
+    let mut wanted: Vec<(u64, u64)> = keys
+        .iter()
+        .zip(&starts)
+        .filter(|(key, _)| known.get(key.name.as_str()) != Some(key))
+        .map(|(_, &start)| (start, span_end(start)))
+        .filter(|(a, b)| a < b)
+        .collect();
+    wanted.sort_unstable();
+    let mut ranges: Vec<(u64, u64)> = Vec::new();
+    for (start, end) in wanted {
+        match ranges.last_mut() {
+            Some(last) if start <= last.1 + MERGE_GAP => last.1 = last.1.max(end),
+            _ => ranges.push((start, end)),
+        }
+    }
+    let fetch: u64 = ranges.iter().map(|(a, b)| b - a).sum();
+    if fetch as f64 > len as f64 * WORTHWHILE_CHANGE {
+        return Err(io::Error::other("most of the pack changed"));
     }
 
-    let mut writer = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-    for (i, key) in keys.iter().enumerate() {
-        let unchanged = known.get(key.name.as_str()) == Some(&key);
-        if unchanged {
-            let index = old.index_for_name(&key.name).ok_or_else(|| {
-                io::Error::other("an unchanged entry vanished from the cached file")
-            })?;
-            let file = old.by_index_raw(index).map_err(io::Error::other)?;
-            writer.raw_copy_file(file).map_err(io::Error::other)?;
-        } else {
-            let file = live.by_index_raw(i).map_err(io::Error::other)?;
-            writer.raw_copy_file(file).map_err(io::Error::other)?;
+    let _ = progress.send(download::Progress::DownloadStart(Some(fetch)));
+    let counter = AtomicU64::new(0);
+    let bodies = with_progress(&counter, progress, || {
+        fetch_all(net, url, &ranges, &counter)
+    })?;
+    for (&(start, _), body) in ranges.iter().zip(bodies) {
+        sparse.add(start, body);
+    }
+
+    fs::create_dir_all(dir)?;
+    let tmp = dir.join(temp_name());
+    let built = (|| -> io::Result<()> {
+        let out = BufWriter::with_capacity(1 << 20, fs::File::create(&tmp)?);
+        let mut writer = zip::ZipWriter::new(out);
+        for (i, key) in keys.iter().enumerate() {
+            if known.get(key.name.as_str()) == Some(&key) {
+                let index = old.index_for_name(&key.name).ok_or_else(|| {
+                    io::Error::other("an unchanged entry vanished from the cached file")
+                })?;
+                let file = old.by_index_raw(index).map_err(io::Error::other)?;
+                writer.raw_copy_file(file).map_err(io::Error::other)?;
+            } else {
+                let file = live.by_index_raw(i).map_err(io::Error::other)?;
+                writer.raw_copy_file(file).map_err(io::Error::other)?;
+            }
         }
+        writer.finish().map_err(io::Error::other)?.flush()
+    })();
+    if let Err(e) = built {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
     }
-    let bytes = writer.finish().map_err(io::Error::other)?.into_inner();
-    if bytes.len() as u64 > download::MAX_SIZE {
-        return Err(io::Error::other(
-            "the reconstructed pack is bigger than the download limit",
-        ));
-    }
-    let target = downloads_dir.join(hex(&Sha1::digest(&bytes)));
-    fs::create_dir_all(downloads_dir)?;
-    fs::write(&target, &bytes)?;
     log::info!(
-        "Horizon: pack {:032x} reconstructed, {changed} of {total} compressed bytes fetched",
-        request.id
+        "Oteria: pack {url} rebuilt from the cache, {fetch} of {len} bytes fetched in {} ranges",
+        ranges.len()
     );
-    save_manifest(
-        delta_dir,
-        request.id,
-        &Manifest {
-            previous_file: target.clone(),
-            entries: keys,
-        },
-    );
-    Ok(target)
+    Ok((settle(dir, &tmp, None)?, keys))
 }
 
-/// One request: the delta path when it applies and works, else vanilla's own
-/// [`download::download_file`] (which still, by itself, reuses an exact
-/// hash match with no network at all).
-fn download_one(
+/// The fast path for one request; errors fall back to vanilla's download.
+fn fast(
+    net: &Net,
     downloads_dir: &Path,
     request: &Request,
-    headers: &[(&'static str, String)],
     progress: &Sender<download::Progress>,
-) -> Result<PathBuf, String> {
-    if let Some(result) = try_delta(downloads_dir, request, headers) {
-        match result {
-            Ok(path) => {
-                let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                let _ = progress.send(download::Progress::DownloadStart(Some(size)));
-                let _ = progress.send(download::Progress::Bytes(size));
-                return Ok(path);
-            }
-            Err(e) => log::debug!(
-                "Horizon: incremental download of pack {:032x} skipped: {e}",
-                request.id
-            ),
+) -> io::Result<PathBuf> {
+    let dir = downloads_dir.join(horizon_protocol::crypto::uuid_string(request.id));
+    let delta_dir = delta_dir(downloads_dir);
+    // A declared hash already on disk: vanilla's own cache hit, no network.
+    if let Some(sha1) = &request.sha1 {
+        let path = dir.join(sha1);
+        if path.exists() && sha1_of(&path).is_ok_and(|actual| &actual == sha1) {
+            log::info!("Horizon: returning cached file since actual hash matches requested");
+            touch(&path);
+            return Ok(path);
         }
     }
+    let previous = load_manifest(&delta_dir, request.id)
+        .filter(|m| m.previous_file.is_file())
+        .filter(|_| request.sha1.is_none());
+    let conditional = previous.as_ref().filter(|m| m.url == request.url);
+    let started = Instant::now();
+    let (path, etag, last_modified, entries) = match probe(net, &request.url, conditional)? {
+        Probe::NotModified => {
+            let Some(m) = conditional else {
+                return Err(io::Error::other("304 Not Modified to a plain request"));
+            };
+            touch(&m.previous_file);
+            log::info!(
+                "Oteria: pack {} not modified, reused from the cache",
+                request.url
+            );
+            let size = fs::metadata(&m.previous_file).map(|m| m.len()).unwrap_or(0);
+            let _ = progress.send(download::Progress::DownloadStart(Some(size)));
+            let _ = progress.send(download::Progress::Bytes(size));
+            return Ok(m.previous_file.clone());
+        }
+        Probe::Whole(response) => {
+            let etag = response.header("ETag").map(str::to_owned);
+            let last_modified = response.header("Last-Modified").map(str::to_owned);
+            let path = stream(response, &dir, request.sha1.as_deref(), progress)?;
+            (path, etag, last_modified, None)
+        }
+        Probe::Partial {
+            len,
+            tail,
+            etag,
+            last_modified,
+        } if tail.len() as u64 == len => {
+            // A pack smaller than the first request: it already came whole.
+            fs::create_dir_all(&dir)?;
+            let tmp = dir.join(temp_name());
+            fs::write(&tmp, &tail)?;
+            let _ = progress.send(download::Progress::DownloadStart(Some(len)));
+            let _ = progress.send(download::Progress::Bytes(len));
+            let path = settle(&dir, &tmp, request.sha1.as_deref())?;
+            (path, etag, last_modified, None)
+        }
+        Probe::Partial {
+            len,
+            tail,
+            etag,
+            last_modified,
+        } => {
+            let rebuilt = previous.as_ref().and_then(|m| {
+                delta(net, &request.url, len, tail, m, &dir, progress)
+                    .inspect_err(|e| log::debug!("Oteria: no partial pack download: {e}"))
+                    .ok()
+            });
+            match rebuilt {
+                Some((path, entries)) => (path, etag, last_modified, Some(entries)),
+                None if len >= SEGMENTED_MIN => {
+                    let path =
+                        segmented(net, &request.url, len, &dir, request.sha1.as_deref(), progress)?;
+                    (path, etag, last_modified, None)
+                }
+                None => {
+                    let response = net.get(&request.url).call().map_err(io::Error::other)?;
+                    let path = stream(response, &dir, request.sha1.as_deref(), progress)?;
+                    (path, etag, last_modified, None)
+                }
+            }
+        }
+    };
+    log::info!(
+        "Oteria: pack {} ready in {} ms",
+        request.url,
+        started.elapsed().as_millis()
+    );
+    if request.sha1.is_none() {
+        let entries = match entries {
+            Some(entries) => Some(entries),
+            None => snapshot(&path).ok(),
+        };
+        if let Some(entries) = entries {
+            save_manifest(
+                &delta_dir,
+                request.id,
+                &Manifest {
+                    previous_file: path.clone(),
+                    entries,
+                    url: request.url.clone(),
+                    etag,
+                    last_modified,
+                },
+            );
+        }
+    }
+    Ok(path)
+}
+
+fn download_one(
+    net: &Net,
+    downloads_dir: &Path,
+    request: &Request,
+    progress: &Sender<download::Progress>,
+) -> Result<PathBuf, String> {
+    match fast(net, downloads_dir, request, progress) {
+        Ok(path) => return Ok(path),
+        Err(e) => log::warn!(
+            "Oteria: fast download of {} failed ({e}), downloading it plainly",
+            request.url
+        ),
+    }
     let id = horizon_protocol::crypto::uuid_string(request.id);
-    let result = download::download_file(
+    download::download_file(
         &downloads_dir.join(&id),
         request,
-        headers,
+        &net.headers,
         download::MAX_SIZE,
         progress,
-    );
-    if let Ok(path) = &result {
-        remember(downloads_dir, request, path);
-    }
-    result
+    )
 }
 
 type Job = (
@@ -433,15 +832,17 @@ type Job = (
     Sender<download::Progress>,
 );
 fn run(
+    agent: &ureq::Agent,
     dir: &Path,
     requests: &[Request],
     headers: &[(&'static str, String)],
     progress: &Sender<download::Progress>,
 ) -> Batch {
+    let net = Net::new(agent.clone(), headers);
     let mut batch = Batch::default();
     for request in requests {
         let _ = progress.send(download::Progress::RequestStart);
-        let result = download_one(dir, request, headers, progress);
+        let result = download_one(&net, dir, request, progress);
         let _ = progress.send(download::Progress::RequestFinished(result.is_ok()));
         match result {
             Ok(path) => batch.downloaded.push((request.id, path)),
@@ -455,8 +856,7 @@ fn run(
 }
 
 /// [`download::Queue`]'s own shape, so `game/server_packs.rs` only swaps its
-/// type: batches download in order, on one thread, trying the incremental
-/// path first for each pack with no declared hash.
+/// type: batches download in order, on one thread with one connection pool.
 pub(super) struct DeltaQueue {
     jobs: Sender<Job>,
     done: Receiver<Batch>,
@@ -464,17 +864,17 @@ pub(super) struct DeltaQueue {
 impl DeltaQueue {
     pub(super) fn open(dir: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(&dir)?;
-        // `DownloadQueue.MAX_KEPT_PACKS`: kept in step with
-        // `server_packs::download`'s own cleanup, since both share this folder.
+        // `DownloadQueue.MAX_KEPT_PACKS`, as `server_packs::download` keeps it.
         download::vacuum(&dir, 20);
         let (jobs, todo) = channel::<Job>();
         let (finished, done) = channel();
         std::thread::Builder::new()
             .name("pack-delta-queue".into())
             .spawn(move || {
+                let agent = agent();
                 for (requests, headers, progress) in todo {
                     if finished
-                        .send(run(&dir, &requests, &headers, &progress))
+                        .send(run(&agent, &dir, &requests, &headers, &progress))
                         .is_err()
                     {
                         break;
@@ -499,32 +899,28 @@ impl DeltaQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use std::net::TcpListener;
 
     fn scratch() -> PathBuf {
         use std::hash::{BuildHasher, RandomState};
-        let n = RandomState::new().hash_one(std::time::Instant::now());
-        let dir = std::env::temp_dir().join(format!("horizon-pack-delta-{n:016x}"));
+        let n = RandomState::new().hash_one(Instant::now());
+        let dir = std::env::temp_dir().join(format!("oteria-pack-fetch-{n:016x}"));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
-
-    /// A one-shot zip, built with the real `zip` crate so its local headers,
-    /// central directory and end record are exactly what a real pack's are.
     fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
         let mut w = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
         for &(name, body) in files {
             w.start_file(name, options).unwrap();
-            io::Write::write_all(&mut w, body).unwrap();
+            w.write_all(body).unwrap();
         }
         w.finish().unwrap().into_inner()
     }
     fn names_and_bytes(path: &Path) -> Vec<(String, Vec<u8>)> {
         let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
-        (0..archive.len())
+        let mut out: Vec<_> = (0..archive.len())
             .map(|i| {
                 let mut file = archive.by_index(i).unwrap();
                 let name = file.name().unwrap().into_owned();
@@ -532,320 +928,169 @@ mod tests {
                 file.read_to_end(&mut body).unwrap();
                 (name, body)
             })
-            .collect()
+            .collect();
+        out.sort();
+        out
     }
-
-    /// Answers Range requests against `body`, one TCP connection each (as
-    /// every real request here is), until `max_requests` or 300ms pass with
-    /// none pending: the bytes sent across however many actually came, since
-    /// how many that is depends on how `zip` happens to batch its reads.
-    fn serve_ranges(body: Vec<u8>, max_requests: usize) -> (String, std::thread::JoinHandle<u64>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let url = format!("http://{}/pack.zip", listener.local_addr().unwrap());
-        let handle = std::thread::spawn(move || {
-            let mut sent = 0u64;
-            let mut served = 0;
-            let mut idle_since = std::time::Instant::now();
-            while served < max_requests {
-                let (mut stream, _) = match listener.accept() {
-                    Ok(pair) => pair,
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        if served > 0 && idle_since.elapsed() > Duration::from_millis(300) {
-                            break;
-                        }
-                        std::thread::sleep(Duration::from_millis(5));
-                        continue;
-                    }
-                    Err(_) => break,
-                };
-                stream.set_nonblocking(false).unwrap();
-                let mut request = Vec::new();
-                let mut buf = [0u8; 4096];
-                while !request.ends_with(b"\r\n\r\n") {
-                    let n = stream.read(&mut buf).unwrap();
-                    request.extend_from_slice(&buf[..n]);
-                }
-                let text = String::from_utf8_lossy(&request);
-                let range = text
-                    .lines()
-                    .find_map(|l| l.strip_prefix("Range: bytes=").map(str::trim))
-                    .expect("every request here sets Range");
-                // Either a suffix range (`-N`: the last N bytes) or `start-end`.
-                let (start, end): (u64, u64) = match range.strip_prefix('-') {
-                    Some(suffix) => {
-                        let n: u64 = suffix.parse().unwrap();
-                        (
-                            body.len() as u64 - n.min(body.len() as u64),
-                            body.len() as u64 - 1,
-                        )
-                    }
-                    None => {
-                        let (s, e) = range.split_once('-').unwrap();
-                        let end = if e.is_empty() {
-                            body.len() as u64 - 1
-                        } else {
-                            e.parse().unwrap()
-                        };
-                        (s.parse().unwrap(), end.min(body.len() as u64 - 1))
-                    }
-                };
-                let slice = &body[start as usize..=end as usize];
-                sent += slice.len() as u64;
-                let head = format!(
-                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len(),
-                    slice.len()
-                );
-                stream.write_all(head.as_bytes()).unwrap();
-                stream.write_all(slice).unwrap();
-                served += 1;
-                idle_since = std::time::Instant::now();
-            }
-            sent
-        });
-        (url, handle)
-    }
-
-    /// Content that deflate cannot shrink away, so this entry's size in the
-    /// archive stays close to `n` bytes: large enough next to the rest of
-    /// the fixture that skipping it is a clearly measurable saving.
+    /// Bytes deflate can't shrink, so an entry's size stays measurable.
     fn filler(n: usize, seed: u8) -> Vec<u8> {
+        let mut x = u32::from(seed).wrapping_mul(2_654_435_761) | 1;
         (0..n)
-            .map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed) ^ ((i >> 3) as u8))
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
             .collect()
+    }
+
+    /// Serves `body` with Range and `ETag` support on as many connections
+    /// as come, until the test ends; counts the body bytes it sent.
+    struct Server {
+        url: String,
+        sent: Arc<AtomicU64>,
+    }
+    fn serve(body: Vec<u8>, etag: &'static str, ranges: bool) -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/pack.zip", listener.local_addr().unwrap());
+        let sent = Arc::new(AtomicU64::new(0));
+        let body = Arc::new(body);
+        let counter = sent.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let (body, counter) = (body.clone(), counter.clone());
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !request.ends_with(b"\r\n\r\n") {
+                        match stream.read(&mut buf) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => request.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                    let header = |name: &str| {
+                        text.lines()
+                            .find_map(|l| l.strip_prefix(name).map(|v| v.trim().to_owned()))
+                    };
+                    if header("if-none-match:").as_deref() == Some(etag) {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        return;
+                    }
+                    let len = body.len() as u64;
+                    let range = header("range: bytes=").filter(|_| ranges);
+                    let partial = "206 Partial Content";
+                    let (status, start, end) = match range {
+                        None => ("200 OK", 0, len),
+                        Some(r) => match r.strip_prefix('-') {
+                            Some(n) => (partial, len - n.parse::<u64>().unwrap().min(len), len),
+                            None => {
+                                let (a, b) = r.split_once('-').unwrap();
+                                let b = if b.is_empty() {
+                                    len
+                                } else {
+                                    b.parse::<u64>().unwrap() + 1
+                                };
+                                (partial, a.parse().unwrap(), b.min(len))
+                            }
+                        },
+                    };
+                    let slice = &body[start as usize..end as usize];
+                    let mut head = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nETag: {etag}\r\nConnection: close\r\n",
+                        slice.len()
+                    );
+                    if status == partial {
+                        head += &format!("Content-Range: bytes {start}-{}/{len}\r\n", end - 1);
+                    }
+                    head += "\r\n";
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(slice);
+                    counter.fetch_add(slice.len() as u64, Ordering::Relaxed);
+                });
+            }
+        });
+        Server { url, sent }
+    }
+    fn fetch(dir: &Path, id: u128, url: &str, sha1: Option<String>) -> io::Result<PathBuf> {
+        let (tx, _rx) = channel();
+        let net = Net::new(agent(), &[]);
+        fast(
+            &net,
+            dir,
+            &Request {
+                id,
+                url: url.to_owned(),
+                sha1,
+            },
+            &tx,
+        )
     }
 
     #[test]
-    fn a_reconstructed_pack_reuses_unchanged_entries_and_drops_removed_ones() {
+    fn a_changed_pack_fetches_only_its_changed_entries() {
         let dir = scratch();
-        let old_path = dir.join("old.zip");
-        let unchanged = filler(4000, 1);
-        fs::write(
-            &old_path,
-            // `a.txt` first and large: its bytes must never cross the wire again.
-            zip_of(&[
-                ("a.txt", &unchanged),
-                ("b.txt", b"will change"),
-                ("c.txt", b"will be removed"),
-            ]),
-        )
-        .unwrap();
-        let delta = delta_dir(&dir);
-        save_manifest(
-            &delta,
-            7,
-            &Manifest {
-                previous_file: old_path.clone(),
-                entries: snapshot(&old_path).unwrap(),
-            },
-        );
-        let new_body = zip_of(&[
-            ("a.txt", &unchanged),
-            ("b.txt", b"it changed now"),
-            ("d.txt", b"brand new"),
-        ]);
-        let (url, server) = serve_ranges(new_body.clone(), 10);
-        let request = Request {
-            id: 7,
-            url,
-            sha1: None,
-        };
-        let result = reconstruct(
-            &dir,
-            &delta,
-            &request,
-            &[],
-            &load_manifest(&delta, 7).unwrap(),
-        )
-        .unwrap();
-        let sent = server.join().unwrap();
-        assert!(
-            sent < new_body.len() as u64,
-            "a.txt's bytes should not have been fetched again: {sent} of {}",
-            new_body.len()
-        );
+        let big = filler(40_000, 1);
+        let old = zip_of(&[("a.png", &big), ("b.txt", b"old"), ("c.txt", b"gone")]);
+        let server = serve(old, "\"v1\"", true);
+        let first = fetch(&dir, 7, &server.url, None).unwrap();
+        assert_eq!(names_and_bytes(&first).len(), 3);
 
-        let mut entries = names_and_bytes(&result);
-        entries.sort();
+        let new = zip_of(&[("a.png", &big), ("b.txt", b"it changed"), ("d.txt", b"new")]);
+        let new_len = new.len() as u64;
+        let server = serve(new, "\"v2\"", true);
+        let second = fetch(&dir, 7, &server.url, None).unwrap();
+        let sent = server.sent.load(Ordering::Relaxed);
+        assert!(sent < new_len / 2, "a.png came again: {sent} of {new_len}");
         assert_eq!(
-            entries,
+            names_and_bytes(&second),
             [
-                ("a.txt".to_owned(), unchanged),
-                ("b.txt".to_owned(), b"it changed now".to_vec()),
-                ("d.txt".to_owned(), b"brand new".to_vec()),
+                ("a.png".to_owned(), big),
+                ("b.txt".to_owned(), b"it changed".to_vec()),
+                ("d.txt".to_owned(), b"new".to_vec()),
             ]
         );
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn the_first_download_has_nothing_to_diff_against() {
+    fn an_unmodified_pack_is_reused_without_its_body() {
         let dir = scratch();
-        let request = Request {
-            id: 1,
-            url: "http://127.0.0.1:9/dead.zip".into(),
-            sha1: None,
-        };
-        assert!(try_delta(&dir, &request, &[]).is_none());
+        let body = zip_of(&[("a.png", &filler(20_000, 2))]);
+        let server = serve(body, "\"same\"", true);
+        let first = fetch(&dir, 3, &server.url, None).unwrap();
+        let before = server.sent.load(Ordering::Relaxed);
+        let second = fetch(&dir, 3, &server.url, None).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(server.sent.load(Ordering::Relaxed), before, "304 sends no body");
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn a_declared_hash_never_tries_the_incremental_path() {
+    fn a_segmented_download_is_byte_identical_and_checks_the_hash() {
         let dir = scratch();
-        let old_path = dir.join("old.zip");
-        fs::write(&old_path, zip_of(&[("a.txt", b"x")])).unwrap();
-        save_manifest(
-            &delta_dir(&dir),
-            2,
-            &Manifest {
-                previous_file: old_path,
-                entries: snapshot(&dir.join("old.zip")).unwrap(),
-            },
-        );
-        let request = Request {
-            id: 2,
-            url: "http://127.0.0.1:9/p.zip".into(),
-            sha1: Some("0".repeat(40)),
-        };
-        assert!(try_delta(&dir, &request, &[]).is_none());
+        let body = zip_of(&[("a.png", &filler(50_000, 3)), ("b.png", &filler(9_000, 4))]);
+        let sha1 = hex(&Sha1::digest(&body));
+        let server = serve(body.clone(), "\"x\"", true);
+        let path = fetch(&dir, 9, &server.url, Some(sha1.clone())).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), body);
+        assert!(path.ends_with(&sha1));
+        assert!(fetch(&dir, 10, &server.url, Some("0".repeat(40))).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn a_vacuumed_cache_file_falls_back_cleanly() {
+    fn a_server_without_ranges_still_downloads_in_one_pass() {
         let dir = scratch();
-        let delta = delta_dir(&dir);
-        save_manifest(
-            &delta,
-            3,
-            &Manifest {
-                previous_file: dir.join("gone.zip"),
-                entries: Vec::new(),
-            },
-        );
-        let request = Request {
-            id: 3,
-            url: "http://127.0.0.1:9/p.zip".into(),
-            sha1: None,
-        };
-        assert!(
-            reconstruct(
-                &dir,
-                &delta,
-                &request,
-                &[],
-                &load_manifest(&delta, 3).unwrap()
-            )
-            .is_err()
-        );
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_server_without_range_support_fails_the_attempt() {
-        let dir = scratch();
-        let old_path = dir.join("old.zip");
-        fs::write(&old_path, zip_of(&[("a.txt", b"x")])).unwrap();
-        save_manifest(
-            &delta_dir(&dir),
-            4,
-            &Manifest {
-                previous_file: old_path,
-                entries: snapshot(&dir.join("old.zip")).unwrap(),
-            },
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/pack.zip", listener.local_addr().unwrap());
-        let body = zip_of(&[("a.txt", b"x")]);
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 4096];
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                let n = stream.read(&mut buf).unwrap();
-                request.extend_from_slice(&buf[..n]);
-            }
-            let head = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream.write_all(head.as_bytes()).unwrap();
-            stream.write_all(&body).unwrap();
-        });
-        let request = Request {
-            id: 4,
-            url,
-            sha1: None,
-        };
-        let result = reconstruct(
-            &dir,
-            &delta_dir(&dir),
-            &request,
-            &[],
-            &load_manifest(&delta_dir(&dir), 4).unwrap(),
-        );
-        assert!(result.is_err());
-        server.join().unwrap();
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn an_almost_entirely_changed_pack_gives_up_for_a_plain_download() {
-        let dir = scratch();
-        let old_path = dir.join("old.zip");
-        fs::write(
-            &old_path,
-            zip_of(&[("a.txt", b"old a"), ("b.txt", b"old b")]),
-        )
-        .unwrap();
-        let delta = delta_dir(&dir);
-        save_manifest(
-            &delta,
-            5,
-            &Manifest {
-                previous_file: old_path,
-                entries: snapshot(&dir.join("old.zip")).unwrap(),
-            },
-        );
-        let new_body = zip_of(&[("a.txt", b"new a"), ("b.txt", b"new b")]);
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/pack.zip", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 4096];
-            let mut request = Vec::new();
-            while !request.ends_with(b"\r\n\r\n") {
-                let n = stream.read(&mut buf).unwrap();
-                request.extend_from_slice(&buf[..n]);
-            }
-            let head = format!(
-                "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-{}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                new_body.len() - 1,
-                new_body.len(),
-                new_body.len()
-            );
-            stream.write_all(head.as_bytes()).unwrap();
-            stream.write_all(&new_body).unwrap();
-        });
-        let request = Request {
-            id: 5,
-            url,
-            sha1: None,
-        };
-        let result = reconstruct(
-            &dir,
-            &delta,
-            &request,
-            &[],
-            &load_manifest(&delta, 5).unwrap(),
-        );
-        assert!(
-            result.is_err(),
-            "both entries changed: not worth the per-entry requests"
-        );
-        server.join().unwrap();
+        let body = zip_of(&[("a.png", &filler(5_000, 5))]);
+        let server = serve(body.clone(), "\"y\"", false);
+        let path = fetch(&dir, 11, &server.url, None).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), body);
+        assert_eq!(server.sent.load(Ordering::Relaxed), body.len() as u64);
         fs::remove_dir_all(dir).unwrap();
     }
 }

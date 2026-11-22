@@ -48,9 +48,22 @@ impl Game<'_> {
     pub(super) fn screen_effect_scale(&self) -> f32 {
         self.settings.file.double("screenEffectScale") as f32
     }
+    /// Whether Blindness is on and drawn (Oteria's Clear View may leave its fog out).
+    pub(super) fn blindness_drawn(&self) -> bool {
+        self.potions.effects.get("blindness").is_some()
+            && !self.settings.extras.pvp.clear_view.hides_blindness()
+    }
+    /// Whether Darkness is on and drawn (Oteria's Clear View may leave it out).
+    pub(super) fn darkness_drawn(&self) -> bool {
+        self.potions.effects.get("darkness").is_some()
+            && !self.settings.extras.pvp.clear_view.hides_darkness()
+    }
     /// `LocalPlayer.getEffectBlendFactor(NAUSEA, partial)`: 0 without the effect.
     pub(super) fn nausea_blend(&self, partial: f32) -> f32 {
-        if self.potions.effects.get("nausea").is_none() {
+        // Oteria's Clear View leaves the wobble and the overlay out.
+        if self.potions.effects.get("nausea").is_none()
+            || self.settings.extras.pvp.clear_view.hides_nausea()
+        {
             return 0.0;
         }
         let fx = &self.screen_fx;

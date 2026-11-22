@@ -561,6 +561,8 @@ pub(crate) struct RowView<'a> {
     /// A key binding, drawn as a button rather than a value between arrows: whether it waits for
     /// its key.
     pub(crate) key: Option<bool>,
+    /// A row of boxes ([`Value::Segments`]): their names and the chosen one.
+    pub(crate) segments: Option<(&'a [String], usize)>,
 }
 
 /// A setting's row at `y`, its name on the left and its control on the right.
@@ -576,6 +578,7 @@ pub(crate) fn row(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns, y: f32
         focused,
         held,
         key,
+        segments,
     } = view;
     let rect = cols.row(y);
     let (tx, tw) = cols.track();
@@ -619,8 +622,21 @@ pub(crate) fn row(batch: &mut HudBatch, atlas: &HudAtlas, cols: &Columns, y: f32
     let ty = y + ((style::ROW - 8.0) / 2.0).floor();
     let lit = live && (hover || held);
     let left = rect[0] + style::INSET;
-    // An action (Calibrate...) is a button across the row, as vanilla's lists have them.
-    if switch.is_none() && slider.is_none() && value.is_none() {
+    if let Some((options, chosen)) = segments {
+        // One box per value across the control, the chosen one pressed in.
+        let n = options.len().max(1) as f32;
+        let gap = 2.0;
+        let bw = ((tw - gap * (n - 1.0)) / n).floor();
+        for (i, option) in options.iter().enumerate() {
+            let bx = tx + i as f32 * (bw + gap);
+            let label = Text::literal(option.as_str());
+            let boxed = [bx, control[1], bw, control[3]];
+            style::button(batch, atlas, boxed, &label, (false, live, i == chosen));
+        }
+        let shown = Text::literal(style::fit(atlas, name, tx - 6.0 - left));
+        batch.text_styled(atlas, &shown, left, ty, color, true);
+    } else if switch.is_none() && slider.is_none() && value.is_none() {
+        // An action (Calibrate...) is a button across the row, as vanilla's lists have them.
         let wide = [left, control[1], right - left, style::CONTROL_H];
         style::button(batch, atlas, wide, &Text::literal(name), (lit, live, false));
     } else {
@@ -1184,6 +1200,9 @@ pub(crate) enum Value {
     Press,
     /// A line to read, which no focus reaches (unlike `Read`) and nothing presses.
     Note,
+    /// A row of boxes, one per value, the chosen one lit: a click picks the box under the
+    /// pointer at once ([`Screen::segment`]); a key or a controller steps it as a choice.
+    Segments { options: Vec<String>, chosen: usize },
 }
 
 /// What a binding row waits for once pressed, by the name the host binds.
@@ -1366,6 +1385,7 @@ impl<R> Row<R> {
                 Some(text.clone())
             }
             Value::Binding(binding) => Some(binding.text()),
+            Value::Segments { options, chosen } => options.get(*chosen).cloned(),
             Value::Press | Value::Note => None,
         }
     }
@@ -1471,6 +1491,10 @@ pub(crate) trait Screen {
     }
     /// A slider row moved to `position`.
     fn slide(&mut self, _s: &mut Settings, _row: Self::Row, _position: f32) {}
+    /// Box `index` of a [`Value::Segments`] row clicked.
+    fn segment(&mut self, _s: &mut Settings, _row: Self::Row, _index: usize) -> Vec<Output> {
+        Vec::new()
+    }
     /// A slider let go of, or stepped by a key: what its change does now that it is done (a
     /// Horizon shader pack saves its options once a drag, not on every move).
     fn slider_released(&mut self) -> Vec<Output> {
@@ -2163,6 +2187,15 @@ impl<S: Screen> Shell<S> {
                 self.did(&[DRAGGED]);
                 vec![DRAGGED]
             }
+            Value::Segments { ref options, .. } if let Some(position) = track => {
+                self.can_change_value = false;
+                let n = options.len().max(1);
+                let index = ((position * n as f32) as usize).min(n - 1);
+                let mut outputs = vec![CLICK];
+                outputs.extend(self.screen.segment(s, row.id, index));
+                self.did(&outputs);
+                outputs
+            }
             _ => {
                 self.can_change_value = false;
                 let mut outputs = vec![CLICK];
@@ -2343,6 +2376,10 @@ impl<S: Screen> Shell<S> {
             focused,
             held: self.dragging == Some(row.id),
             key: row.binding().map(|_| waits),
+            segments: match &row.value {
+                Value::Segments { options, chosen } => Some((options.as_slice(), *chosen)),
+                _ => None,
+            },
         };
         self::row(batch, atlas, cols, y, &view);
         if row.live && matches!(row.value, Value::Choice(_)) {
@@ -2626,7 +2663,11 @@ impl<S: Screen + Default> Hosted for Shell<S> {
             return self.reset(s, row.id);
         }
         // A press on the track sets the value there; on the name, only focuses.
-        let track = (x >= cols.track().0).then(|| cols.slider_at(x));
+        let track = (x >= cols.track().0).then(|| match row.value {
+            // Boxes share the control's width evenly, edge to edge.
+            Value::Segments { .. } => ((x - cols.track().0) / cols.track().1).clamp(0.0, 1.0),
+            _ => cols.slider_at(x),
+        });
         self.activate(s, row, shift, track, self.clicks_step)
     }
     fn opened_focus(&self) -> Option<[f32; 4]> {

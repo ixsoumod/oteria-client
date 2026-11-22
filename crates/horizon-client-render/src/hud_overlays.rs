@@ -682,6 +682,22 @@ pub fn sidebar(
     background: u32,
     header: u32,
 ) -> Vec<GuiDraw> {
+    sidebar_with(w, h, board, objective, font, Some(background), Some(header), true).0
+}
+
+/// [`sidebar`] with Oteria's Scoreboard choices: `numbers` false leaves the scores out (and
+/// their room), a `None` colour draws no fill. Also returns the box it covers, `[x0, y0, x1, y1]`.
+#[allow(clippy::too_many_arguments)]
+pub fn sidebar_with(
+    w: i32,
+    h: i32,
+    board: &crate::scoreboard::Scoreboard,
+    objective: &crate::scoreboard::Objective,
+    font: &Font,
+    background: Option<u32>,
+    header: Option<u32>,
+    numbers: bool,
+) -> (Vec<GuiDraw>, [i32; 4]) {
     use crate::scoreboard::NumberFormat;
     let format = objective.format_or_default(NumberFormat::sidebar_default());
     let mut entries: Vec<_> = board
@@ -706,8 +722,12 @@ pub fn sidebar(
                 None => e.owner_name(),
             }
             .resolve_legacy();
-            let score = e.format_value(&format).resolve_legacy();
-            let score_width = width(font, &score);
+            let score = if numbers {
+                e.format_value(&format).resolve_legacy()
+            } else {
+                Text::literal(String::new())
+            };
+            let score_width = if numbers { width(font, &score) } else { 0 };
             (name, score, score_width)
         })
         .collect();
@@ -729,10 +749,14 @@ pub fn sidebar(
     let left = w - biggest - 3;
     let right = w - 3 + 2;
     let header_y = bottom - count * 9;
-    let mut out = vec![
-        fill(left - 2, header_y - 9 - 1, right, header_y - 1, header),
-        fill(left - 2, header_y - 1, right, bottom, background),
-    ];
+    let mut out = Vec::new();
+    if let Some(header) = header {
+        out.push(fill(left - 2, header_y - 9 - 1, right, header_y - 1, header));
+    }
+    if let Some(background) = background {
+        out.push(fill(left - 2, header_y - 1, right, bottom, background));
+    }
+    let frame = [left - 2, header_y - 9 - 1, right, bottom];
     let white = crate::hud_layout::WHITE;
     text(
         &mut out,
@@ -745,9 +769,11 @@ pub fn sidebar(
     for (i, (name, score, score_width)) in rows.into_iter().enumerate() {
         let y = bottom - (count - i as i32) * 9;
         text(&mut out, name, left, y, white, false);
-        text(&mut out, score, right - score_width, y, white, false);
+        if numbers {
+            text(&mut out, score, right - score_width, y, white, false);
+        }
     }
-    out
+    (out, frame)
 }
 
 /// What `GuiGraphicsExtractor.itemDecorations` draws over a stack.

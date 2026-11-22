@@ -156,6 +156,7 @@ impl Game<'_> {
                 .potions
                 .effects
                 .get("blindness")
+                .filter(|_| self.blindness_drawn())
                 .map(|effect| (effect.duration, effect.duration == -1)),
             darkness: self.darkness_fog(),
             darken_world: self
@@ -377,6 +378,12 @@ impl Game<'_> {
                     return None;
                 }
                 let overlay = e.camera_overlay?;
+                // Oteria's Clear View: no carved pumpkin over the screen.
+                if overlay.ends_with("pumpkinblur")
+                    && self.settings.extras.pvp.clear_view.hides_pumpkin()
+                {
+                    return None;
+                }
                 // `withPath(p -> "textures/" + p + ".png")`: the GUI atlas
                 // names vanilla's textures without the namespace.
                 Some(

@@ -1345,6 +1345,12 @@ fn row(setting: Setting, s: &Settings, out: &EffectiveOutput) -> Row<Item> {
     let item = setting.item;
     let (name, value) = parts(item, s, out);
     let value = match (item.switch(s, out), item.slider(s)) {
+        // Oteria: the GUI scale as four boxes, picked in one click (the cycle moved the screen
+        // under the pointer at each step).
+        _ if item == Item::Vanilla(Opt::GuiScale) => Value::Segments {
+            options: vec![lang::get_or("options.guiScale.auto", "Auto"), "1".into(), "2".into(), "3".into()],
+            chosen: s.gui_scale.min(3) as usize,
+        },
         (Some(on), _) => Value::Switch(on),
         (None, Some(position)) => Value::Slider {
             position,
@@ -1512,6 +1518,15 @@ impl Screen for GraphicsScreen {
     }
     fn slide(&mut self, s: &mut Settings, item: Item, position: f32) {
         item.set_slider(s, position, &self.output);
+    }
+    fn segment(&mut self, s: &mut Settings, item: Item, index: usize) -> Vec<Output> {
+        if item != Item::Vanilla(Opt::GuiScale) {
+            return Vec::new();
+        }
+        // Auto, 1, 2 or 3, kept within what the window holds (`calculate_scale`).
+        let max = crate::window::calculate_scale(self.framebuffer, 0, s.force_unicode) as u32;
+        s.gui_scale = (index as u32).min(max.max(1));
+        vec![Output::Event(Event::Changed)]
     }
     /// With the "Scroll wheel changes settings" extra, the wheel steps a value between `<` `>`
     /// (up goes back); a slider and a tick box leave it to scroll the list.

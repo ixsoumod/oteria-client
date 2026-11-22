@@ -120,7 +120,7 @@ macro_rules! hud {
 }
 
 /// Every tile, in the grid's order.
-pub(super) static TILES: [Tile; 46] = [
+pub(super) static TILES: [Tile; 49] = [
     tile!("oteria.mod.fps", "FPS", icon::GAUGE, Hud, hud!(HudFpsCorner), e => e.pvp.hud.fps),
     tile!("oteria.mod.cps", "CPS", icon::MOUSE, Hud, hud!(HudCpsCorner), e => e.pvp.hud.cps),
     tile!("oteria.mod.keystrokes", "Keystrokes", icon::KEYBOARD, Hud, hud!(HudKeysCorner), e => e.pvp.hud.keys),
@@ -137,11 +137,32 @@ pub(super) static TILES: [Tile; 46] = [
     tile!("oteria.mod.cooldowns", "Cooldowns", icon::CLOCK, Hud, hud!(HudCooldownsCorner), e => e.pvp.hud.cooldowns),
     tile!("oteria.mod.totems", "Totem Counter", icon::CROWN, Hud, hud!(HudTotemsCorner), e => e.pvp.hud.totems),
     tile!("oteria.mod.pots", "Pot Counter", icon::FLASK, Hud, hud!(HudPotsCorner), e => e.pvp.hud.pots),
-    tile!("oteria.mod.saturation", "AppleSkin", icon::FLASK, Hud, &[
+    tile!("oteria.mod.saturation", "Food Saturation", icon::FLASK, Hud, &[
         Item::Pvp(Opt::SaturationHeld),
         Item::Pvp(Opt::SaturationExhaustion),
         Item::Pvp(Opt::SaturationTooltip),
     ], e => e.pvp.saturation.enabled),
+    tile!("oteria.mod.scoreboard", "Scoreboard", icon::LAYOUT, Hud, &[
+        Item::Pvp(Opt::ScoreboardSize),
+        Item::Pvp(Opt::ScoreboardBackground),
+        Item::Pvp(Opt::ScoreboardOpacity),
+        Item::Pvp(Opt::ScoreboardRounded),
+        Item::Pvp(Opt::ScoreboardNumbers),
+    ], e => e.pvp.scoreboard.enabled),
+    tile!("oteria.mod.viewmodel", "Viewmodel", icon::SWORD, Visual, &[
+        Item::Pvp(Opt::ViewMainX),
+        Item::Pvp(Opt::ViewMainY),
+        Item::Pvp(Opt::ViewMainZ),
+        Item::Pvp(Opt::ViewOffX),
+        Item::Pvp(Opt::ViewOffY),
+        Item::Pvp(Opt::ViewOffZ),
+    ], e => e.pvp.viewmodel.enabled),
+    tile!("oteria.mod.clear_view", "Clear View", icon::EYE_OFF, Visual, &[
+        Item::Pvp(Opt::ClearPumpkin),
+        Item::Pvp(Opt::ClearDarkness),
+        Item::Pvp(Opt::ClearBlindness),
+        Item::Pvp(Opt::ClearNausea),
+    ], e => e.pvp.clear_view.enabled),
     tile!("oteria.mod.crystal", "Crystal Optimizer", icon::SPARKLES, Pvp,
         &[Item::Pvp(Opt::CrystalKeep)], e => e.pvp.crystal.enabled),
     tile!("oteria.mod.anchor", "Anchor Optimizer", icon::BULB, Pvp,
@@ -282,7 +303,7 @@ pub(super) static TILES: [Tile; 46] = [
     tile!("oteria.mod.zoom", "Zoom", icon::SEARCH, Utility,
         &[Item::Pvp(Opt::ZoomSmooth), Item::Pvp(Opt::ZoomLevel)], e => e.pvp.zoom.enabled),
     tile!("oteria.mod.music", "Music", icon::VOLUME, Utility,
-        &[Item::Pvp(Opt::MusicLyrics), Item::Pvp(Opt::MusicCard)], e => e.pvp.music.enabled),
+        &[Item::Pvp(Opt::MusicLyrics), Item::Pvp(Opt::MusicDistance), Item::Pvp(Opt::MusicCard)], e => e.pvp.music.enabled),
     tile!("oteria.mod.reconnect", "Auto Reconnect", icon::REFRESH, Utility, &[], e => e.auto_reconnect),
     tile!("oteria.mod.nametag", "Own Name Tag", icon::USER, Utility, &[], e => e.own_name_tag),
 ];

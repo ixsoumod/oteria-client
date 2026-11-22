@@ -299,6 +299,14 @@ impl Game<'_> {
             } else {
                 to_world * native_hooks::hand_pose_matrix(pose)
             };
+            // Oteria's Viewmodel: this hand (its arm and item) moved in view space.
+            let viewmodel = self.settings.extras.pvp.viewmodel;
+            let to_world = if viewmodel.enabled {
+                let [x, y, z] = viewmodel.offset(hand == Hand::Main);
+                to_world * glam::Mat4::from_translation(glam::Vec3::new(x, y, z))
+            } else {
+                to_world
+            };
             // The main hand on its arm, the off hand on the other one.
             let left = self.settings.main_hand_left != (hand == Hand::Off);
             // A Legacy sword held up hides the off hand's shield.
