@@ -270,6 +270,13 @@ impl Game<'_> {
             let new = STORE.with(|s| s.borrow_mut().imported.insert(path.clone()));
             if png && new {
                 self.skin_import(&path);
+                // Kept in the history now: out of the import folder (into `imported/`, beside
+                // it), or each run would take it again on opening the page and wear it over
+                // the skin chosen since.
+                let done = dir.join("imported");
+                if let (Ok(()), Some(name)) = (std::fs::create_dir_all(&done), path.file_name()) {
+                    let _ = std::fs::rename(&path, done.join(name));
+                }
             }
         }
     }

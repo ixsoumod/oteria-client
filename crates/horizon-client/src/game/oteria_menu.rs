@@ -875,7 +875,8 @@ impl Game<'_> {
                 let skins = &mut self.settings.extras.pvp.skins;
                 let worn = match kind {
                     WearKind::Cape => &mut skins.cape,
-                    WearKind::Wings => &mut skins.wings,
+                    WearKind::Hat => &mut skins.hat,
+                    WearKind::Pet => &mut skins.pet,
                     WearKind::Aura => &mut skins.aura,
                 };
                 // The one worn comes off; another one takes its place.
@@ -1089,7 +1090,8 @@ impl Game<'_> {
             status,
             can_upload,
             cape: skins.cape.clone(),
-            wings: skins.wings.clone(),
+            hat: skins.hat.clone(),
+            pet: skins.pet.clone(),
             aura: skins.aura.clone(),
         };
         let extras = &self.settings.extras;

@@ -28,6 +28,7 @@ pub const MICROPHONE_OFF: &str = "gui/sprites/oteria_icons/microphone-off";
 pub const MOON_STARS: &str = "gui/sprites/oteria_icons/moon_stars";
 pub const MOUSE: &str = "gui/sprites/oteria_icons/mouse";
 pub const NUMBERS: &str = "gui/sprites/oteria_icons/numbers";
+pub const PAW: &str = "gui/sprites/oteria_icons/paw";
 pub const PENCIL: &str = "gui/sprites/oteria_icons/pencil";
 pub const PLUS: &str = "gui/sprites/oteria_icons/plus";
 pub const POINTER: &str = "gui/sprites/oteria_icons/pointer";
@@ -53,7 +54,7 @@ pub const WIFI_OFF: &str = "gui/sprites/oteria_icons/wifi-off";
 pub const X: &str = "gui/sprites/oteria_icons/x";
 
 /// Each icon's sprite and PNG: the 32 px ones, then the 20 px ones (`small`).
-pub(crate) const ALL: [(&str, &[u8]); 106] = [
+pub(crate) const ALL: [(&str, &[u8]); 108] = [
     (BOX, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/box.png")),
     (BULB, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/bulb.png")),
     (CAPE, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/cape.png")),
@@ -80,6 +81,7 @@ pub(crate) const ALL: [(&str, &[u8]); 106] = [
     (MOON_STARS, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/moon_stars.png")),
     (MOUSE, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/mouse.png")),
     (NUMBERS, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/numbers.png")),
+    (PAW, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/paw.png")),
     (PENCIL, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/pencil.png")),
     (PLUS, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/plus.png")),
     (POINTER, include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/pointer.png")),
@@ -129,6 +131,7 @@ pub(crate) const ALL: [(&str, &[u8]); 106] = [
     ("gui/sprites/oteria_icons_small/moon_stars", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/moon_stars.png")),
     ("gui/sprites/oteria_icons_small/mouse", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/mouse.png")),
     ("gui/sprites/oteria_icons_small/numbers", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/numbers.png")),
+    ("gui/sprites/oteria_icons_small/paw", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/paw.png")),
     ("gui/sprites/oteria_icons_small/pencil", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/pencil.png")),
     ("gui/sprites/oteria_icons_small/plus", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/plus.png")),
     ("gui/sprites/oteria_icons_small/pointer", include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/small/pointer.png")),

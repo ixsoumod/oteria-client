@@ -1,6 +1,6 @@
 //! The Cosmetics page of Oteria's menu (its t-shirt button): one glass panel in two columns.
 //!
-//! - **Left**: the categories (everything, weapons, capes, wings, auras, hats), each with how
+//! - **Left**: the categories (everything, weapons, capes, auras, hats, pets), each with how
 //!   many it holds and a dot when one of them is worn, then the Skin.
 //! - **Right**: a search field and an "equipped only" filter over the chosen category's cards,
 //!   a grid that scrolls. Each card shows its cosmetic's own model, alone, moving (the game
@@ -74,9 +74,10 @@ pub(super) struct CosmeticsView {
     pub status: Option<(String, bool)>,
     /// Signed in with an account that can take a skin.
     pub can_upload: bool,
-    /// The cape, wings and aura worn (`oteria_art::CAPES`... ids; empty: none).
+    /// The cape, hat, pet and aura worn (`oteria_art::CAPES`... ids; empty: none).
     pub cape: String,
-    pub wings: String,
+    pub hat: String,
+    pub pet: String,
     pub aura: String,
 }
 
@@ -84,35 +85,40 @@ pub(super) struct CosmeticsView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum WearKind {
     Cape,
-    Wings,
+    Hat,
+    Pet,
     Aura,
 }
 impl WearKind {
     pub(super) fn styles(self) -> &'static [oteria_art::WearStyle] {
         match self {
             WearKind::Cape => &oteria_art::CAPES,
-            WearKind::Wings => &oteria_art::WINGS,
+            WearKind::Hat => &oteria_art::HATS,
+            WearKind::Pet => &oteria_art::PETS,
             WearKind::Aura => &oteria_art::AURAS,
         }
     }
     fn worn(self, view: &CosmeticsView) -> &str {
         match self {
             WearKind::Cape => &view.cape,
-            WearKind::Wings => &view.wings,
+            WearKind::Hat => &view.hat,
+            WearKind::Pet => &view.pet,
             WearKind::Aura => &view.aura,
         }
     }
     fn key(self) -> &'static str {
         match self {
             WearKind::Cape => "cape",
-            WearKind::Wings => "wings",
+            WearKind::Hat => "hat",
+            WearKind::Pet => "pet",
             WearKind::Aura => "aura",
         }
     }
     fn category(self) -> Category {
         match self {
             WearKind::Cape => Category::Capes,
-            WearKind::Wings => Category::Wings,
+            WearKind::Hat => Category::Hats,
+            WearKind::Pet => Category::Pets,
             WearKind::Aura => Category::Auras,
         }
     }
@@ -122,7 +128,7 @@ impl WearKind {
 pub(super) enum CosmeticsAction {
     /// Equip this knife, or remove it when it is the one on.
     ToggleKnife(&'static str),
-    /// Wear this cape, wings or aura, or take it off when it is the one worn.
+    /// Wear this cape, hat, pet or aura, or take it off when it is the one worn.
     ToggleWear(WearKind, &'static str),
     /// Wear the skin of the player of this name.
     SkinName(String),
@@ -143,7 +149,7 @@ pub(super) enum CosmeticsAction {
 /// What the game draws in the preview's well.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Shown {
-    /// The player turned `turn` degrees, wearing `trying` (a cape, wings or aura picked) over
+    /// The player turned `turn` degrees, wearing `trying` (a cape, hat, pet or aura picked) over
     /// what they wear.
     Player {
         trying: Option<(WearKind, &'static str)>,
@@ -177,18 +183,18 @@ enum Category {
     All,
     Weapons,
     Capes,
-    Wings,
     Auras,
     Hats,
+    Pets,
     Skin,
 }
 const CATEGORIES: [Category; 6] = [
     Category::All,
     Category::Weapons,
     Category::Capes,
-    Category::Wings,
     Category::Auras,
     Category::Hats,
+    Category::Pets,
 ];
 
 impl Category {
@@ -197,9 +203,10 @@ impl Category {
             Category::All => tr("oteria.cosmetics.all", "All cosmetics"),
             Category::Weapons => tr("oteria.cosmetics.weapons", "Weapons"),
             Category::Capes => tr("oteria.cosmetics.capes", "Capes"),
-            Category::Wings => tr("oteria.cosmetics.wings", "Wings"),
+
             Category::Auras => tr("oteria.cosmetics.auras", "Auras"),
             Category::Hats => tr("oteria.cosmetics.hats", "Hats"),
+            Category::Pets => tr("oteria.cosmetics.pets", "Pets"),
             Category::Skin => tr("oteria.skin.title", "Skin"),
         }
     }
@@ -215,11 +222,7 @@ impl Category {
             ),
             Category::Capes => tr(
                 "oteria.cosmetics.capes.about",
-                "A cape of cloth: it falls, swings and flies out behind you.",
-            ),
-            Category::Wings => tr(
-                "oteria.cosmetics.wings.about",
-                "Wings on your back, beating faster in the air.",
+                "A cape of cloth that flies out behind you; your elytra wears it too.",
             ),
             Category::Auras => tr(
                 "oteria.cosmetics.auras.about",
@@ -228,6 +231,10 @@ impl Category {
             Category::Hats => tr(
                 "oteria.cosmetics.hats.about",
                 "Something to wear on your head.",
+            ),
+            Category::Pets => tr(
+                "oteria.cosmetics.pets.about",
+                "A little friend on your shoulder, as a parrot sits.",
             ),
             Category::Skin => tr(
                 "oteria.skin.about",
@@ -240,9 +247,10 @@ impl Category {
             Category::All => icon::LAYOUT,
             Category::Weapons => icon::SWORD,
             Category::Capes => icon::CAPE,
-            Category::Wings => icon::FEATHER,
+
             Category::Auras => icon::SPARKLES,
             Category::Hats => icon::CROWN,
+            Category::Pets => icon::PAW,
             Category::Skin => icon::USER,
         }
     }
@@ -315,19 +323,26 @@ fn knives(view: &CosmeticsView) -> Vec<&'static str> {
 
 /// The cosmetics of `category`, in order.
 fn items(category: Category, view: &CosmeticsView) -> Vec<Item> {
-    let wear = |kind: WearKind| kind.styles().iter().map(move |s| Item::Wear(kind, s));
+    let wear = |kind: WearKind| {
+        kind.styles()
+            .iter()
+            .filter(|s| oteria_art::wear_available(s))
+            .map(move |s| Item::Wear(kind, s))
+    };
     let weapons = || knives(view).into_iter().map(Item::Knife);
     match category {
         Category::All => weapons()
             .chain(wear(WearKind::Cape))
-            .chain(wear(WearKind::Wings))
             .chain(wear(WearKind::Aura))
+            .chain(wear(WearKind::Hat))
+            .chain(wear(WearKind::Pet))
             .collect(),
         Category::Weapons => weapons().collect(),
         Category::Capes => wear(WearKind::Cape).collect(),
-        Category::Wings => wear(WearKind::Wings).collect(),
         Category::Auras => wear(WearKind::Aura).collect(),
-        Category::Hats | Category::Skin => Vec::new(),
+        Category::Hats => wear(WearKind::Hat).collect(),
+        Category::Pets => wear(WearKind::Pet).collect(),
+        Category::Skin => Vec::new(),
     }
 }
 
@@ -1025,7 +1040,8 @@ impl CosmeticsMenu {
         let top = ty + 46.0;
         let room = [x, top, w, y + h - top];
 
-        if category == Category::Hats {
+        // A build without the wearables' files has no hats or pets: they come soon.
+        if matches!(category, Category::Hats | Category::Pets) && items(category, view).is_empty() {
             self.draw_soon(ui, room, category, a, gui);
             return Vec::new();
         }
@@ -1683,8 +1699,9 @@ mod tests {
             busy: false,
             status: None,
             can_upload: false,
-            cape: "gold".into(),
-            wings: String::new(),
+            cape: "red_moon".into(),
+            hat: String::new(),
+            pet: String::new(),
             aura: String::new(),
         }
     }
@@ -1696,8 +1713,9 @@ mod tests {
         let parts: usize = [
             Category::Weapons,
             Category::Capes,
-            Category::Wings,
             Category::Auras,
+            Category::Hats,
+            Category::Pets,
         ]
         .iter()
         .map(|c| items(*c, &v).len())
@@ -1708,12 +1726,15 @@ mod tests {
             oteria_art::KNIFE_RIGS.len()
         );
         let on: Vec<Item> = all.into_iter().filter(|i| i.equipped(&v)).collect();
-        assert_eq!(on.len(), 2, "the karambit and the royal cape");
+        let red_moon = oteria_art::wear_available(&oteria_art::CAPES[4]);
+        assert_eq!(on.len(), 1 + usize::from(red_moon), "the karambit and the cape");
         assert!(on.contains(&Item::Knife("karambit")));
-        assert_eq!(
-            on[1].toggle(),
-            CosmeticsAction::ToggleWear(WearKind::Cape, "gold")
-        );
+        if red_moon {
+            assert_eq!(
+                on[1].toggle(),
+                CosmeticsAction::ToggleWear(WearKind::Cape, "red_moon")
+            );
+        }
     }
 
     #[test]

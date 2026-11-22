@@ -1696,6 +1696,7 @@ impl Game<'_> {
             a.equipment[4].as_ref().map(|s| &*s.item),
             a.equipment[4].as_ref(),
             None,
+            None,
             a.small,
             base,
             horizon_client::mobs::ElytraAnimation::RESTING,

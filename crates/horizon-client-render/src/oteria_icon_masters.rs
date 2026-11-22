@@ -32,6 +32,7 @@ pub fn master(icon: &str) -> Option<&'static [u8]> {
         "moon-stars" => include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/hi/moon-stars.png"),
         "mouse" => include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/hi/mouse.png"),
         "numbers" => include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/hi/numbers.png"),
+        "paw" => include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/hi/paw.png"),
         "pencil" => include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/hi/pencil.png"),
         "plus" => include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/hi/plus.png"),
         "pointer" => include_bytes!("../../horizon-client/assets/horizon/textures/gui/icons/hi/pointer.png"),

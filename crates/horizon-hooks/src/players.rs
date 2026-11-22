@@ -90,11 +90,23 @@ pub struct Gear {
     pub chest: bool,
     /// A cape or an elytra.
     pub back: bool,
+    /// An elytra.
+    pub elytra: bool,
 }
 
 impl Gear {
     pub fn new(head: bool, chest: bool, back: bool) -> Self {
-        Self { head, chest, back }
+        Self {
+            head,
+            chest,
+            back,
+            elytra: false,
+        }
+    }
+
+    /// With an elytra worn or not.
+    pub fn with_elytra(self, elytra: bool) -> Self {
+        Self { elytra, ..self }
     }
 }
 

@@ -1,5 +1,6 @@
 //! The Cosmetics page's 3D: each card's cosmetic alone, as its real model (a knife turning a
-//! little on its length, a cape in the lightest breeze, wings beating, an aura going round), and
+//! little on its length, a cape in the lightest breeze, a hat, a pet breathing, an aura going
+//! round), and
 //! the preview's popup: the player turning in what they wear and what is tried on, the aura
 //! around them, or a knife in first person in both arms (`oteria_knife_rig::draw_knife_preview`).
 //!
@@ -84,7 +85,7 @@ impl Game<'_> {
                 Some(verts)
             }
             Item::Wear(WearKind::Aura, style) => {
-                let uv = self.hook_sprite(super::oteria_wear::sprite_of(WearKind::Aura, style))?;
+                let uv = self.hook_sprite(super::oteria_wear::aura_sprite(style))?;
                 let view = Mat4::from_rotation_x(AURA_PITCH);
                 let up = view.inverse().transform_vector3(Vec3::Y);
                 let mut verts = Vec::new();
@@ -102,14 +103,21 @@ impl Game<'_> {
                 Some(verts)
             }
             Item::Wear(kind, style) => {
-                let uv = self.hook_sprite(super::oteria_wear::sprite_of(kind, style))?;
-                // Seen from behind, turned a little, from a little above.
-                let yaw = if kind == WearKind::Cape { -0.5 } else { -0.3 };
-                let base = Mat4::from_rotation_x(0.18)
+                let uv = super::oteria_wear::uv_now(style)?;
+                // A cape seen from behind, a hat or pet from the front; turned a little, from a
+                // little above.
+                let yaw = if kind == WearKind::Cape { -0.5 } else { PI + 0.55 };
+                // A hat from higher up: a halo lies flat.
+                let pitch = match kind {
+                    WearKind::Cape => 0.18,
+                    WearKind::Hat => 0.6,
+                    _ => 0.32,
+                };
+                let base = Mat4::from_rotation_x(pitch)
                     * Mat4::from_rotation_y(yaw)
                     * Mat4::from_rotation_z(PI);
                 let mut verts = Vec::new();
-                super::oteria_wear::showcase(kind, uv, base, clock, &mut verts);
+                super::oteria_wear::showcase(kind, style, uv, base, clock, &mut verts);
                 (!verts.is_empty()).then_some(verts)
             }
         }
@@ -132,11 +140,11 @@ impl Game<'_> {
                     3.0 * PI / 2.0 / KNIFE_PACE,
                 ]
             }
-            // The wings' beat at rest, up and down; the aura round a turn.
-            Item::Wear(WearKind::Wings, _) => &[0.0, 0.36, 1.07],
+            // The aura round a turn; a pet as it looks about.
             Item::Wear(WearKind::Aura, _) => &[0.0, 1.3, 2.6, 3.9, 5.2],
-            // The cape hangs.
-            Item::Wear(WearKind::Cape, _) => &[-1.0],
+            Item::Wear(WearKind::Pet, _) => &[0.0, 1.75, 3.5, 5.25, 7.0],
+            // The cape hangs; a hat sits.
+            Item::Wear(WearKind::Cape | WearKind::Hat, _) => &[-1.0],
         };
         let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
         for &t in moments {
@@ -173,7 +181,7 @@ impl Game<'_> {
         let [x, y, w, h] = well;
         let size = (h * 0.36).min(w * 0.5).max(8.0);
         let aura =
-            aura.and_then(|a| self.hook_sprite(super::oteria_wear::sprite_of(WearKind::Aura, a)));
+            aura.and_then(|a| self.hook_sprite(super::oteria_wear::aura_sprite(a)));
         let extra = move |gui: Mat4, out: &mut Vec<Vertex>| {
             let Some(uv) = aura else {
                 return;

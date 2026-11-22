@@ -1,6 +1,7 @@
 //! Builds the rigged knives copied on this computer into `private/cosmetics/` (not in git) into
 //! the executable, so a build handed to someone else draws them too (`oteria_art::knife_rig_bytes`).
 //! Without the folder, nothing is built in and the game reads the files from disk as before.
+//! The wearables copied into `private/cosmetics/wear/` are built in the same way.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -30,5 +31,32 @@ fn main() {
     }
     table.push(']');
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it")).join("knife_rigs.rs");
+    std::fs::write(out, table).expect("OUT_DIR is writable");
+    wear(&dir.join("wear"));
+}
+
+/// The wearables (`oteria_art::CAPES`, `HATS`, `PETS`) copied into `private/cosmetics/wear/`:
+/// every PNG and model there, built in.
+fn wear(dir: &std::path::Path) {
+    let mut table = String::from("&[\n");
+    if dir.is_dir() {
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .expect("the folder reads")
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| matches!(p.extension().and_then(|e| e.to_str()), Some("png" | "json")))
+            .collect();
+        files.sort();
+        for path in files {
+            let Some(file) = path.file_name().and_then(|f| f.to_str()) else {
+                continue;
+            };
+            println!("cargo:rerun-if-changed={}", path.display());
+            let _ = writeln!(table, "    ({file:?}, include_bytes!({:?})),", path.display().to_string());
+        }
+    }
+    table.push(']');
+    let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it")).join("wear.rs");
     std::fs::write(out, table).expect("OUT_DIR is writable");
 }

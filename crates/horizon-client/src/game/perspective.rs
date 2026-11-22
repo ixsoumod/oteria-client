@@ -1016,10 +1016,17 @@ impl Game<'_> {
         let stack = m.extra.armor[1]
             .as_ref()
             .filter(|s| chest == Some(&*s.item));
+        // Oteria: the window's player's elytra wears their Oteria cape (a Mojang cape became
+        // Oteria's), its frame now.
+        let oteria = self
+            .is_own_model(m)
+            .then(super::oteria_wear::own_elytra_uv)
+            .flatten();
         self.wings_geometry(
             chest,
             stack,
             m.cape.as_deref(),
+            oteria,
             false,
             horizon_client::mobs::render::base_transform(m, partial, camera),
             m.extra.elytra.angles(partial),
@@ -1046,13 +1053,15 @@ impl Game<'_> {
     /// elytra model. `cape` is a player's own cape texture, which has its
     /// elytra (`WingsLayer.getPlayerElytraTexture`). `stack` is the worn
     /// stack when known: an OptiFine CIT elytra rule for it replaces the
-    /// texture, the cape's too, as OptiFine's `LayerElytra` does.
+    /// texture, the cape's too, as OptiFine's `LayerElytra` does. `cape_uv`: the cape's texture
+    /// given as its place in the atlas (Oteria's cape on the window's player), over `cape`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn wings_geometry(
         &self,
         chest: Option<&str>,
         stack: Option<&horizon_client::items::ItemStack>,
         cape: Option<&str>,
+        cape_uv: Option<[f32; 4]>,
         baby: bool,
         base: glam::Mat4,
         angles: [f32; 3],
@@ -1085,12 +1094,15 @@ impl Game<'_> {
         };
         let sprites = &self.gui.atlas.sprites;
         let rule = stack.and_then(|s| self.cit_worn_rule(horizon_client::cit::Kind::Elytra, s));
-        let rect = horizon_client::cit_armor::wings(rule, cape, |s| sprites.get(s));
+        let uv = |r: &horizon_client::hud::Rect| [r.u0, r.v0, r.u1, r.v1];
+        let rect = cape_uv
+            .filter(|_| horizon_client::cit_armor::wings_sprite(rule).is_none())
+            .or_else(|| horizon_client::cit_armor::wings(rule, cape, |s| sprites.get(s)).map(uv));
         let (Some(model), Some(rect)) = (
             assets
                 .player
                 .get(if baby { "elytra_baby" } else { "elytra" }),
-            rect.or_else(|| sprites.get(texture)),
+            rect.or_else(|| sprites.get(texture).map(uv)),
         ) else {
             return;
         };
@@ -1110,15 +1122,13 @@ impl Game<'_> {
             model,
             base,
             &pose,
-            [rect.u0, rect.v0, rect.u1, rect.v1],
+            rect,
             light,
             overlay,
             out,
         );
         // The elytra texture's OptiFine emissive overlay (not a cape's), full bright.
-        let glow = cape
-            .and_then(|c| sprites.get(c))
-            .is_none()
+        let glow = (cape_uv.is_none() && cape.and_then(|c| sprites.get(c)).is_none())
             .then(|| {
                 let emissive = self
                     .res
@@ -1144,6 +1154,10 @@ impl Game<'_> {
             );
         }
     }
+    /// `m` is the window's own player model (in the world or a picture of it).
+    pub(super) fn is_own_model(&self, m: &Mob) -> bool {
+        self.player_model.as_ref().is_some_and(|own| own.id == m.id)
+    }
     /// `CapeLayer` for a player wearing `chest`: no cape under an elytra's
     /// wings, and moved out over a chestplate.
     pub(super) fn player_cape_geometry(
@@ -1155,6 +1169,11 @@ impl Game<'_> {
         light: u32,
         out: &mut Vec<horizon_client::mesher::Vertex>,
     ) {
+        // Oteria: on the window's player, a Mojang cape becomes Oteria's cloth cape
+        // (`oteria_wear`), and one chosen there takes its place.
+        if self.is_own_model(m) && super::oteria_wear::own_cape_worn() {
+            return;
+        }
         let Some(rect) = m
             .cape
             .as_deref()

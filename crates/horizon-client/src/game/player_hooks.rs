@@ -102,6 +102,7 @@ pub(super) fn gear(m: &Mob) -> Gear {
         m.extra.chest.is_some() && !elytra,
         m.cape.is_some() || elytra,
     )
+    .with_elytra(elytra)
 }
 
 fn model(m: &Mob, kind: Kind, uuid: Option<u128>) -> PlayerModel {
@@ -496,7 +497,16 @@ impl Game<'_> {
         if !engine::any() {
             return;
         }
-        let model = model(m, Kind::Own, self.remote.as_ref().map(|r| r.profile()));
+        let mut model = model(m, Kind::Own, self.remote.as_ref().map(|r| r.profile()));
+        // The window's player's armour is the game's own, not the model's.
+        let chest = self.armor[1].as_ref().map(|s| &*s.item);
+        let elytra = chest == Some("minecraft:elytra");
+        model.gear = Gear::new(
+            self.armor[0].is_some(),
+            chest.is_some() && !elytra,
+            m.cape.is_some() || elytra,
+        )
+        .with_elytra(elytra);
         let mut draw = DrawPlayer {
             game: self,
             m,

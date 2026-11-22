@@ -33,35 +33,104 @@ pub const KNIFE_PRIVATE_FILE: &str = "private/cosmetics/balisong_leopham";
 /// `<name>_rig.animation.json`, its texture `<name>_rig.png` and its picture for the Cosmetics
 /// page `<name>_rig.icon.png`. The one chosen there, when it is there, is the knife drawn.
 pub const KNIFE_RIGS: [&str; 6] = ["butterfly", "karambit", "skeleton", "stiletto", "talon", "push"];
-/// Oteria's own wearables (`game/oteria_wear.rs`), drawn on the player in every view: a cape
-/// that hangs and flies as cloth, wings, and an aura. Each comes in styles: an id, its English
-/// name, and its two colours (`0xRRGGBB`): the main one and its light.
+/// Oteria's own wearables (`game/oteria_wear.rs`), drawn on the player: capes (cloth, with the
+/// elytra worn over them in the same texture), hats on the head, pets on the left shoulder, and
+/// auras. Each has an id and its English name. An aura is drawn in code in its two colours
+/// (`0xRRGGBB`: the main one and its light); the others are textures (`frames` of them stacked
+/// top to bottom, played at `FRAME_SECONDS`), hats and pets with a model: Oteria's own cape is in
+/// the game's assets, the rest copied on this computer into `private/cosmetics/wear/`
+/// (`branding/cosmetics/convert_cosmetica_wear.py`, not in git: their makers' work, as the
+/// knives) and built into the executable from there.
 #[derive(Debug, PartialEq, Eq)]
 pub struct WearStyle {
     pub id: &'static str,
     pub english: &'static str,
     pub main: u32,
     pub light: u32,
+    /// Its texture's frames; 0: drawn in code.
+    pub frames: u32,
 }
 const fn style(id: &'static str, english: &'static str, main: u32, light: u32) -> WearStyle {
-    WearStyle { id, english, main, light }
+    WearStyle { id, english, main, light, frames: 0 }
 }
-pub const CAPES: [WearStyle; 4] = [
-    style("oteria", "Oteria cape", 0x5B_2BB5, 0xC9_A2FF),
-    style("crimson", "Crimson cape", 0x8E_1328, 0xFF_7A86),
-    style("midnight", "Midnight cape", 0x14_2240, 0x6F_C4FF),
-    style("gold", "Royal cape", 0x7A_4A06, 0xFF_D866),
+const fn art(id: &'static str, english: &'static str, frames: u32) -> WearStyle {
+    WearStyle { id, english, main: 0, light: 0, frames }
+}
+/// How long an animated texture shows each frame.
+pub const FRAME_SECONDS: f32 = 0.08;
+/// The cape a Mojang cape becomes on the window's player, and its texture.
+pub const OTERIA_CAPE: &str = "oteria";
+pub const CAPES: [WearStyle; 9] = [
+    art(OTERIA_CAPE, "Oteria cape", 1),
+    art("hellstorm", "Hellstorm", 15),
+    art("hellstorm_purple", "Purple Hellstorm", 15),
+    art("hellstorm_toxic", "Toxic Hellstorm", 15),
+    art("red_moon", "Red Moon", 15),
+    art("sharpness", "Sharpness", 15),
+    art("spring_droplets", "Spring Droplets", 6),
+    art("cicada", "Cicada 3301", 1),
+    art("pizza", "Pizza", 1),
 ];
-pub const WINGS: [WearStyle; 3] = [
-    style("dragon", "Dragon wings", 0x3A_1466, 0xB0_6CFF),
-    style("angel", "Angel wings", 0xC8_D4E8, 0xFF_FFFF),
-    style("demon", "Demon wings", 0x2A_0A0E, 0xE0_2A3A),
+pub const HATS: [WearStyle; 8] = [
+    art("red_halo", "Red halo", 1),
+    art("cat_ears", "Cat ears", 1),
+    art("black_cat_ears", "Black cat ears", 1),
+    art("demon_horns", "Demon horns", 1),
+    art("star_horns", "Star horns", 1),
+    art("tall_hat", "Tall hat", 1),
+    art("axolotl_hat", "Axolotl hat", 1),
+    art("cigar", "Cigar", 1),
+];
+pub const PETS: [WearStyle; 5] = [
+    art("black_cat", "Black cat", 1),
+    art("ginger_cat", "Sir Shrimp", 1),
+    art("snow_fox", "Snow fox kit", 1),
+    art("axolotl", "Axolotl", 16),
+    art("opossum", "Opossum", 1),
 ];
 pub const AURAS: [WearStyle; 3] = [
     style("violet", "Violet aura", 0x8A_3CFF, 0xE2_C6FF),
     style("frost", "Frost aura", 0x2F_9BFF, 0xD6_F3FF),
     style("ember", "Ember aura", 0xFF_5A1F, 0xFF_E08A),
 ];
+/// A wearable's texture's sprite in the GUI atlas.
+pub fn wear_sprite(id: &str) -> String {
+    format!("gui/sprites/oteria_wear/{id}")
+}
+/// A wearable's file with `extension` (`png`, `json`): Oteria's cape from the assets, the others
+/// from disk (`private/cosmetics/wear/`, looked for as `knife_private_path` looks) when there,
+/// else built in.
+pub fn wear_bytes(id: &str, extension: &str) -> Option<std::borrow::Cow<'static, [u8]>> {
+    if id == OTERIA_CAPE {
+        return (extension == "png").then_some(std::borrow::Cow::Borrowed(OTERIA_CAPE_PNG));
+    }
+    let file = format!("{id}.{extension}");
+    if let Some(bytes) = private_path(&format!("private/cosmetics/wear/{file}")).and_then(|p| std::fs::read(p).ok()) {
+        return Some(std::borrow::Cow::Owned(bytes));
+    }
+    BUILT_IN_WEAR
+        .iter()
+        .find(|(f, _)| *f == file)
+        .map(|(_, bytes)| std::borrow::Cow::Borrowed(*bytes))
+}
+/// The wearable is there to wear: drawn in code, or its files are (a build without
+/// `private/cosmetics/wear/` has Oteria's cape alone). Looked for once.
+pub fn wear_available(style: &WearStyle) -> bool {
+    static THERE: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    let there = THERE.get_or_init(|| {
+        CAPES
+            .iter()
+            .map(|s| (s, false))
+            .chain(HATS.iter().chain(PETS.iter()).map(|s| (s, true)))
+            .filter(|(s, model)| wear_bytes(s.id, "png").is_some() && (!model || wear_bytes(s.id, "json").is_some()))
+            .map(|(s, _)| s.id)
+            .collect()
+    });
+    style.frames == 0 || there.contains(&style.id)
+}
+const OTERIA_CAPE_PNG: &[u8] = include_bytes!("../../horizon-client/assets/horizon/textures/gui/oteria_cape.png");
+/// The wearables' files built into this executable (`build.rs`), from `private/cosmetics/wear/`.
+static BUILT_IN_WEAR: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/wear.rs"));
 /// The style of `id` in `all`.
 pub fn wear_style(all: &'static [WearStyle], id: &str) -> Option<&'static WearStyle> {
     all.iter().find(|s| s.id == id)
@@ -166,6 +235,20 @@ pub fn images() -> impl Iterator<Item = (String, u32, u32, Vec<u8>)> {
         })
         .chain(private)
         .chain(rig)
+        .chain(wear_images())
+}
+
+/// The textures of the wearables there are (`wear_available`), whole, for the atlas.
+fn wear_images() -> impl Iterator<Item = (String, u32, u32, Vec<u8>)> {
+    CAPES
+        .iter()
+        .chain(HATS.iter())
+        .chain(PETS.iter())
+        .filter(|s| s.frames > 0 && wear_available(s))
+        .filter_map(|s| {
+            let (w, h, pixels) = crate::pad_glyph::decode(&wear_bytes(s.id, "png")?)?;
+            Some((wear_sprite(s.id), w, h, pixels))
+        })
 }
 
 #[cfg(test)]
@@ -176,8 +259,11 @@ mod tests {
     fn the_art_is_white_on_nothing_at_its_sizes() {
         let sizes = [(LOGO, 160), (ROCKET, 32), (SHIRT, 32), (ELYTRA, 16)];
         for (name, w, h, px) in images() {
-            // Knives copied on this computer are whatever they are.
-            if name == KNIFE_PRIVATE || name.starts_with("gui/sprites/oteria_knife_rig/") {
+            // Knives and wearables are whatever they are.
+            if name == KNIFE_PRIVATE
+                || name.starts_with("gui/sprites/oteria_knife_rig/")
+                || name.starts_with("gui/sprites/oteria_wear/")
+            {
                 continue;
             }
             // The knife's texture and picture are in colour, at their own sizes.
@@ -200,5 +286,17 @@ mod tests {
             assert!(drawn.len() > (w * h / 25) as usize, "{name}: drawn");
             assert!(drawn.iter().all(|p| p[0] > 200 && p[1] > 200 && p[2] > 200), "{name}: white");
         }
+    }
+
+    #[test]
+    fn oteria_cape_is_always_there_and_ids_are_unique() {
+        assert!(wear_available(&CAPES[0]));
+        let (w, h, _) = crate::pad_glyph::decode(&wear_bytes(OTERIA_CAPE, "png").unwrap()).unwrap();
+        assert_eq!((w, h), (128, 64), "the cape layout, twice");
+        let mut ids: Vec<_> = CAPES.iter().chain(&HATS).chain(&PETS).chain(&AURAS).map(|s| s.id).collect();
+        ids.sort_unstable();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
     }
 }

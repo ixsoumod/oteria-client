@@ -1643,10 +1643,11 @@ pub struct Skins {
     /// The skin this player wears in Oteria (`game/oteria_skins.rs`, by its id in the skin
     /// history); empty: the account's own.
     pub player: String,
-    /// Oteria's cape, wings and aura worn (`oteria_art::CAPES`, `WINGS`, `AURAS` ids); empty:
-    /// none (`game/oteria_wear.rs`).
+    /// Oteria's cape, hat, shoulder pet and aura worn (`oteria_art::CAPES`, `HATS`, `PETS`,
+    /// `AURAS` ids); empty: none (`game/oteria_wear.rs`).
     pub cape: String,
-    pub wings: String,
+    pub hat: String,
+    pub pet: String,
     pub aura: String,
 }
 impl Default for Skins {
@@ -1657,7 +1658,8 @@ impl Default for Skins {
             inspect_key: "key.keyboard.grave.accent".into(),
             player: String::new(),
             cape: String::new(),
-            wings: String::new(),
+            hat: String::new(),
+            pet: String::new(),
             aura: String::new(),
         }
     }
@@ -2017,8 +2019,11 @@ impl Pvp {
             "oteriaCape" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::CAPES, value).is_some() => {
                 self.skins.cape = value.to_owned()
             }
-            "oteriaWings" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::WINGS, value).is_some() => {
-                self.skins.wings = value.to_owned()
+            "oteriaHat" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::HATS, value).is_some() => {
+                self.skins.hat = value.to_owned()
+            }
+            "oteriaPet" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::PETS, value).is_some() => {
+                self.skins.pet = value.to_owned()
             }
             "oteriaAura" if value.is_empty() || crate::oteria_art::wear_style(&crate::oteria_art::AURAS, value).is_some() => {
                 self.skins.aura = value.to_owned()
@@ -2409,8 +2414,8 @@ impl Pvp {
         );
         let _ = write!(
             out,
-            "oteriaCape:{}\noteriaWings:{}\noteriaAura:{}\n",
-            self.skins.cape, self.skins.wings, self.skins.aura
+            "oteriaCape:{}\noteriaHat:{}\noteriaPet:{}\noteriaAura:{}\n",
+            self.skins.cape, self.skins.hat, self.skins.pet, self.skins.aura
         );
         let _ = write!(out, "skyMode:{}\nskyPack:{}\n", self.sky.enabled, self.sky.pack);
         let _ = write!(out, "tierTagger:{}\ntierMode:{}\n", self.tiers.enabled, self.tiers.mode);

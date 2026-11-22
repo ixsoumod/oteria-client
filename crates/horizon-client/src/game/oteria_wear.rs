@@ -1,26 +1,31 @@
-//! Oteria's own wearables (the Cosmetics page's Capes, Wings and Auras), drawn on the window's
-//! own player through the player hooks (`horizon_hooks::Hooks::player_layers`), in every view:
+//! Oteria's own wearables (the Cosmetics page's Capes, Hats, Pets and Auras), drawn on the
+//! window's own player through the player hooks (`horizon_hooks::Hooks::player_layers`), seen
+//! from outside (third person, the inventory, the Cosmetics page); none in first person:
 //!
 //! - **A cape** that is cloth, simulated as Cloth-Cloaks (pheological, CC0) does: a grid of
 //!   points held at its top corners, springs between them, gravity, a push out behind as the
-//!   player runs and a lift as they fall, and the back it can't pass through. The grid is drawn
-//!   as it bends, each frame.
-//! - **Wings** of two hinged parts each, beating slowly at rest and fast in the air.
+//!   player runs and a lift as they fall, and the back it can't pass through. Its texture is a
+//!   Minecraft cape's (64x32, its frames stacked when it is animated), so the elytra worn instead
+//!   of it takes the same one (`perspective::player_elytra_geometry`). A Mojang cape on the
+//!   player (Migrator...) becomes Oteria's cape.
+//! - **A hat** on the head and **a pet** on the left shoulder (as a parrot sits): Java block
+//!   models (Blockbench, as Cosmetica serves them) made into meshes once. A pet breathes and
+//!   looks about; over a helmet a hat grows to sit on it.
 //! - **An aura**: motes rising in a spiral around the player, sparkles, and a ring at the feet,
-//!   glowing.
+//!   glowing; drawn in code.
 //!
-//! Every picture is drawn here, in code (no file): one 64×64 sprite per style worn. Only this
-//! window's player wears them; nothing is sent anywhere.
+//! Only this window's player wears them; nothing is sent anywhere.
 
 use super::oteria_cosmetics::WearKind;
-use glam::{DVec3, Mat4, Vec3};
-use horizon_client::oteria_art::{AURAS, CAPES, WINGS, WearStyle, wear_style};
+use glam::{DVec3, Mat4, Quat, Vec3};
+use horizon_client::oteria_art::{self, AURAS, CAPES, HATS, PETS, WearStyle, wear_style};
 use horizon_hooks::players::{
-    Bone, Frame, Kind, Light, Look, Mesh, PartPoses, Particle, Pass, PlayerDraw, PlayerModel,
-    Quad, SpriteStore,
+    Bone, Frame, Kind, Light, Look, Mesh, Particle, Pass, PlayerDraw, PlayerModel, Quad,
+    SpriteStore,
 };
+use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 /// The hooks Oteria's wearables draw through (`player_hooks::register`).
 pub(super) struct Wear;
@@ -30,23 +35,26 @@ pub(super) static HOOKS: Wear = Wear;
 #[derive(Default)]
 struct State {
     cape: Option<&'static WearStyle>,
-    wings: Option<&'static WearStyle>,
+    hat: Option<&'static WearStyle>,
+    pet: Option<&'static WearStyle>,
     aura: Option<&'static WearStyle>,
+    /// Each textured wearable's whole texture in the GUI atlas (u0, v0, u1, v1), its frames
+    /// stacked top to bottom.
+    sheets: HashMap<&'static str, [f32; 4]>,
     cloth: Option<Cloth>,
     /// The cloth's mesh as it last stepped.
     cape_mesh: Option<Arc<Mesh>>,
-    flight: Flight,
-    /// The style tried on in the Cosmetics page's preview (its pictures only), and the last
-    /// one tried, whose sprite stays stored.
+    /// The wearable tried on in the Cosmetics page's preview (its pictures only), and the last
+    /// aura tried, whose sprite stays stored.
     trying: Option<(WearKind, &'static WearStyle)>,
-    tried: Option<(WearKind, &'static WearStyle)>,
+    tried_aura: Option<&'static WearStyle>,
     /// The cloth in the pictures (the preview, the inventory): fluttering as in a breeze.
     still_cloth: Option<Cloth>,
     still_mesh: Option<Arc<Mesh>>,
     /// The cloth the Cosmetics page's cards show, alone, in the lightest breeze.
     card_cloth: Option<Cloth>,
     card_mesh: Option<Arc<Mesh>>,
-    /// The Cosmetics page shows: every style's sprite is kept.
+    /// The Cosmetics page shows: every aura's sprite is kept.
     showing: bool,
 }
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -54,112 +62,130 @@ fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// What the player wears now, from their settings (each frame; nothing when unchanged).
-pub(super) fn sync(skins: &horizon_client::pvp::Skins) {
+/// The clock animated textures and pets go by (s).
+fn clock() -> f32 {
+    static START: LazyLock<std::time::Instant> = LazyLock::new(std::time::Instant::now);
+    START.elapsed().as_secs_f32()
+}
+
+/// The textured wearables and their sprites' names, made once.
+fn textured() -> &'static [(&'static WearStyle, String)] {
+    static ALL: LazyLock<Vec<(&'static WearStyle, String)>> = LazyLock::new(|| {
+        CAPES
+            .iter()
+            .chain(HATS.iter())
+            .chain(PETS.iter())
+            .filter(|s| oteria_art::wear_available(s))
+            .map(|s| (s, oteria_art::wear_sprite(s.id)))
+            .collect()
+    });
+    &ALL
+}
+
+/// What the player wears now, from their settings (each frame): `mojang_cape` when the
+/// account's cape is on them (it becomes Oteria's), `sheet` where a sprite is in the atlas.
+pub(super) fn sync(
+    skins: &horizon_client::pvp::Skins,
+    mojang_cape: bool,
+    sheet: &dyn Fn(&str) -> Option<[f32; 4]>,
+) {
     let mut s = state();
-    s.cape = wear_style(&CAPES, &skins.cape);
-    s.wings = wear_style(&WINGS, &skins.wings);
+    let there = |all: &'static [WearStyle], id: &str| {
+        wear_style(all, id).filter(|w| oteria_art::wear_available(w))
+    };
+    s.cape = there(&CAPES, &skins.cape).or_else(|| mojang_cape.then_some(&CAPES[0]));
+    s.hat = there(&HATS, &skins.hat);
+    s.pet = there(&PETS, &skins.pet);
     s.aura = wear_style(&AURAS, &skins.aura);
     if s.cape.is_none() {
         s.cloth = None;
         s.cape_mesh = None;
     }
-}
-
-/// The Cosmetics page's preview tries `trying` on (a cape, wings or aura, by its id) over what
-/// is worn, in the pictures only; None: what is worn.
-pub(super) fn try_on(trying: Option<(WearKind, &str)>) {
-    let mut s = state();
-    s.trying = trying.and_then(|(kind, id)| Some((kind, wear_style(kind.styles(), id)?)));
-    if s.trying.is_some() {
-        s.tried = s.trying;
+    // The atlas is made again with the resource packs: where each texture is, each frame.
+    for (style, sprite) in textured() {
+        match sheet(sprite) {
+            Some(r) => s.sheets.insert(style.id, r),
+            None => s.sheets.remove(style.id),
+        };
     }
 }
 
-/// The Cosmetics page shows (each frame it does): every style's picture is kept in the atlas,
+/// The Cosmetics page's preview tries `trying` on (a cape, hat, pet or aura, by its id) over
+/// what is worn, in the pictures only; None: what is worn.
+pub(super) fn try_on(trying: Option<(WearKind, &str)>) {
+    let mut s = state();
+    s.trying = trying.and_then(|(kind, id)| Some((kind, wear_style(kind.styles(), id)?)));
+    if let Some((WearKind::Aura, style)) = s.trying {
+        s.tried_aura = Some(style);
+    }
+}
+
+/// The Cosmetics page shows (each frame it does): every aura's picture is kept in the atlas,
 /// for its card.
 pub(super) fn showing(on: bool) {
     state().showing = on;
 }
 
-/// The sprites' ids: a kind and the style's place in its list.
+/// The aura sprites' ids: a kind and the style's place in its list.
 const SPRITE: u64 = 0x07E7_1A00_0000_0000;
-fn sprite_id(kind: u64, all: &[WearStyle], style: &WearStyle) -> u64 {
-    let i = all.iter().position(|s| s.id == style.id).unwrap_or(0) as u64;
-    SPRITE | kind << 8 | i
-}
-/// Style `style`'s sprite (one of `kind`'s).
-pub(super) fn sprite_of(kind: WearKind, style: &WearStyle) -> u64 {
-    match kind {
-        WearKind::Cape => sprite_id(CAPE_SPRITE, &CAPES, style),
-        WearKind::Wings => sprite_id(WINGS_SPRITE, &WINGS, style),
-        WearKind::Aura => sprite_id(AURA_SPRITE, &AURAS, style),
-    }
-}
-const CAPE_SPRITE: u64 = 1;
-const WINGS_SPRITE: u64 = 2;
 const AURA_SPRITE: u64 = 3;
+pub(super) fn aura_sprite(style: &WearStyle) -> u64 {
+    let i = AURAS.iter().position(|s| s.id == style.id).unwrap_or(0) as u64;
+    SPRITE | AURA_SPRITE << 8 | i
+}
+
+/// `sheet`'s frame of `style` at `at` (s).
+fn frame_uv(sheet: [f32; 4], style: &WearStyle, at: f32) -> [f32; 4] {
+    let n = style.frames.max(1);
+    let f = (at / oteria_art::FRAME_SECONDS) as u32 % n;
+    let h = (sheet[3] - sheet[1]) / n as f32;
+    [
+        sheet[0],
+        sheet[1] + h * f as f32,
+        sheet[2],
+        sheet[1] + h * (f + 1) as f32,
+    ]
+}
+
+/// A textured wearable's texture now (its frame), for the Cosmetics page.
+pub(super) fn uv_now(style: &WearStyle) -> Option<[f32; 4]> {
+    let sheet = *state().sheets.get(style.id)?;
+    Some(frame_uv(sheet, style, clock()))
+}
+
+/// The window's player wears an Oteria cape (or a Mojang one that became Oteria's): the
+/// vanilla cape is not drawn.
+pub(super) fn own_cape_worn() -> bool {
+    state().cape.is_some()
+}
+
+/// The window's player's cape now as their elytra takes it: its frame's place in the atlas (a
+/// cape's 64x32, as a vanilla cape's sprite is: `store_skin`). While the Cosmetics page's
+/// preview draws (`try_on`), the cape tried on.
+pub(super) fn own_elytra_uv() -> Option<[f32; 4]> {
+    let s = state();
+    let cape = match s.trying {
+        Some((WearKind::Cape, tried)) => tried,
+        _ => s.cape?,
+    };
+    Some(frame_uv(*s.sheets.get(cape.id)?, cape, clock()))
+}
 
 impl horizon_hooks::Hooks for Wear {
     fn frame(&self, _frame: &Frame, sprites: &mut dyn SpriteStore) {
-        let (mut cape, mut wings, mut aura) = {
+        let (aura, tried, showing) = {
             let s = state();
-            (s.cape, s.wings, s.aura)
+            (s.aura, s.tried_aura, s.showing)
         };
-        // The style the preview tries on: its sprite too, but nothing worn instead of it.
-        if let Some((kind, style)) = state().tried {
-            let slot = match kind {
-                WearKind::Cape => &mut cape,
-                WearKind::Wings => &mut wings,
-                WearKind::Aura => &mut aura,
-            };
-            if slot.is_none() {
-                *slot = Some(style);
-            } else if slot.is_some_and(|w| w.id != style.id) {
-                let (id, make): (u64, Box<dyn Fn() -> Vec<u8>>) = match kind {
-                    WearKind::Cape => (
-                        sprite_id(CAPE_SPRITE, &CAPES, style),
-                        Box::new(|| cape_texture(style)),
-                    ),
-                    WearKind::Wings => (
-                        sprite_id(WINGS_SPRITE, &WINGS, style),
-                        Box::new(|| wings_texture(style)),
-                    ),
-                    WearKind::Aura => (
-                        sprite_id(AURA_SPRITE, &AURAS, style),
-                        Box::new(|| aura_texture(style)),
-                    ),
-                };
-                if !sprites.has(id) {
-                    sprites.put(id, make());
-                }
-            }
-        }
-        let mut put = |id: u64, make: &dyn Fn() -> Vec<u8>| {
+        let mut put = |a: &WearStyle| {
+            let id = aura_sprite(a);
             if !sprites.has(id) {
-                sprites.put(id, make());
+                sprites.put(id, aura_texture(a));
             }
         };
-        if let Some(c) = cape {
-            put(sprite_id(CAPE_SPRITE, &CAPES, c), &|| cape_texture(c));
-        }
-        if let Some(w) = wings {
-            put(sprite_id(WINGS_SPRITE, &WINGS, w), &|| wings_texture(w));
-        }
-        if let Some(a) = aura {
-            put(sprite_id(AURA_SPRITE, &AURAS, a), &|| aura_texture(a));
-        }
-        // The page's cards: every style.
-        if state().showing {
-            for c in &CAPES {
-                put(sprite_id(CAPE_SPRITE, &CAPES, c), &|| cape_texture(c));
-            }
-            for w in &WINGS {
-                put(sprite_id(WINGS_SPRITE, &WINGS, w), &|| wings_texture(w));
-            }
-            for a in &AURAS {
-                put(sprite_id(AURA_SPRITE, &AURAS, a), &|| aura_texture(a));
-            }
+        aura.into_iter().chain(tried).for_each(&mut put);
+        if showing {
+            AURAS.iter().for_each(put);
         }
     }
 
@@ -169,35 +195,29 @@ impl horizon_hooks::Hooks for Wear {
         }
         let mut s = state();
         let ticks = draw.ticks();
-        // In a picture, the style the preview tries on in its place.
+        // In a picture, what the preview tries on in its place.
         let picture = draw.pass() != Pass::World;
-        let tried = |kind: WearKind, worn: Option<&'static WearStyle>| match s.trying {
-            Some((k, style)) if picture && k == kind => Some(style),
+        let trying = s.trying.filter(|_| picture);
+        let worn = |kind: WearKind, worn: Option<&'static WearStyle>| match trying {
+            Some((k, style)) if k == kind => Some(style),
             _ => worn,
         };
-        let (cape, wings) = (
-            tried(WearKind::Cape, s.cape),
-            tried(WearKind::Wings, s.wings),
+        let (cape, hat, pet) = (
+            worn(WearKind::Cape, s.cape),
+            worn(WearKind::Hat, s.hat),
+            worn(WearKind::Pet, s.pet),
         );
-        if let Some(style) = cape {
+        // Under an elytra no cape hangs, as vanilla's: the elytra wears its texture.
+        if let Some(style) = cape.filter(|_| !model.gear.elytra) {
             draw_cape(&mut s, style, draw, ticks);
         }
-        if let Some(style) = wings {
-            draw_wings(&mut s, style, draw, ticks);
+        if let Some(style) = hat {
+            draw_model(&s, WearKind::Hat, style, model.gear.head, draw);
+        }
+        if let Some(style) = pet {
+            draw_model(&s, WearKind::Pet, style, model.gear.chest, draw);
         }
         if let (Some(style), Pass::World) = (s.aura, draw.pass()) {
-            draw_aura(style, draw, ticks);
-        }
-    }
-
-    /// In first person the body is out of view, the aura around the feet is not.
-    fn first_person(&self, own: &PlayerModel, draw: &mut dyn PlayerDraw) {
-        if own.invisible {
-            return;
-        }
-        let aura = state().aura;
-        if let Some(style) = aura {
-            let ticks = draw.ticks();
             draw_aura(style, draw, ticks);
         }
     }
@@ -462,13 +482,14 @@ impl Cloth {
         (at, normal)
     }
 
-    /// The cloth's mesh: its outside (the texture's left half), its inside (the right), and its
-    /// four edges (the trim), each corner a side of the cloth.
+    /// The cloth's mesh, on a Minecraft cape's texture (64x32): its outside ((1,1)-(11,17)), its
+    /// inside ((12,1)-(22,17)), and its four edges (the side, (0,1)-(1,17)), each corner a side
+    /// of the cloth.
     fn mesh(&self) -> Mesh {
         let (at, normal) = self.surface();
         let side =
             |c: usize, r: usize, s: f32| at[c][r] + normal[c][r] * (HALF_THICKNESS * 16.0 * s);
-        let v = |r: usize| r as f32 / (ROWS - 1) as f32;
+        let v = |r: usize| (1.0 + 16.0 * r as f32 / (ROWS - 1) as f32) / 32.0;
         let t = |c: usize| c as f32 / (COLS - 1) as f32;
         let corner = |p: Vec3, u: f32, v: f32| [p.x, p.y, p.z, u, v];
         let mut quads = Vec::with_capacity((COLS - 1) * (ROWS - 1) * 2 + 2 * (COLS + ROWS));
@@ -477,14 +498,16 @@ impl Cloth {
                 let n = (normal[c][r] + normal[c + 1][r] + normal[c + 1][r + 1] + normal[c][r + 1])
                     .normalize_or_zero();
                 let cells = [(c, r), (c + 1, r), (c + 1, r + 1), (c, r + 1)];
-                // Outside: seen from behind, the texture's left half runs the other way.
+                // Outside: seen from behind, its texture runs the other way.
                 quads.push(Quad::new(
                     n.to_array(),
-                    cells.map(|(c, r)| corner(side(c, r, 1.0), 0.5 * (1.0 - t(c)), v(r))),
+                    cells.map(|(c, r)| {
+                        corner(side(c, r, 1.0), (1.0 + 10.0 * (1.0 - t(c))) / 64.0, v(r))
+                    }),
                 ));
                 quads.push(Quad::new(
                     (-n).to_array(),
-                    cells.map(|(c, r)| corner(side(c, r, -1.0), 0.5 + 0.5 * t(c), v(r))),
+                    cells.map(|(c, r)| corner(side(c, r, -1.0), (12.0 + 10.0 * t(c)) / 64.0, v(r))),
                 ));
             }
         }
@@ -508,8 +531,8 @@ impl Cloth {
                 n.to_array(),
                 [
                     corner(side(ac, ar, 1.0), 0.0, va),
-                    corner(side(ac, ar, -1.0), 0.03, va),
-                    corner(side(bc, br, -1.0), 0.03, vb),
+                    corner(side(ac, ar, -1.0), 1.0 / 64.0, va),
+                    corner(side(bc, br, -1.0), 1.0 / 64.0, vb),
                     corner(side(bc, br, 1.0), 0.0, vb),
                 ],
             ));
@@ -524,9 +547,10 @@ impl Cloth {
 }
 
 fn draw_cape(s: &mut State, style: &'static WearStyle, draw: &mut dyn PlayerDraw, ticks: f32) {
-    let Some(uv) = draw.sprite(sprite_id(CAPE_SPRITE, &CAPES, style)) else {
+    let Some(&sheet) = s.sheets.get(style.id) else {
         return;
     };
+    let uv = frame_uv(sheet, style, clock());
     let Some(body) = draw.bone(Bone::Body) else {
         return;
     };
@@ -543,8 +567,7 @@ fn draw_cape(s: &mut State, style: &'static WearStyle, draw: &mut dyn PlayerDraw
         s.cape_mesh.clone().expect("made")
     } else {
         // In a picture: it flutters, as in a breeze, on the clock (a picture's model is still).
-        static START: LazyLock<std::time::Instant> = LazyLock::new(std::time::Instant::now);
-        let now = START.elapsed().as_secs_f32() * 20.0;
+        let now = clock() * 20.0;
         let cloth = s
             .still_cloth
             .get_or_insert_with(|| Cloth::hanging(DVec3::ZERO, now));
@@ -557,201 +580,203 @@ fn draw_cape(s: &mut State, style: &'static WearStyle, draw: &mut dyn PlayerDraw
 }
 
 // ---------------------------------------------------------------------------------------------
-// The wings.
+// Hats and pets: Java block models.
 
-/// How the wings beat: their phase, how much the player is in the air (0 to 1), and the feet's
-/// height and time a frame ago.
-#[derive(Default)]
-struct Flight {
-    phase: f32,
-    air: f32,
-    last: Option<(f64, f32)>,
-}
-
-fn draw_wings(s: &mut State, style: &'static WearStyle, draw: &mut dyn PlayerDraw, ticks: f32) {
-    let Some(uv) = draw.sprite(sprite_id(WINGS_SPRITE, &WINGS, style)) else {
-        return;
-    };
-    let Some(body) = draw.bone(Bone::Body) else {
-        return;
-    };
-    let motion = draw.motion();
-    let f = &mut s.flight;
-    if draw.pass() == Pass::World {
-        let dt = f
-            .last
-            .map_or(0.0, |(_, t)| ((ticks - t) / 20.0).clamp(0.0, 0.25));
-        let rising = f.last.map_or(0.0, |(y, _)| {
-            if dt > 0.0 {
-                (motion.feet[1] - y) / f64::from(dt)
-            } else {
-                0.0
-            }
-        });
-        f.last = Some((motion.feet[1], ticks));
-        // In the air: flying, or going up or down faster than a step.
-        let aloft = motion.flying || rising.abs() > 2.5;
-        let to = if aloft { 1.0 } else { 0.0 };
-        f.air += (to - f.air) * (1.0 - (-dt * 4.0).exp());
-        let beats = 0.5 + 1.9 * f.air;
-        f.phase = (f.phase + dt * beats * TAU) % TAU;
-    }
-    let beat = f.phase.sin();
-    let reach = 0.16 + 0.6 * f.air;
-    let mesh = wings_mesh();
-    draw.draw(mesh, body, Look::new(uv), &mut |p| wing_poses(beat, reach, p));
-}
-
-/// The wings' parts posed at `beat` (-1 to 1) of a beat reaching `reach`.
-fn wing_poses(beat: f32, reach: f32, p: &mut dyn PartPoses) {
-    for (side, sign) in [("l", 1.0f32), ("r", -1.0)] {
-        let wing = p.pose(if side == "l" {
-            "oteria_wing_l"
-        } else {
-            "oteria_wing_r"
-        });
-        // Spread back and up, beating forward and back.
-        wing[4] = sign * (-0.55 + beat * reach);
-        wing[5] = sign * (-0.32 - 0.18 * beat * reach);
-        let tip = p.pose(if side == "l" {
-            "oteria_wing_l_tip"
-        } else {
-            "oteria_wing_r_tip"
-        });
-        // The outer part follows a little late, folding on the way back.
-        tip[4] = sign * (-0.2 - 0.45 * beat * reach);
+/// The part a hat's or pet's mesh is, posed by name.
+fn part_name(kind: WearKind) -> &'static str {
+    match kind {
+        WearKind::Hat => "oteria_hat",
+        _ => "oteria_pet",
     }
 }
 
-fn wings_mesh() -> &'static Arc<Mesh> {
-    static MESH: OnceLock<Arc<Mesh>> = OnceLock::new();
-    MESH.get_or_init(|| {
-        let wing = |sign: f32, side: &str| {
-            // Inner part: a bone along the top, the membrane under it; outer part the same.
-            let part = |name: String,
-                        at: [f32; 3],
-                        len: f32,
-                        drop: f32,
-                        u: (f32, f32),
-                        children: Vec<Mesh>| {
-                let (x0, x1) = if sign > 0.0 { (0.0, len) } else { (-len, 0.0) };
-                let mut quads = cuboid(
-                    [x0, -0.9, -0.45],
-                    [len, 1.0, 0.9],
-                    [Some([0.0, 0.89, 1.0, 0.98]); 6],
-                );
-                // The membrane, both sides; its texture runs out from the body.
-                let (ua, ub) = if sign > 0.0 { u } else { (u.1, u.0) };
-                quads.extend(membrane(x0, x1, 0.0, drop, ua, ub, 0.875));
-                Mesh::new(
-                    name,
-                    [at[0], at[1], at[2], 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
-                    quads,
-                    children,
-                )
-            };
-            let tip = part(
-                format!("oteria_wing_{side}_tip"),
-                [sign * 10.0, 0.0, 0.0],
-                10.0,
-                13.0,
-                (0.5, 1.0),
+/// Where a model's part turns, on its bone (pixels, y down): a hat about the head's middle, a
+/// pet on top of the left shoulder.
+fn pivot(kind: WearKind) -> Vec3 {
+    match kind {
+        WearKind::Hat => Vec3::new(0.0, -4.0, 0.0),
+        _ => Vec3::new(6.0, 0.0, 0.0),
+    }
+}
+
+/// A hat's or pet's mesh, made once from its model (None: no model, or not one that reads).
+fn model_mesh(kind: WearKind, style: &'static WearStyle) -> Option<Arc<Mesh>> {
+    static MESHES: LazyLock<Mutex<HashMap<&'static str, Option<Arc<Mesh>>>>> =
+        LazyLock::new(Default::default);
+    let mut meshes = MESHES.lock().unwrap_or_else(PoisonError::into_inner);
+    meshes
+        .entry(style.id)
+        .or_insert_with(|| {
+            let json = oteria_art::wear_bytes(style.id, "json")?;
+            let quads = block_model(&json, kind)?;
+            let p = pivot(kind);
+            Some(Arc::new(Mesh::new(
+                part_name(kind).to_owned(),
+                [p.x, p.y, p.z, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                quads,
                 Vec::new(),
-            );
-            part(
-                format!("oteria_wing_{side}"),
-                [sign * 1.0, 0.0, 0.0],
-                10.0,
-                13.0,
-                (0.0, 0.5),
-                vec![tip],
-            )
-        };
-        Arc::new(Mesh::new(
-            "oteria_wings".into(),
-            [0.0, 2.0, 2.6, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
-            Vec::new(),
-            vec![wing(1.0, "l"), wing(-1.0, "r")],
-        ))
-    })
-}
-
-/// A flat quad from x0 to x1 and y 0 to `drop`, at z = 0, seen from both sides: u runs from
-/// `ua` at x0 to `ub` at x1, v from 0 to `v1`.
-fn membrane(x0: f32, x1: f32, y0: f32, drop: f32, ua: f32, ub: f32, v1: f32) -> [Quad; 2] {
-    let y1 = y0 + drop;
-    let back = Quad::new(
-        [0.0, 0.0, 1.0],
-        [
-            [x0, y0, 0.0, ua, 0.0],
-            [x1, y0, 0.0, ub, 0.0],
-            [x1, y1, 0.0, ub, v1],
-            [x0, y1, 0.0, ua, v1],
-        ],
-    );
-    let front = Quad::new(
-        [0.0, 0.0, -1.0],
-        [
-            [x1, y0, 0.0, ub, 0.0],
-            [x0, y0, 0.0, ua, 0.0],
-            [x0, y1, 0.0, ua, v1],
-            [x1, y1, 0.0, ub, v1],
-        ],
-    );
-    [back, front]
-}
-
-/// A box at `o` of `size` (pixels), its faces (in vanilla's order: up, down, west, north, east,
-/// south, as `ModelPart.Cube` lists them) each textured by a part of the sprite (u0, v0, u1, v1)
-/// or left out.
-fn cuboid(o: [f32; 3], size: [f32; 3], faces: [Option<[f32; 4]>; 6]) -> Vec<Quad> {
-    let [x0, y0, z0] = o;
-    let (x1, y1, z1) = (x0 + size[0], y0 + size[1], z0 + size[2]);
-    let t0 = [x0, y0, z0];
-    let t1 = [x1, y0, z0];
-    let t2 = [x1, y1, z0];
-    let t3 = [x0, y1, z0];
-    let l0 = [x0, y0, z1];
-    let l1 = [x1, y0, z1];
-    let l2 = [x1, y1, z1];
-    let l3 = [x0, y1, z1];
-    let all: [([[f32; 3]; 4], [f32; 3]); 6] = [
-        ([l1, l0, t0, t1], [0.0, -1.0, 0.0]),
-        ([t2, t3, l3, l2], [0.0, 1.0, 0.0]),
-        ([t0, l0, l3, t3], [-1.0, 0.0, 0.0]),
-        ([t1, t0, t3, t2], [0.0, 0.0, -1.0]),
-        ([l1, t1, t2, l2], [1.0, 0.0, 0.0]),
-        ([l0, l1, l2, l3], [0.0, 0.0, 1.0]),
-    ];
-    all.into_iter()
-        .zip(faces)
-        .filter_map(|((corners, normal), uv)| {
-            let [a, b, c, e] = uv?;
-            // As `ModelPart.Polygon` maps them: (u1, v0), (u0, v0), (u0, v1), (u1, v1).
-            let uvs = [[c, b], [a, b], [a, e], [c, e]];
-            let vertices = std::array::from_fn(|i| {
-                let [x, y, z] = corners[i];
-                [x, y, z, uvs[i][0], uvs[i][1]]
-            });
-            Some(Quad::new(normal, vertices))
+            )))
         })
-        .collect()
+        .clone()
+}
+
+/// A Java block model's faces (`elements`: boxes `from` `to` in pixels, y up, its front to the
+/// north, each turned by its `rotation`, each face's `uv` in sixteenths of the texture, turned by
+/// its own `rotation`), set on the bone about `pivot(kind)`. As Cosmetica places them: a hat's
+/// head is the box (4, -8, 4) to (12, 0, 12); a pet sits at (8, 0, 8) on the shoulder. The bone's
+/// x runs to the body's left and its y down: the model's x and y turn round.
+fn block_model(json: &[u8], kind: WearKind) -> Option<Vec<Quad>> {
+    let model: serde_json::Value = serde_json::from_slice(json).ok()?;
+    let lift = match kind {
+        WearKind::Hat => -8.0,
+        _ => 0.0,
+    };
+    let p = pivot(kind);
+    let place = |v: Vec3| Vec3::new(8.0 - v.x, lift - v.y, v.z - 8.0) - Vec3::new(0.0, p.y, 0.0);
+    let turn_normal = |n: Vec3| Vec3::new(-n.x, -n.y, n.z);
+    let three = |v: &serde_json::Value| -> Option<Vec3> {
+        let a = v.as_array()?;
+        Some(Vec3::new(
+            a.first()?.as_f64()? as f32,
+            a.get(1)?.as_f64()? as f32,
+            a.get(2)?.as_f64()? as f32,
+        ))
+    };
+    let mut quads = Vec::new();
+    for e in model.get("elements")?.as_array()? {
+        let (Some(from), Some(to)) = (three(&e["from"]), three(&e["to"])) else {
+            continue;
+        };
+        // The box's turn: about an axis through `origin`, rescaled to keep its span if asked.
+        let turn = e.get("rotation").and_then(|r| {
+            let origin = three(&r["origin"]).unwrap_or(Vec3::splat(8.0));
+            let angle = (r["angle"].as_f64()? as f32).to_radians();
+            let (q, stretch) = match r["axis"].as_str()? {
+                "x" => (Quat::from_rotation_x(angle), Vec3::new(1.0, 0.0, 0.0)),
+                "y" => (Quat::from_rotation_y(angle), Vec3::new(0.0, 1.0, 0.0)),
+                _ => (Quat::from_rotation_z(angle), Vec3::new(0.0, 0.0, 1.0)),
+            };
+            let rescale = r["rescale"].as_bool().unwrap_or(false);
+            let k = if rescale { 1.0 / angle.cos() } else { 1.0 };
+            let scale = stretch + (Vec3::ONE - stretch) * k;
+            Some((origin, q, scale))
+        });
+        let at = |v: Vec3| match turn {
+            Some((o, q, scale)) => place(o + q * ((v - o) * scale)),
+            None => place(v),
+        };
+        let normal = |n: Vec3| turn_normal(turn.map_or(n, |(_, q, _)| q * n));
+        let (a, b) = (from, to);
+        let Some(faces) = e.get("faces").and_then(|f| f.as_object()) else {
+            continue;
+        };
+        for (dir, face) in faces {
+            // Its corners as seen from outside: top left, top right, bottom right, bottom left.
+            let (corners, n) = match dir.as_str() {
+                "north" => (
+                    [[b.x, b.y, a.z], [a.x, b.y, a.z], [a.x, a.y, a.z], [b.x, a.y, a.z]],
+                    Vec3::NEG_Z,
+                ),
+                "south" => (
+                    [[a.x, b.y, b.z], [b.x, b.y, b.z], [b.x, a.y, b.z], [a.x, a.y, b.z]],
+                    Vec3::Z,
+                ),
+                "east" => (
+                    [[b.x, b.y, b.z], [b.x, b.y, a.z], [b.x, a.y, a.z], [b.x, a.y, b.z]],
+                    Vec3::X,
+                ),
+                "west" => (
+                    [[a.x, b.y, a.z], [a.x, b.y, b.z], [a.x, a.y, b.z], [a.x, a.y, a.z]],
+                    Vec3::NEG_X,
+                ),
+                "up" => (
+                    [[a.x, b.y, a.z], [b.x, b.y, a.z], [b.x, b.y, b.z], [a.x, b.y, b.z]],
+                    Vec3::Y,
+                ),
+                "down" => (
+                    [[a.x, a.y, b.z], [b.x, a.y, b.z], [b.x, a.y, a.z], [a.x, a.y, a.z]],
+                    Vec3::NEG_Y,
+                ),
+                _ => continue,
+            };
+            let uv: Vec<f32> = face["uv"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_f64()).map(|v| v as f32 / 16.0).collect())
+                .unwrap_or_default();
+            let [u0, v0, u1, v1] = uv[..] else {
+                continue;
+            };
+            let uvs = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+            // A face's texture turned clockwise a quarter at a time (`BlockFaceUV`).
+            let quarter = (face["rotation"].as_f64().unwrap_or(0.0) / 90.0).round() as usize % 4;
+            let vertices: [[f32; 5]; 4] = std::array::from_fn(|i| {
+                let p = at(Vec3::from_array(corners[i]));
+                let [u, v] = uvs[(i + 4 - quarter) % 4];
+                [p.x, p.y, p.z, u, v]
+            });
+            quads.push(Quad::new(normal(n).to_array(), vertices));
+        }
+    }
+    (!quads.is_empty()).then_some(quads)
+}
+
+/// A hat's or pet's part posed at `t` (s): a pet breathes and looks about, lifted over a
+/// chestplate (`covered`); a hat grows over a helmet to sit on it.
+fn pose_model(kind: WearKind, covered: bool, t: f32, pose: &mut [f32; 9]) {
+    match kind {
+        WearKind::Hat => {
+            if covered {
+                pose[6..9].copy_from_slice(&[1.25; 3]);
+            }
+        }
+        _ => {
+            let breath = (t * 2.4).sin();
+            pose[1] -= 0.25 + 0.25 * breath + if covered { 1.0 } else { 0.0 };
+            pose[4] = (t * 0.45).sin() * 0.22 + (t * 1.3).sin() * 0.04;
+            pose[3] = (t * 0.7).sin() * 0.04;
+            pose[7] = 1.0 + 0.025 * breath;
+        }
+    }
+}
+
+fn draw_model(
+    s: &State,
+    kind: WearKind,
+    style: &'static WearStyle,
+    covered: bool,
+    draw: &mut dyn PlayerDraw,
+) {
+    let Some(&sheet) = s.sheets.get(style.id) else {
+        return;
+    };
+    let Some(mesh) = model_mesh(kind, style) else {
+        return;
+    };
+    let bone = if kind == WearKind::Hat { Bone::Head } else { Bone::Body };
+    let Some(on) = draw.bone(bone) else {
+        return;
+    };
+    let t = clock();
+    let name = part_name(kind);
+    draw.draw(
+        &mesh,
+        on,
+        Look::new(frame_uv(sheet, style, t)),
+        &mut |p| pose_model(kind, covered, t, p.pose(name)),
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
 // The aura.
 
 fn draw_aura(style: &'static WearStyle, draw: &mut dyn PlayerDraw, ticks: f32) {
-    let Some(uv) = draw.sprite(sprite_id(AURA_SPRITE, &AURAS, style)) else {
+    let Some(uv) = draw.sprite(aura_sprite(style)) else {
         return;
     };
     let view = draw.view();
     let feet = (DVec3::from_array(draw.motion().feet) - DVec3::from_array(view.camera)).as_vec3();
     let (right, up) = (Vec3::from_array(view.right), Vec3::from_array(view.up));
-    // In first person the eyes are inside the spiral: only what stays below them shows.
-    let first_person = draw.pass() == Pass::FirstPerson;
-    let top = if first_person { 0.9 } else { 2.25 };
-    for (part, particles) in aura_particles(ticks / 20.0, feet, (right, up), top, true) {
+    for (part, particles) in aura_particles(ticks / 20.0, feet, (right, up), 2.25, true) {
         draw.particles(quarter(uv, part), &particles, Light::Full);
     }
 }
@@ -873,15 +898,7 @@ fn rgb(c: u32) -> [f32; 3] {
 fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t.clamp(0.0, 1.0))
 }
-fn scale(a: [f32; 3], k: f32) -> [f32; 3] {
-    a.map(|v| v * k)
-}
 /// A texel's own small variation, -1 to 1.
-fn grain(x: usize, y: usize) -> f32 {
-    let h = (x as u32).wrapping_mul(374_761_393) ^ (y as u32).wrapping_mul(668_265_263);
-    let h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
-    ((h >> 8) & 0xFFFF) as f32 / 32_768.0 - 1.0
-}
 fn image(mut texel: impl FnMut(usize, usize) -> ([f32; 3], f32)) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 * 64 * 4);
     for y in 0..64 {
@@ -892,92 +909,6 @@ fn image(mut texel: impl FnMut(usize, usize) -> ([f32; 3], f32)) -> Vec<u8> {
         }
     }
     out
-}
-
-/// The cape: its outside on the left half (a fall of colour, a trim in its light, an emblem),
-/// its inside, darker, on the right.
-fn cape_texture(style: &WearStyle) -> Vec<u8> {
-    let (main, light) = (rgb(style.main), rgb(style.light));
-    image(|x, y| {
-        let g = grain(x, y) * 0.05;
-        if x >= 32 {
-            return (scale(main, 0.42 + g), 1.0);
-        }
-        let fy = y as f32 / 63.0;
-        // Folds down the cloth and a fall from bright to deep.
-        let fold = (x as f32 * 0.55).sin() * 0.05;
-        let mut c = scale(main, 1.08 - 0.38 * fy + fold + g);
-        // The trim: down the sides and along the bottom.
-        if !(2..=29).contains(&x) || !(1..=60).contains(&y) {
-            c = scale(light, 0.92 + g);
-        } else if x == 2 || x == 29 || y == 60 {
-            c = scale(main, 0.6);
-        }
-        // The emblem: a diamond in a diamond, a third of the way down.
-        let (dx, dy) = ((x as f32 - 15.5).abs(), (y as f32 - 19.5).abs());
-        let d = dx + dy;
-        if (7.0..8.6).contains(&d) || d < 3.2 {
-            c = mix(c, light, 0.95);
-        } else if d < 7.0 {
-            c = mix(c, scale(main, 0.7), 0.6);
-        }
-        (c, 1.0)
-    })
-}
-
-/// A wing: its membrane over the top 56 rows (the inner part on the left half, the outer on the
-/// right), its edge cut in scallops or feathers, its veins; the bones along the bottom rows.
-fn wings_texture(style: &WearStyle) -> Vec<u8> {
-    let (main, light) = (rgb(style.main), rgb(style.light));
-    let feathered = style.id == "angel";
-    image(|x, y| {
-        if y >= 56 {
-            return (
-                mix(
-                    scale(main, 0.55),
-                    light,
-                    if y % 4 == 1 { 0.6 } else { 0.25 },
-                ),
-                1.0,
-            );
-        }
-        let (fx, fy) = (x as f32, y as f32);
-        // How far down the membrane reaches here: deep near the body, a point at the tip.
-        let reach = 54.0 * (1.0 - (fx / 64.0).powf(1.6)) + 2.0;
-        let edge = if feathered {
-            reach - 6.0 * ((fx / 64.0 * 9.0 * PI).sin().abs())
-        } else {
-            reach - 7.0 * ((fx / 64.0 * 4.0 * PI).sin().abs())
-        };
-        if fy > edge {
-            return ([0.0; 3], 0.0);
-        }
-        let g = grain(x, y) * 0.04;
-        let depth = fy / edge.max(1.0);
-        let mut c = scale(
-            mix(main, light, 0.15 + 0.25 * (1.0 - fx / 64.0)),
-            1.0 - 0.3 * depth + g,
-        );
-        if feathered {
-            // Rows of feathers, each a little lighter at its tip.
-            let row = (fy + fx * 0.35) % 9.0;
-            c = mix(c, light, 0.15 + 0.35 * (row / 9.0));
-        } else {
-            // Veins, fanning out from the shoulder.
-            for k in 0..5 {
-                let ang = 0.2 + k as f32 * 0.28;
-                let dist = (fx * ang.sin() - fy * ang.cos()).abs();
-                if dist < 0.9 && fx + fy > 4.0 {
-                    c = mix(c, light, 0.55);
-                }
-            }
-        }
-        // The edge glows a little in the light colour.
-        if edge - fy < 1.6 {
-            c = mix(c, light, 0.7);
-        }
-        (c, 1.0)
-    })
 }
 
 /// The aura's sprites, a quarter each: a glowing mote, a sparkle, and a ring.
@@ -1025,12 +956,13 @@ fn aura_texture(style: &WearStyle) -> Vec<u8> {
 /// Full light, packed as the vertices carry it.
 const FULL_LIGHT: u32 = 240 | 240 << 8;
 
-/// A cape or wings alone, as the Cosmetics page's cards show them, at `clock` (s): their
-/// vertices (blocks), the body's space (x to the body's left, y down, z out of the back) taken by
-/// `base`, drawn from the style's sprite `uv`. The cape hangs in the lightest breeze; the wings
-/// beat slowly.
+/// A cape, hat or pet alone, as the Cosmetics page's cards show it, at `clock` (s): its
+/// vertices (blocks), the body's space (x to the body's left, y down, z out of the back) taken
+/// by `base`, drawn from its texture `uv` (the frame now). The cape hangs in the lightest
+/// breeze; a pet breathes and looks about.
 pub(super) fn showcase(
     kind: WearKind,
+    style: &'static WearStyle,
     uv: [f32; 4],
     base: Mat4,
     clock: f32,
@@ -1054,24 +986,17 @@ pub(super) fn showcase(
             let part = super::player_hooks::part_of(&mesh);
             render_model(&part, base, &|p| p.pose, uv, FULL_LIGHT, 0, out);
         }
-        WearKind::Wings => {
-            let part = super::player_hooks::part_of(wings_mesh());
+        WearKind::Hat | WearKind::Pet => {
+            let Some(mesh) = model_mesh(kind, style) else {
+                return;
+            };
+            let part = super::player_hooks::part_of(&mesh);
             let mut poses = horizon_client::mobs::anim::Poses::pooled();
             poses.reset(&part);
-            let beat = (clock * 0.7 * TAU).sin();
-            wing_poses(beat, 0.22, &mut Posing(&mut poses));
+            pose_model(kind, false, clock, poses.get(part_name(kind)));
             render_model(&part, base, &|p| poses.pose(p), uv, FULL_LIGHT, 0, out);
         }
         WearKind::Aura => {}
-    }
-}
-
-/// The game's poses as a mesh's parts are posed.
-struct Posing<'a>(&'a mut horizon_client::mobs::anim::Poses);
-
-impl PartPoses for Posing<'_> {
-    fn pose(&mut self, name: &str) -> &mut [f32; 9] {
-        self.0.get(name)
     }
 }
 
@@ -1210,39 +1135,60 @@ mod tests {
     }
 
     #[test]
-    fn the_pictures_are_whole_and_their_cut_outs_clear() {
-        for c in &CAPES {
-            assert_eq!(cape_texture(c).len(), 64 * 64 * 4);
-        }
-        for w in &WINGS {
-            let px = wings_texture(w);
-            assert_eq!(px.len(), 64 * 64 * 4);
-            // The tip's corner is cut out, the shoulder's is not.
-            assert_eq!(px[(50 * 64 + 63) * 4 + 3], 0);
-            assert_eq!(px[(2 * 64 + 2) * 4 + 3], 255);
-        }
+    fn the_aura_pictures_are_whole_and_their_cut_outs_clear() {
         for a in &AURAS {
             let px = aura_texture(a);
+            assert_eq!(px.len(), 64 * 64 * 4);
             assert_eq!(px[(16 * 64 + 16) * 4 + 3], 255, "the mote's middle");
             assert_eq!(px[3], 0, "its corner");
         }
     }
 
     #[test]
-    fn the_meshes_have_their_named_parts() {
-        fn names(m: &Mesh, out: &mut Vec<String>) {
-            out.push(m.name.clone());
-            m.children.iter().for_each(|c| names(c, out));
-        }
-        let mut wings = Vec::new();
-        names(wings_mesh(), &mut wings);
-        for n in [
-            "oteria_wing_l",
-            "oteria_wing_r",
-            "oteria_wing_l_tip",
-            "oteria_wing_r_tip",
-        ] {
-            assert!(wings.iter().any(|w| w == n), "{n}");
+    fn a_frame_is_its_slice_of_the_sheet() {
+        let style = &CAPES[1];
+        let sheet = [0.0, 0.0, 1.0, 1.0];
+        let n = style.frames as f32;
+        assert_eq!(frame_uv(sheet, style, 0.0), [0.0, 0.0, 1.0, 1.0 / n]);
+        let third = frame_uv(sheet, style, oteria_art::FRAME_SECONDS * 2.5);
+        assert!((third[1] - 2.0 / n).abs() < 1e-6 && (third[3] - 3.0 / n).abs() < 1e-6);
+        // Round again after the last.
+        let again = frame_uv(sheet, style, oteria_art::FRAME_SECONDS * (n + 0.5));
+        assert_eq!(again[1], 0.0);
+    }
+
+    #[test]
+    fn a_block_model_sits_on_the_head_and_the_shoulder() {
+        // A 2x2x2 box at the top of a hat's head (y 0 is its top), and a pet's at (8, 0, 8).
+        let json = br##"{"elements": [{"from": [7, 0, 7], "to": [9, 2, 9],
+            "faces": {"north": {"uv": [0, 0, 2, 2], "texture": "#1"},
+                      "up": {"uv": [0, 0, 2, 2], "texture": "#1", "rotation": 90}}}]}"##;
+        let hat = block_model(json, WearKind::Hat).unwrap();
+        assert_eq!(hat.len(), 2);
+        let ys: Vec<f32> = hat.iter().flat_map(|q| q.vertices).map(|v| v[1]).collect();
+        // On the bone about the head's middle (y -4): from the top of the head (-8) up two.
+        assert!(ys.iter().all(|&y| (-6.0..=-4.0).contains(&y)), "{ys:?}");
+        // Its north face looks to the front (-z).
+        assert_eq!(hat[0].normal, [0.0, 0.0, -1.0]);
+        assert!(hat[0].vertices.iter().all(|v| v[2] == -1.0));
+        // Its uv in the texture's share, and a turned face's turned.
+        assert!(hat[0].vertices.iter().all(|v| (0.0..=0.125).contains(&v[3])));
+        assert_eq!([hat[1].vertices[0][3], hat[1].vertices[0][4]], [0.0, 0.125]);
+        let pet = block_model(json, WearKind::Pet).unwrap();
+        let ys: Vec<f32> = pet.iter().flat_map(|q| q.vertices).map(|v| v[1]).collect();
+        assert!(ys.iter().all(|&y| (-2.0..=0.0).contains(&y)), "{ys:?}");
+        assert!(block_model(b"{}", WearKind::Pet).is_none());
+    }
+
+    #[test]
+    fn every_model_there_reads() {
+        for (kind, all) in [(WearKind::Hat, &HATS[..]), (WearKind::Pet, &PETS[..])] {
+            for style in all.iter().filter(|s| oteria_art::wear_available(s)) {
+                let json = oteria_art::wear_bytes(style.id, "json").unwrap();
+                let quads = block_model(&json, kind).unwrap_or_default();
+                assert!(quads.len() > 6, "{}", style.id);
+                assert!(quads.iter().flat_map(|q| q.vertices).flatten().all(|v| v.is_finite()));
+            }
         }
     }
 }

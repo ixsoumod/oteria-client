@@ -9958,7 +9958,13 @@ impl Game<'_> {
         let blur = self.motion_blur_share();
         let secret = self.settings.extras.pvp.secret.effect;
         let environment = self.environment_frame(frame.distance);
-        oteria_wear::sync(&self.settings.extras.pvp.skins);
+        {
+            let atlas = &self.gui.atlas.sprites;
+            let mojang_cape = self.player_model.as_ref().is_some_and(|m| m.cape.is_some());
+            oteria_wear::sync(&self.settings.extras.pvp.skins, mojang_cape, &|name| {
+                atlas.get(name).map(|r| [r.u0, r.v0, r.u1, r.v1])
+            });
+        }
         let result = match self.renderer.as_mut() {
             Some(renderer) => {
                 renderer.set_pass_timing(debug_passes || self.gpu_passes);
