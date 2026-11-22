@@ -710,6 +710,10 @@ impl Game<'_> {
         if self.mod_browser_press(right) || self.mount_click(right) {
             return;
         }
+        // Oteria's Fast Totem: Shift + click on a totem puts it in the off hand.
+        if self.oteria_totem_shift_click(right) {
+            return;
+        }
         if self.recipe_book_click(right) {
             return;
         }

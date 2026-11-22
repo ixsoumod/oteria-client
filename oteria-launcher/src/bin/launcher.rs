@@ -1502,7 +1502,7 @@ impl Launcher {
         let margin = NAV_GAP;
         let items = [
             (Page::Play, "play-fill"),
-            (Page::Versions, "controller"),
+            (Page::Versions, "floppy-fill"),
             (Page::Mods, "puzzle-fill"),
             (Page::Market, "cart-fill"),
             (Page::Settings, "gear-fill"),

@@ -224,8 +224,25 @@ impl Game<'_> {
                 self.avatar.interpolated_bob(partial),
             )),
         };
-        let tilt = self.settings.file.double("damageTiltStrength");
-        glam::Mat4::from_cols_array(&bob_matrix(&state, tilt, self.settings.view_bobbing).m)
+        // Oteria's HurtCam: its own strength for the tilt, and above vanilla's a shake.
+        let hurtcam = self.settings.extras.pvp.hurtcam;
+        let tilt = hurtcam.tilt(self.settings.file.double("damageTiltStrength"));
+        let mut shake = glam::Mat4::IDENTITY;
+        let left = p.health.hurt_animation_time as f32 - partial;
+        if hurtcam.shake() > 0.0 && left > 0.0 && hurt.hurt_duration > 0 {
+            // Strongest at the hit, gone as the hurt ends; quick, as a shake.
+            let k = hurtcam.shake() * (left / hurt.hurt_duration as f32).min(1.0);
+            let deg = 5.0 * k;
+            shake = glam::Mat4::from_rotation_x((left * 7.3).sin() * deg.to_radians())
+                * glam::Mat4::from_rotation_y((left * 5.1 + 1.0).sin() * deg.to_radians())
+                * glam::Mat4::from_translation(glam::Vec3::new(
+                    (left * 6.7 + 2.0).sin() * 0.06 * k,
+                    (left * 8.9).sin() * 0.06 * k,
+                    0.0,
+                ));
+        }
+        shake
+            * glam::Mat4::from_cols_array(&bob_matrix(&state, tilt, self.settings.view_bobbing).m)
             * self.native_shake_matrix(partial)
     }
     /// `AbstractClientPlayer.tick` and `aiStep` (`ClientAvatarState.tick`,

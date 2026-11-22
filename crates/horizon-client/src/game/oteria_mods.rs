@@ -91,6 +91,29 @@ impl Tile {
     fn is_crosshair(&self) -> bool {
         self.key == "oteria.mod.crosshair"
     }
+    /// The Environment's tile: its settings add the particles' shapes and their drawing grid.
+    fn is_environment(&self) -> bool {
+        self.key == "oteria.mod.environment"
+    }
+}
+
+/// What the drawing grid edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Drawing {
+    Crosshair,
+    /// The player indicator over the crosshair (Crosshair Indicator).
+    Indicator,
+    /// The Environment's particles.
+    Particle,
+}
+impl Drawing {
+    fn index(self) -> usize {
+        match self {
+            Drawing::Crosshair => 0,
+            Drawing::Indicator => 1,
+            Drawing::Particle => 2,
+        }
+    }
 }
 
 macro_rules! tile {
@@ -120,7 +143,7 @@ macro_rules! hud {
 }
 
 /// Every tile, in the grid's order.
-pub(super) static TILES: [Tile; 49] = [
+pub(super) static TILES: [Tile; 51] = [
     tile!("oteria.mod.fps", "FPS", icon::GAUGE, Hud, hud!(HudFpsCorner), e => e.pvp.hud.fps),
     tile!("oteria.mod.cps", "CPS", icon::MOUSE, Hud, hud!(HudCpsCorner), e => e.pvp.hud.cps),
     tile!("oteria.mod.keystrokes", "Keystrokes", icon::KEYBOARD, Hud, hud!(HudKeysCorner), e => e.pvp.hud.keys),
@@ -163,6 +186,13 @@ pub(super) static TILES: [Tile; 49] = [
         Item::Pvp(Opt::ClearBlindness),
         Item::Pvp(Opt::ClearNausea),
     ], e => e.pvp.clear_view.enabled),
+    tile!("oteria.mod.hurtcam", "HurtCam", icon::EYE, Visual,
+        &[Item::Pvp(Opt::HurtCamStrength)], e => e.pvp.hurtcam.enabled),
+    tile!("oteria.mod.fast_totem", "Fast Totem", icon::SHIELD, Pvp, &[
+        Item::Pvp(Opt::FastTotemAuto),
+        Item::Pvp(Opt::FastTotemDelay),
+        Item::Pvp(Opt::FastTotemShift),
+    ], e => e.pvp.fast_totem.enabled),
     tile!("oteria.mod.crystal", "Crystal Optimizer", icon::SPARKLES, Pvp,
         &[Item::Pvp(Opt::CrystalKeep)], e => e.pvp.crystal.enabled),
     tile!("oteria.mod.anchor", "Anchor Optimizer", icon::BULB, Pvp,
@@ -247,6 +277,8 @@ pub(super) static TILES: [Tile; 49] = [
         Item::Pvp(Opt::EnvParticles),
         Item::Pvp(Opt::EnvParticlesColour),
         Item::Pvp(Opt::EnvParticlesAmount),
+        Item::Pvp(Opt::EnvParticlesShape),
+        Item::Pvp(Opt::EnvParticlesSize),
         Item::Pvp(Opt::EnvHat),
         Item::Pvp(Opt::EnvHatColour),
         Item::Pvp(Opt::EnvSky),
@@ -333,8 +365,10 @@ pub(super) enum Action {
     Cycle(Item, bool),
     /// One of `pvp::crosshair_presets`.
     Preset(usize),
-    /// The drawn crosshair's pixels (the player indicator's, when true), once the stroke is done.
-    Pixels(bool, [u16; DRAWN]),
+    /// A drawing's pixels, once the stroke is done.
+    Pixels(Drawing, [u16; DRAWN]),
+    /// The Environment's particles take this shape.
+    ParticleShape(pvp::ParticleShape),
     /// A colour option set (`None`: off); saved when the last field is true (a drag puts each
     /// step on, and saves when let go).
     SetColour(Opt, Option<Colour>, bool),
@@ -491,6 +525,8 @@ enum Hit {
     Back,
     Row(Item, bool),
     Preset(usize),
+    /// One of the particle shapes (`particle_shapes`).
+    ParticleShape(usize),
     Grid,
     ClearGrid,
     /// Which drawing the grid edits: the crosshair (false) or the player indicator (true).
@@ -591,7 +627,7 @@ impl Mods {
     #[cfg(test)]
     fn click_test_picker(&mut self, opt: Opt) {
         self.hits = vec![([0.0, 0.0, 10.0, 10.0], Hit::ColourRow(opt))];
-        self.click((1.0, 1.0), [[0; DRAWN]; 2]);
+        self.click((1.0, 1.0), [[0; DRAWN]; 3]);
     }
 
     /// The tiles the filter and the search leave, by index.
@@ -626,9 +662,9 @@ impl Mods {
     }
 
     /// A press at `cursor` (GUI pixels): what the game should do, if anything.
-    /// `drawn`: the crosshair's pixels and the player indicator's.
-    pub(super) fn click(&mut self, cursor: (f32, f32), drawn: [[u16; DRAWN]; 2]) -> Option<Action> {
-        let crosshair = drawn[usize::from(self.indicator)];
+    /// `drawn`: the crosshair's pixels, the player indicator's and the particles'.
+    pub(super) fn click(&mut self, cursor: (f32, f32), drawn: [[u16; DRAWN]; 3]) -> Option<Action> {
+        let crosshair = drawn[self.drawing().index()];
         let found = self
             .hits
             .iter()
@@ -766,7 +802,8 @@ impl Mods {
             }
             Hit::Row(item, back) => Some(Action::Cycle(item, back)),
             Hit::Preset(k) => Some(Action::Preset(k)),
-            Hit::ClearGrid => Some(Action::Pixels(self.indicator, [0; DRAWN])),
+            Hit::ClearGrid => Some(Action::Pixels(self.drawing(), [0; DRAWN])),
+            Hit::ParticleShape(k) => Some(Action::ParticleShape(particle_shapes()[k])),
             Hit::GridTarget(indicator) => {
                 self.indicator = indicator;
                 None
@@ -806,8 +843,20 @@ impl Mods {
         self.stroke(cursor);
         self.paint = None;
         self.last = None;
-        let indicator = self.indicator;
-        self.pixels.take().map(|p| Action::Pixels(indicator, p))
+        let drawing = self.drawing();
+        self.pixels.take().map(|p| Action::Pixels(drawing, p))
+    }
+
+    /// What the grid on show edits: the particles' on the Environment's settings, else the
+    /// crosshair or its indicator.
+    fn drawing(&self) -> Drawing {
+        if TILES[self.shown].is_environment() {
+            Drawing::Particle
+        } else if self.indicator {
+            Drawing::Indicator
+        } else {
+            Drawing::Crosshair
+        }
     }
 
     /// The stroke goes on to the cell under `cursor`, painting every cell on the way.
@@ -2063,22 +2112,7 @@ impl Mods {
                 8.0,
                 argb(0x000000, 0.35 * a),
             );
-            for (gy_, row) in pixels.iter().enumerate() {
-                for gx_ in 0..DRAWN {
-                    let set = row >> gx_ & 1 == 1;
-                    let (x0, y0) = (grid[0] + gx_ as f32 * cell, grid[1] + gy_ as f32 * cell);
-                    let middle = gx_ == DRAWN / 2 && gy_ == DRAWN / 2;
-                    let fill = if set {
-                        argb(WHITE, 0.95 * a)
-                    } else {
-                        argb(
-                            if middle { ACCENT } else { WHITE },
-                            if middle { 0.25 } else { 0.06 } * a,
-                        )
-                    };
-                    ui.rounded(x0 + 0.5, y0 + 0.5, cell - 1.0, cell - 1.0, 2.0, fill);
-                }
-            }
+            draw_grid(ui, &pixels, grid, cell, a);
             if within(grid) {
                 page.hit(clipped(grid), Hit::Grid);
                 horizon_client::widgets::record(
@@ -2149,6 +2183,167 @@ impl Mods {
                     "Click or drag to paint. Drawing switches the shape to Drawn.",
                 )
             };
+            let hint = fit(ui, Face::Regular, 11.0, &hint, vw - side - 30.0);
+            ui.text(
+                Face::Regular,
+                11.0,
+                sx,
+                sy + 140.0,
+                argb(WHITE, 0.5 * a),
+                &hint,
+            );
+            y += side + 22.0;
+        }
+
+        if tile.is_environment() {
+            let e = &extras.pvp.environment;
+            let tint = e.particles_colour.argb() & 0xFF_FFFF;
+            // The flakes and the ready-made shapes, each drawn as it looks.
+            section(
+                ui,
+                y,
+                &lang::get_or("oteria.particles.shapes", "Particle shape"),
+            );
+            y += 22.0;
+            let shapes = particle_shapes();
+            let gap = 8.0;
+            let cw = ((vw - gap * (shapes.len() - 1) as f32) / shapes.len() as f32).min(96.0);
+            for (k, shape) in shapes.iter().enumerate() {
+                let r = [vx + k as f32 * (cw + gap), y, cw, 80.0];
+                let chosen = e.particles_shape == *shape;
+                let over = within(r) && inside(r, pointer);
+                ui.rounded(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    10.0,
+                    argb(
+                        if chosen { ACCENT } else { WHITE },
+                        if chosen {
+                            0.2
+                        } else if over {
+                            0.1
+                        } else {
+                            0.05
+                        } * a,
+                    ),
+                );
+                ui.border(
+                    r[0],
+                    r[1],
+                    r[2],
+                    r[3],
+                    10.0,
+                    argb(
+                        if chosen { ACCENT } else { WHITE },
+                        if chosen { 0.7 } else { 0.08 } * a,
+                    ),
+                );
+                let (cx, cy) = (r[0] + cw / 2.0, r[1] + 30.0);
+                if *shape == pvp::ParticleShape::Classic {
+                    // Three flakes, turned.
+                    for (dx, dy, side) in [(-9.0, -6.0, 6.0), (7.0, -2.0, 5.0), (-1.0, 8.0, 4.0)] {
+                        ui.rounded(cx + dx - side / 2.0, cy + dy - side / 2.0, side, side, 1.0, argb(tint, a));
+                    }
+                } else {
+                    let mask = pvp::pixels_mask(&shape.pixels(e.particles_pixels));
+                    draw_mask(ui, &mask, cx, cy, 2.0, argb(tint, a));
+                }
+                let name = shape.label();
+                let name = fit(ui, Face::Medium, 11.0, &name, cw - 6.0);
+                let nw = ui.measure(Face::Medium, 11.0, &name);
+                ui.text(
+                    Face::Medium,
+                    11.0,
+                    r[0] + (cw - nw) / 2.0,
+                    r[1] + 58.0,
+                    argb(WHITE, 0.85 * a),
+                    &name,
+                );
+                if within(r) {
+                    page.hit(clipped(r), Hit::ParticleShape(k));
+                    horizon_client::widgets::record(
+                        &format!("oteria-particle-shape-{}", shape.name()),
+                        clipped(r).map(gui),
+                        true,
+                    );
+                }
+            }
+            y += 80.0 + 18.0;
+
+            // The drawing grid: a click flips a pixel, a drag paints the same way.
+            section(
+                ui,
+                y,
+                &lang::get_or("oteria.particles.draw", "Draw your own particle"),
+            );
+            y += 22.0;
+            // The shape on show: a ready-made one to start from, or the drawing.
+            let pixels = self
+                .pixels
+                .unwrap_or(e.particle_pixels().unwrap_or(e.particles_pixels));
+            let cell = 13.0;
+            let side = cell * DRAWN as f32;
+            let grid = [vx, y, side, side];
+            ui.rounded(
+                grid[0] - 4.0,
+                grid[1] - 4.0,
+                side + 8.0,
+                side + 8.0,
+                8.0,
+                argb(0x000000, 0.35 * a),
+            );
+            draw_grid(ui, &pixels, grid, cell, a);
+            if within(grid) {
+                page.hit(clipped(grid), Hit::Grid);
+                horizon_client::widgets::record(
+                    "oteria-particle-grid",
+                    clipped(grid).map(gui),
+                    true,
+                );
+            }
+            self.grid = (grid.map(gui), gui(cell));
+            // Beside it: the particle in its colour on a night sky, and a button to start again.
+            let (sx, sy) = (vx + side + 30.0, y);
+            let looks = lang::get_or("oteria.particles.preview", "In the air");
+            ui.text(Face::Regular, 11.0, sx, sy, argb(WHITE, 0.6 * a), &looks);
+            ui.rounded(sx, sy + 20.0, 64.0, 64.0, 8.0, argb(0x1B_1030, 0.95 * a));
+            draw_mask(
+                ui,
+                &pvp::pixels_mask(&pixels),
+                sx + 32.0,
+                sy + 52.0,
+                3.0,
+                argb(tint, a),
+            );
+            let clear = [sx, sy + 96.0, 120.0, 30.0];
+            let over = within(clear) && inside(clear, pointer);
+            ui.rounded(
+                clear[0],
+                clear[1],
+                clear[2],
+                clear[3],
+                7.0,
+                argb(WHITE, if over { 0.14 } else { 0.07 } * a),
+            );
+            let clear_label = lang::get_or("oteria.crosshair.clear", "Clear");
+            let cw = ui.measure(Face::Medium, 11.0, &clear_label);
+            ui.text(
+                Face::Medium,
+                11.0,
+                clear[0] + (120.0 - cw) / 2.0,
+                clear[1] + 7.0,
+                argb(WHITE, a),
+                &clear_label,
+            );
+            if within(clear) {
+                page.hit(clipped(clear), Hit::ClearGrid);
+            }
+            let hint = lang::get_or(
+                "oteria.particles.hint",
+                "Click or drag to paint. Drawing switches the particles to Drawn.",
+            );
             let hint = fit(ui, Face::Regular, 11.0, &hint, vw - side - 30.0);
             ui.text(
                 Face::Regular,
@@ -2865,6 +3060,34 @@ fn set_pixel(pixels: &mut [u16; DRAWN], (x, y): (usize, usize), on: bool) {
 }
 
 /// A crosshair's pixels centred on `(cx, cy)` (dp), each `k` dp square.
+/// The particle shapes the Environment's settings offer, in their order: the flakes, then the
+/// ready-made ones.
+fn particle_shapes() -> [pvp::ParticleShape; 7] {
+    let p = pvp::ParticleShape::PRESETS;
+    [pvp::ParticleShape::Classic, p[0], p[1], p[2], p[3], p[4], p[5]]
+}
+
+/// The drawing grid's cells over `grid` (dp), `cell` a side: the set pixels white, the middle
+/// one marked.
+fn draw_grid(ui: &mut Ui, pixels: &[u16; DRAWN], grid: [f32; 4], cell: f32, a: f32) {
+    for (gy_, row) in pixels.iter().enumerate() {
+        for gx_ in 0..DRAWN {
+            let set = row >> gx_ & 1 == 1;
+            let (x0, y0) = (grid[0] + gx_ as f32 * cell, grid[1] + gy_ as f32 * cell);
+            let middle = gx_ == DRAWN / 2 && gy_ == DRAWN / 2;
+            let fill = if set {
+                argb(WHITE, 0.95 * a)
+            } else {
+                argb(
+                    if middle { ACCENT } else { WHITE },
+                    if middle { 0.25 } else { 0.06 } * a,
+                )
+            };
+            ui.rounded(x0 + 0.5, y0 + 0.5, cell - 1.0, cell - 1.0, 2.0, fill);
+        }
+    }
+}
+
 fn draw_mask(ui: &mut Ui, mask: &pvp::Mask, cx: f32, cy: f32, k: f32, colour: u32) {
     for (x0, y, x1) in mask.runs() {
         let (x, yy) = (cx + (x0 as f32 - 0.5) * k, cy + (y as f32 - 0.5) * k);
@@ -3014,10 +3237,10 @@ mod tests {
             hits: vec![([0.0, 0.0, 150.0, 150.0], Hit::Grid)],
             ..Mods::default()
         };
-        assert_eq!(m.click((5.0, 5.0), [[0; DRAWN]; 2]), None);
+        assert_eq!(m.click((5.0, 5.0), [[0; DRAWN]; 3]), None);
         assert_eq!(m.paint, Some(true));
         // Let go far along the row: the cells between are painted too.
-        let Some(Action::Pixels(false, p)) = m.release((95.0, 5.0)) else {
+        let Some(Action::Pixels(Drawing::Crosshair, p)) = m.release((95.0, 5.0)) else {
             panic!("a stroke ends in pixels")
         };
         assert_eq!(p[0], (1 << 10) - 1);
@@ -3035,13 +3258,13 @@ mod tests {
             ],
             ..Mods::default()
         };
-        assert_eq!(m.click((5.0, 5.0), [[0; DRAWN]; 2]), None);
+        assert_eq!(m.click((5.0, 5.0), [[0; DRAWN]; 3]), None);
         assert!(m.wants_keys());
         assert!(m.type_key(Some("Bed"), false) && m.type_key(Some("wars!"), false));
         // A press in the field keeps typing; one elsewhere gives the name.
-        assert_eq!(m.click((45.0, 5.0), [[0; DRAWN]; 2]), None);
+        assert_eq!(m.click((45.0, 5.0), [[0; DRAWN]; 3]), None);
         let renamed = Action::Profile(ProfileOp::Rename(1, "Bedwars!".into()));
-        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), Some(renamed));
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 3]), Some(renamed));
         assert!(!m.wants_keys());
         // Nothing typed: the name stays.
         m.renaming = Some((1, String::new()));
@@ -3050,15 +3273,15 @@ mod tests {
         m.renaming = Some((1, "x".into()));
         assert!(m.back() && m.renaming.is_none());
         // Delete asks once.
-        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), None);
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 3]), None);
         assert_eq!(
-            m.click((25.0, 5.0), [[0; DRAWN]; 2]),
+            m.click((25.0, 5.0), [[0; DRAWN]; 3]),
             Some(Action::Profile(ProfileOp::Delete(1)))
         );
         // Pressed once, then elsewhere: it asks again.
-        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), None);
-        assert_eq!(m.click((100.0, 100.0), [[0; DRAWN]; 2]), None);
-        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 2]), None);
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 3]), None);
+        assert_eq!(m.click((100.0, 100.0), [[0; DRAWN]; 3]), None);
+        assert_eq!(m.click((25.0, 5.0), [[0; DRAWN]; 3]), None);
     }
 
     #[test]

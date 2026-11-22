@@ -23,6 +23,10 @@ struct Env {
     misc: vec4<f32>,
     // The camera's world position, modulo 4096 (cells and tiles stay precise).
     origin: vec4<f32>,
+    // x: 1 for a shaped particle (mask), 0 for the flakes; y: its half size, blocks.
+    shape: vec4<f32>,
+    // The shape's 15 rows of 15 pixels, two rows to a word (row 2k low, 2k+1 high).
+    mask: array<vec4<u32>, 2>,
 };
 
 @group(0) @binding(0) var<uniform> env: Env;
@@ -103,6 +107,19 @@ fn sparkle(q: vec2<f32>) -> f32 {
     let core = exp(-dot(q, q) * 60.0);
     let glow = exp(-length(q) * 5.0) * 0.35;
     return min(rays + core + glow, 1.6);
+}
+
+// The drawn or ready-made shape at `q`, from its centre in units of its half size: 1 on a set
+// pixel, 0 off it, a little softened at its edges.
+fn shape_mask(q: vec2<f32>) -> f32 {
+    let uv = vec2(q.x, -q.y) * 0.5 + 0.5;
+    if (any(uv < vec2(0.0)) || any(uv >= vec2(1.0))) {
+        return 0.0;
+    }
+    let cell = vec2<u32>(floor(uv * 15.0));
+    let word = env.mask[cell.y / 8u][(cell.y / 2u) % 4u];
+    let bits = (word >> ((cell.y % 2u) * 16u)) & 0xFFFFu;
+    return f32((bits >> cell.x) & 1u);
 }
 
 // The sky: purple dark at the horizon, waves of light across it, stars.
@@ -305,7 +322,16 @@ fn particle_layer(dir: vec3<f32>, limit: f32) -> vec4<f32> {
                 let fade = smoothstep(0.8, 2.2, t) * (1.0 - smoothstep(reach * 0.6, reach, t));
                 var a = 0.0;
                 var col = pcol;
-                if (h2.w < 0.22) {
+                if (env.shape.x > 0.5) {
+                    // The player's shape, upright, swaying a little.
+                    let ang = sin(t_now * (0.7 + h.y * 0.8) + h.z * 6.28) * 0.35;
+                    let cs = cos(ang);
+                    let sn = sin(ang);
+                    let r = vec2(cs * q.x - sn * q.y, sn * q.x + cs * q.y);
+                    let size = env.shape.y * (0.75 + 0.5 * h.w);
+                    a = shape_mask(r / size) * 0.95;
+                    col = mix(pcol, WHITE, 0.15 + 0.25 * h.y);
+                } else if (h2.w < 0.22) {
                     // A sparkle, flaring and fading.
                     let pulse = 0.35 + 0.65 * pow(0.5 + 0.5 * sin(t_now * (1.5 + h.y * 2.0) + h.z * 40.0), 2.0);
                     let size = 0.2 * pulse;

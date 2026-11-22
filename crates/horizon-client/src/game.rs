@@ -191,6 +191,7 @@ mod oteria_voice_ui;
 mod oteria_wear;
 mod oteria_zoom;
 mod oteria_pvp;
+mod oteria_totem;
 mod appleskin;
 #[cfg(test)]
 mod setblock_order_tests;

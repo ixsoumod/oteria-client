@@ -18,7 +18,7 @@ use super::oteria_boost;
 use super::oteria_cosmetics::{CosmeticsAction, CosmeticsMenu, CosmeticsView, SkinTile};
 use super::oteria_host::{HostAction, HostMenu, HostView};
 use super::oteria_keyboard::{Bind, KeyboardAction, KeyboardPage, KeyboardView};
-use super::oteria_mods::{Action, Mods, ProfileOp, TILES};
+use super::oteria_mods::{Action, Drawing, Mods, ProfileOp, TILES};
 use super::oteria_profiles::Profiles;
 use super::oteria_voice_ui::VoiceMenu;
 use crate::game::{Game, Screen};
@@ -491,7 +491,14 @@ impl Game<'_> {
             return true;
         }
         let c = &self.settings.extras.pvp.crosshair;
-        let drawn = [c.pixels, c.indicator_pixels];
+        let drawn = [
+            c.pixels,
+            c.indicator_pixels,
+            {
+                let e = &self.settings.extras.pvp.environment;
+                e.particle_pixels().unwrap_or(e.particles_pixels)
+            },
+        ];
         let mut taken = matches!(event, WindowEvent::MouseInput { .. });
         let action = MENU.with(|m| {
             let mut m = m.borrow_mut();
@@ -803,7 +810,7 @@ impl Game<'_> {
                 };
                 self.settings.save(&Self::options_path());
             }
-            Action::Pixels(false, pixels) => {
+            Action::Pixels(Drawing::Crosshair, pixels) => {
                 let c = &mut self.settings.extras.pvp.crosshair;
                 c.pixels = pixels;
                 c.shape = horizon_client::pvp::Shape::Drawn;
@@ -811,10 +818,24 @@ impl Game<'_> {
                 self.settings.save(&Self::options_path());
             }
             // The player indicator: drawing it turns it on.
-            Action::Pixels(true, pixels) => {
+            Action::Pixels(Drawing::Indicator, pixels) => {
                 let c = &mut self.settings.extras.pvp.crosshair;
                 c.indicator_pixels = pixels;
                 c.indicator = true;
+                self.settings.save(&Self::options_path());
+            }
+            // The particles: drawing them makes them the drawing.
+            Action::Pixels(Drawing::Particle, pixels) => {
+                let e = &mut self.settings.extras.pvp.environment;
+                e.particles_pixels = pixels;
+                e.particles_shape = horizon_client::pvp::ParticleShape::Drawn;
+                e.particles = true;
+                self.settings.save(&Self::options_path());
+            }
+            Action::ParticleShape(shape) => {
+                let e = &mut self.settings.extras.pvp.environment;
+                e.particles_shape = shape;
+                e.particles = true;
                 self.settings.save(&Self::options_path());
             }
             Action::Profile(op) => self.profile_op(op),

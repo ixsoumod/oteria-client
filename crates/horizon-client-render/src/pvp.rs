@@ -945,6 +945,10 @@ pub struct Pvp {
     pub scoreboard: ScoreboardStyle,
     /// Clear View: screen effects this player doesn't want drawn.
     pub clear_view: ClearView,
+    /// Fast Totem: totems into the off hand.
+    pub fast_totem: FastTotem,
+    /// HurtCam: how much the camera shakes when the player is hurt.
+    pub hurtcam: HurtCam,
     /// Whether Oteria's video defaults (VSync off, unlimited frames) were put on these settings
     /// once (`Settings::load`).
     pub video_defaults: bool,
@@ -1052,6 +1056,68 @@ impl ClearView {
     }
     pub fn hides_nausea(&self) -> bool {
         self.enabled && self.nausea
+    }
+}
+
+/// Oteria's Fast Totem (`game/oteria_totem.rs`): a totem of undying from the inventory into the
+/// off hand, by itself when the off hand is empty (after a pop), and with Shift + click on a
+/// totem in the inventory. Each is a SWAP with the off hand, as the F key over a slot sends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FastTotem {
+    pub enabled: bool,
+    /// An empty off hand takes a totem from the inventory by itself.
+    pub auto: bool,
+    /// How long the off hand stays empty before, ticks (`TOTEM_DELAYS`).
+    pub delay: u8,
+    /// Shift + click on a totem in the inventory puts it in the off hand.
+    pub shift_click: bool,
+}
+impl Default for FastTotem {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto: true,
+            delay: 2,
+            shift_click: true,
+        }
+    }
+}
+pub const TOTEM_DELAYS: (u8, u8) = (0, 20);
+
+/// Oteria's HurtCam (`game/fov.rs`): how much the camera shakes when the player is hurt, from 0
+/// (none) to 10. 4 is vanilla's tilt; above it the tilt grows and a shake is added. Off: vanilla's
+/// Damage Tilt option.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HurtCam {
+    pub enabled: bool,
+    /// `HURTCAM_STRENGTHS`.
+    pub strength: u8,
+}
+impl Default for HurtCam {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strength: 4,
+        }
+    }
+}
+pub const HURTCAM_STRENGTHS: (u8, u8) = (0, 10);
+impl HurtCam {
+    /// The hurt tilt's strength (`bobHurt`'s `damageTiltStrength`), given vanilla's option.
+    pub fn tilt(&self, vanilla: f64) -> f64 {
+        if self.enabled {
+            f64::from(self.strength.min(HURTCAM_STRENGTHS.1)) / 4.0
+        } else {
+            vanilla
+        }
+    }
+    /// How much the camera shakes on top of the tilt, 0 to 1 (only above vanilla's 4).
+    pub fn shake(&self) -> f32 {
+        if self.enabled && self.strength > 4 {
+            f32::from(self.strength.min(HURTCAM_STRENGTHS.1) - 4) / 6.0
+        } else {
+            0.0
+        }
     }
 }
 
@@ -1299,6 +1365,12 @@ pub struct Environment {
     pub particles_colour: Colour,
     /// How many there are, in percent (`ENV_AMOUNTS`).
     pub particles_amount: u8,
+    /// Their shape: the flakes and sparkles, a ready-made one or the player's drawing.
+    pub particles_shape: ParticleShape,
+    /// How big the shaped ones are, in percent (`ENV_SIZES`).
+    pub particles_size: u8,
+    /// The drawn shape's pixels, on the crosshair's grid (`DRAWN`).
+    pub particles_pixels: [u16; DRAWN],
     pub hat: bool,
     pub hat_colour: Colour,
     pub sky: bool,
@@ -1319,6 +1391,9 @@ impl Default for Environment {
             particles: true,
             particles_colour: Colour::Custom(0xFF_9ADB),
             particles_amount: 50,
+            particles_shape: ParticleShape::Classic,
+            particles_size: 100,
+            particles_pixels: ParticleShape::Heart.pixels([0; DRAWN]),
             hat: true,
             hat_colour: Colour::Custom(0xFF_9AD0),
             sky: true,
@@ -1331,6 +1406,156 @@ impl Default for Environment {
 }
 pub const ENV_RADII: (u8, u8) = (4, 24);
 pub const ENV_AMOUNTS: (u8, u8) = (10, 100);
+pub const ENV_SIZES: (u8, u8) = (50, 250);
+
+/// The shape of the Environment's particles: the flakes and sparkles as before, a ready-made
+/// shape, or one the player drew on the mods menu's grid. Every shape but the flakes is a
+/// picture on the crosshair's grid (`DRAWN` by `DRAWN`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParticleShape {
+    Classic,
+    Heart,
+    Star,
+    Square,
+    Circle,
+    Diamond,
+    Plus,
+    Drawn,
+}
+impl ParticleShape {
+    pub const ALL: [ParticleShape; 8] = [
+        ParticleShape::Classic,
+        ParticleShape::Heart,
+        ParticleShape::Star,
+        ParticleShape::Square,
+        ParticleShape::Circle,
+        ParticleShape::Diamond,
+        ParticleShape::Plus,
+        ParticleShape::Drawn,
+    ];
+    /// The ready-made ones, as the mods menu shows them (all but the flakes and the drawing).
+    pub const PRESETS: [ParticleShape; 6] = [
+        ParticleShape::Heart,
+        ParticleShape::Star,
+        ParticleShape::Square,
+        ParticleShape::Circle,
+        ParticleShape::Diamond,
+        ParticleShape::Plus,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            ParticleShape::Classic => "classic",
+            ParticleShape::Heart => "heart",
+            ParticleShape::Star => "star",
+            ParticleShape::Square => "square",
+            ParticleShape::Circle => "circle",
+            ParticleShape::Diamond => "diamond",
+            ParticleShape::Plus => "plus",
+            ParticleShape::Drawn => "drawn",
+        }
+    }
+    fn english(self) -> &'static str {
+        match self {
+            ParticleShape::Classic => "Flakes",
+            ParticleShape::Heart => "Heart",
+            ParticleShape::Star => "Star",
+            ParticleShape::Square => "Square",
+            ParticleShape::Circle => "Circle",
+            ParticleShape::Diamond => "Diamond",
+            ParticleShape::Plus => "Plus",
+            ParticleShape::Drawn => "Drawn",
+        }
+    }
+    pub fn label(self) -> String {
+        crate::lang::get_or(
+            &format!("horizon.pvp.particle_shape.{}", self.name()),
+            self.english(),
+        )
+    }
+    fn parse(s: &str) -> Option<ParticleShape> {
+        Self::ALL.into_iter().find(|c| c.name() == s)
+    }
+    /// Its picture, bit `x` of row `y` (row 0 at the top); `drawn` for the player's own, and
+    /// nothing for the flakes.
+    pub fn pixels(self, drawn: [u16; DRAWN]) -> [u16; DRAWN] {
+        const HEART: [&str; DRAWN] = [
+            "...............",
+            "..###.....###..",
+            ".#####...#####.",
+            "###############",
+            "###############",
+            "###############",
+            "###############",
+            ".#############.",
+            "..###########..",
+            "...#########...",
+            "....#######....",
+            ".....#####.....",
+            "......###......",
+            ".......#.......",
+            "...............",
+        ];
+        const STAR: [&str; DRAWN] = [
+            ".......#.......",
+            ".......#.......",
+            "......###......",
+            "......###......",
+            ".....#####.....",
+            "###############",
+            ".#############.",
+            "..###########..",
+            "...#########...",
+            "...#########...",
+            "..#####.#####..",
+            "..####...####..",
+            ".####.....####.",
+            ".###.......###.",
+            ".#...........#.",
+        ];
+        let from = |rows: [&str; DRAWN]| {
+            let mut p = [0u16; DRAWN];
+            for (y, row) in rows.iter().enumerate() {
+                for (x, c) in row.bytes().enumerate() {
+                    if c == b'#' {
+                        p[y] |= 1 << x;
+                    }
+                }
+            }
+            p
+        };
+        let by = |inside: &dyn Fn(i32, i32) -> bool| {
+            let mut p = [0u16; DRAWN];
+            let mid = (DRAWN / 2) as i32;
+            for (y, row) in p.iter_mut().enumerate() {
+                for x in 0..DRAWN {
+                    if inside(x as i32 - mid, y as i32 - mid) {
+                        *row |= 1 << x;
+                    }
+                }
+            }
+            p
+        };
+        match self {
+            ParticleShape::Classic => [0; DRAWN],
+            ParticleShape::Heart => from(HEART),
+            ParticleShape::Star => from(STAR),
+            ParticleShape::Square => by(&|x, y| x.abs() <= 5 && y.abs() <= 5),
+            ParticleShape::Circle => by(&|x, y| x * x + y * y <= 42),
+            ParticleShape::Diamond => by(&|x, y| x.abs() + y.abs() <= 7),
+            ParticleShape::Plus => {
+                by(&|x, y| (x.abs() <= 1 && y.abs() <= 6) || (y.abs() <= 1 && x.abs() <= 6))
+            }
+            ParticleShape::Drawn => drawn,
+        }
+    }
+}
+impl Environment {
+    /// The particles' picture this frame (`None`: the flakes and sparkles).
+    pub fn particle_pixels(&self) -> Option<[u16; DRAWN]> {
+        (self.particles_shape != ParticleShape::Classic)
+            .then(|| self.particles_shape.pixels(self.particles_pixels))
+    }
+}
 
 /// Oteria's time changer: the time of day this player sees, fixed where the slider puts it.
 /// Never sent to the server; the world's time and what plays by it stay.
@@ -1613,6 +1838,8 @@ impl Default for Pvp {
             viewmodel: Viewmodel::default(),
             scoreboard: ScoreboardStyle::default(),
             clear_view: ClearView::default(),
+            fast_totem: FastTotem::default(),
+            hurtcam: HurtCam::default(),
             video_defaults: false,
         }
     }
@@ -1859,6 +2086,12 @@ impl Pvp {
             "clearViewDarkness" => self.clear_view.darkness = flag(value, self.clear_view.darkness),
             "clearViewBlindness" => self.clear_view.blindness = flag(value, self.clear_view.blindness),
             "clearViewNausea" => self.clear_view.nausea = flag(value, self.clear_view.nausea),
+            "fastTotem" => self.fast_totem.enabled = flag(value, self.fast_totem.enabled),
+            "fastTotemAuto" => self.fast_totem.auto = flag(value, self.fast_totem.auto),
+            "fastTotemDelay" => self.fast_totem.delay = num(value, TOTEM_DELAYS, self.fast_totem.delay),
+            "fastTotemShiftClick" => self.fast_totem.shift_click = flag(value, self.fast_totem.shift_click),
+            "hurtCam" => self.hurtcam.enabled = flag(value, self.hurtcam.enabled),
+            "hurtCamStrength" => self.hurtcam.strength = num(value, HURTCAM_STRENGTHS, self.hurtcam.strength),
             "oteriaVideoDefaults" => self.video_defaults = flag(value, self.video_defaults),
             "musicPlayKey" if value.starts_with("key.") => self.music.play_key = value.to_owned(),
             "musicNextKey" if value.starts_with("key.") => self.music.next_key = value.to_owned(),
@@ -1887,6 +2120,22 @@ impl Pvp {
             }
             "environmentParticlesAmount" => {
                 self.environment.particles_amount = num(value, ENV_AMOUNTS, self.environment.particles_amount)
+            }
+            "environmentParticlesShape" => {
+                self.environment.particles_shape =
+                    ParticleShape::parse(value).unwrap_or(self.environment.particles_shape)
+            }
+            "environmentParticlesSize" => {
+                self.environment.particles_size = num(value, ENV_SIZES, self.environment.particles_size)
+            }
+            "environmentParticlesPixels" => {
+                let rows: Vec<u16> = value
+                    .split(',')
+                    .filter_map(|v| u16::from_str_radix(v, 16).ok())
+                    .collect();
+                if rows.len() == DRAWN {
+                    self.environment.particles_pixels.copy_from_slice(&rows);
+                }
             }
             "environmentHat" => self.environment.hat = flag(value, self.environment.hat),
             "environmentHatColour" => {
@@ -2217,6 +2466,21 @@ impl Pvp {
             "clearView:{}\nclearViewPumpkin:{}\nclearViewDarkness:{}\nclearViewBlindness:{}\nclearViewNausea:{}\n",
             cv.enabled, cv.pumpkin, cv.darkness, cv.blindness, cv.nausea,
         );
+        let ft = &self.fast_totem;
+        let _ = write!(
+            out,
+            "fastTotem:{}\nfastTotemAuto:{}\nfastTotemDelay:{}\nfastTotemShiftClick:{}\nhurtCam:{}\nhurtCamStrength:{}\n",
+            ft.enabled, ft.auto, ft.delay, ft.shift_click, self.hurtcam.enabled, self.hurtcam.strength,
+        );
+        let e = &self.environment;
+        let ep: Vec<String> = e.particles_pixels.iter().map(|row| format!("{row:x}")).collect();
+        let _ = write!(
+            out,
+            "environmentParticlesShape:{}\nenvironmentParticlesSize:{}\nenvironmentParticlesPixels:{}\n",
+            e.particles_shape.name(),
+            e.particles_size,
+            ep.join(","),
+        );
         let _ = writeln!(out, "oteriaVideoDefaults:{}", self.video_defaults);
         let b = &self.barrel;
         let _ = write!(
@@ -2515,6 +2779,8 @@ opts! {
     EnvParticles, "environment_particles", "Particles", "Flakes and sparkles floating in the air around you.";
     EnvParticlesColour, "environment_particles_colour", "Particle colour", "The flakes' and sparkles' colour.";
     EnvParticlesAmount, "environment_particles_amount", "Particle amount", "How many particles float in the air.";
+    EnvParticlesShape, "environment_particles_shape", "Particle shape", "Flakes and sparkles, a ready-made shape (heart, star, square...) or one you draw.";
+    EnvParticlesSize, "environment_particles_size", "Particle size", "How big the shaped particles are.";
     EnvHat, "environment_hat", "China hat", "A glowing China hat and a halo over your head, in third person.";
     EnvHatColour, "environment_hat_colour", "Hat colour", "The hat's and its halo's colour.";
     EnvSky, "environment_sky", "Aurora sky", "Waves of light across the sky, with twinkling stars and shooting stars.";
@@ -2563,6 +2829,14 @@ opts! {
     ClearDarkness, "clear_darkness", "Darkness", "No Warden's Darkness: neither its fog nor its pulsing dark.";
     ClearBlindness, "clear_blindness", "Blindness", "No Blindness fog.";
     ClearNausea, "clear_nausea", "Nausea", "No Nausea wobble nor its overlay.";
+    FastTotem, "fast_totem", "Fast Totem",
+        "Totems of undying into your off hand: by themselves when it is empty, or with Shift + click on a totem in your inventory.";
+    FastTotemAuto, "fast_totem_auto", "Refill by itself", "An empty off hand (after a pop) takes a totem from your inventory.";
+    FastTotemDelay, "fast_totem_delay", "Delay", "How many ticks the off hand stays empty before the totem comes (20 ticks: one second).";
+    FastTotemShift, "fast_totem_shift", "Shift + click", "Shift + click on a totem in your inventory puts it in your off hand.";
+    HurtCam, "hurtcam", "HurtCam",
+        "How much the camera shakes when you are hit or hurt: 0 never, 4 as vanilla, 10 a lot.";
+    HurtCamStrength, "hurtcam_strength", "Strength", "0: no shake at all; 4: vanilla; 10: the strongest.";
     HudCooldowns, "hud_cooldowns", "Cooldowns",
         "The items cooling down in your hotbar and hands (ender pearl, chorus fruit, wind charge, shield...), with a bar and the seconds left.";
     HudCooldownsCorner, "hud_cooldowns_corner", "Cooldowns corner", "Where the cooldowns show.";
@@ -2747,6 +3021,9 @@ impl Opt {
             Opt::BlurStrength => (BLUR_STRENGTHS, "%"),
             Opt::EnvGroundRadius => (ENV_RADII, ""),
             Opt::EnvParticlesAmount | Opt::EnvFogDensity => (ENV_AMOUNTS, "%"),
+            Opt::EnvParticlesSize => (ENV_SIZES, "%"),
+            Opt::FastTotemDelay => (TOTEM_DELAYS, ""),
+            Opt::HurtCamStrength => (HURTCAM_STRENGTHS, ""),
             Opt::BarrelSensitivity => (BARREL_SENSITIVITIES, "%"),
             Opt::HitboxWidth | Opt::HitboxFarWidth => (HITBOX_WIDTHS, ""),
             Opt::HitboxOutlineSize => (HITBOX_OUTLINE_SIZES, "x"),
@@ -2778,6 +3055,9 @@ impl Opt {
             Opt::BarrelSensitivity => p.barrel.sensitivity,
             Opt::EnvGroundRadius => p.environment.ground_radius,
             Opt::EnvParticlesAmount => p.environment.particles_amount,
+            Opt::EnvParticlesSize => p.environment.particles_size,
+            Opt::FastTotemDelay => p.fast_totem.delay,
+            Opt::HurtCamStrength => p.hurtcam.strength,
             Opt::EnvFogDensity => p.environment.fog_density,
             Opt::HitboxWidth => p.hitboxes.width,
             Opt::HitboxFarWidth => p.hitboxes.far_width,
@@ -2864,6 +3144,9 @@ impl Opt {
             Opt::BarrelSensitivity => &mut p.barrel.sensitivity,
             Opt::EnvGroundRadius => &mut p.environment.ground_radius,
             Opt::EnvParticlesAmount => &mut p.environment.particles_amount,
+            Opt::EnvParticlesSize => &mut p.environment.particles_size,
+            Opt::FastTotemDelay => &mut p.fast_totem.delay,
+            Opt::HurtCamStrength => &mut p.hurtcam.strength,
             Opt::EnvFogDensity => &mut p.environment.fog_density,
             Opt::HitboxWidth => &mut p.hitboxes.width,
             Opt::HitboxFarWidth => &mut p.hitboxes.far_width,
@@ -2985,6 +3268,8 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
             EnvParticles,
             EnvParticlesColour,
             EnvParticlesAmount,
+            EnvParticlesShape,
+            EnvParticlesSize,
             EnvHat,
             EnvHatColour,
             EnvSky,
@@ -3013,6 +3298,10 @@ pub fn rows() -> Vec<Result<Opt, &'static str>> {
     );
     rows.push(Err("horizon.pvp.header.clear_view"));
     rows.extend([ClearView, ClearPumpkin, ClearDarkness, ClearBlindness, ClearNausea].map(Ok));
+    rows.push(Err("horizon.pvp.header.fast_totem"));
+    rows.extend([FastTotem, FastTotemAuto, FastTotemDelay, FastTotemShift].map(Ok));
+    rows.push(Err("horizon.pvp.header.hurtcam"));
+    rows.extend([HurtCam, HurtCamStrength].map(Ok));
     rows.push(Err("horizon.pvp.header.barrel"));
     rows.extend([Barrel, BarrelBanking, BarrelRighting, BarrelInvert, BarrelSwitch, BarrelSensitivity].map(Ok));
     rows.push(Err("horizon.pvp.header.tiers"));
@@ -3116,12 +3405,17 @@ impl Opt {
             }
             ScoreboardOpacity => Some(ScoreboardBackground),
             ClearPumpkin | ClearDarkness | ClearBlindness | ClearNausea => Some(ClearView),
+            FastTotem | HurtCam => None,
+            FastTotemAuto | FastTotemShift => Some(FastTotem),
+            FastTotemDelay => Some(FastTotemAuto),
+            HurtCamStrength => Some(HurtCam),
             BarrelBanking | BarrelRighting | BarrelInvert | BarrelSwitch | BarrelSensitivity => Some(Barrel),
             BlurStrength => Some(Blur),
             Env => None,
             EnvGround | EnvParticles | EnvHat | EnvSky | EnvFog => Some(Env),
             EnvGroundColour | EnvGroundRadius => Some(EnvGround),
-            EnvParticlesColour | EnvParticlesAmount => Some(EnvParticles),
+            EnvParticlesColour | EnvParticlesAmount | EnvParticlesShape => Some(EnvParticles),
+            EnvParticlesSize => Some(EnvParticlesShape),
             EnvHatColour => Some(EnvHat),
             EnvSkyColour => Some(EnvSky),
             EnvFogColour | EnvFogDensity => Some(EnvFog),
@@ -3249,6 +3543,10 @@ impl Opt {
             Opt::ClearDarkness => p.clear_view.darkness,
             Opt::ClearBlindness => p.clear_view.blindness,
             Opt::ClearNausea => p.clear_view.nausea,
+            Opt::FastTotem => p.fast_totem.enabled,
+            Opt::FastTotemAuto => p.fast_totem.auto,
+            Opt::FastTotemShift => p.fast_totem.shift_click,
+            Opt::HurtCam => p.hurtcam.enabled,
             _ => return None,
         })
     }
@@ -3339,6 +3637,10 @@ impl Opt {
             Opt::EnvFogColour => p.environment.fog_colour.label(),
             Opt::EnvGroundRadius => p.environment.ground_radius.to_string(),
             Opt::EnvParticlesAmount => format!("{}%", p.environment.particles_amount),
+            Opt::EnvParticlesShape => p.environment.particles_shape.label(),
+            Opt::EnvParticlesSize => format!("{}%", p.environment.particles_size),
+            Opt::FastTotemDelay => p.fast_totem.delay.to_string(),
+            Opt::HurtCamStrength => p.hurtcam.strength.to_string(),
             Opt::EnvFogDensity => format!("{}%", p.environment.fog_density),
             Opt::BarrelSensitivity => format!("{}%", p.barrel.sensitivity),
             Opt::ClockTime => clock_label(u32::from(p.clock.time)),
@@ -3533,6 +3835,20 @@ impl Opt {
             Opt::ClearDarkness => p.clear_view.darkness = !p.clear_view.darkness,
             Opt::ClearBlindness => p.clear_view.blindness = !p.clear_view.blindness,
             Opt::ClearNausea => p.clear_view.nausea = !p.clear_view.nausea,
+            Opt::FastTotem => p.fast_totem.enabled = !p.fast_totem.enabled,
+            Opt::FastTotemAuto => p.fast_totem.auto = !p.fast_totem.auto,
+            Opt::FastTotemShift => p.fast_totem.shift_click = !p.fast_totem.shift_click,
+            Opt::FastTotemDelay => p.fast_totem.delay = step_by(p.fast_totem.delay, TOTEM_DELAYS, 1, back),
+            Opt::HurtCam => p.hurtcam.enabled = !p.hurtcam.enabled,
+            Opt::HurtCamStrength => {
+                p.hurtcam.strength = step_by(p.hurtcam.strength, HURTCAM_STRENGTHS, 1, back)
+            }
+            Opt::EnvParticlesShape => {
+                p.environment.particles_shape = step(&ParticleShape::ALL, p.environment.particles_shape, back)
+            }
+            Opt::EnvParticlesSize => {
+                p.environment.particles_size = step_by(p.environment.particles_size, ENV_SIZES, 10, back)
+            }
             Opt::BarrelBanking => p.barrel.banking = !p.barrel.banking,
             Opt::BarrelRighting => p.barrel.righting = !p.barrel.righting,
             Opt::BarrelInvert => p.barrel.invert_pitch = !p.barrel.invert_pitch,

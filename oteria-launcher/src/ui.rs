@@ -167,6 +167,7 @@ macro_rules! icon_files {
 
 const ICONS: &[(&str, &[u8])] = icon_files![
     "controller",
+    "floppy-fill",
     "puzzle-fill",
     "shop",
     "gear-fill",

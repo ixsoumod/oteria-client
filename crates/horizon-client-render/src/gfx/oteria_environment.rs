@@ -37,6 +37,10 @@ struct Uniforms {
     fog: [f32; 4],
     misc: [f32; 4],
     origin: [f32; 4],
+    /// x: 1 for a shaped particle (the mask), 0 for the flakes; y: its half size, blocks.
+    shape: [f32; 4],
+    /// The shape's 15 rows, two to a word (row `2k` in the low half of word `k`).
+    mask: [[u32; 4]; 2],
 }
 
 pub(super) struct Environment {
@@ -58,6 +62,15 @@ fn rgb(c: crate::pvp::Colour) -> [f32; 3] {
         ((v >> 8) & 0xFF) as f32 / 255.0,
         (v & 0xFF) as f32 / 255.0,
     ]
+}
+
+/// The shape's rows packed for the shader: row `y` in word `y / 2`, its high half when odd.
+fn pack_mask(rows: [u16; crate::pvp::DRAWN]) -> [[u32; 4]; 2] {
+    let mut words = [0u32; 8];
+    for (y, row) in rows.iter().enumerate() {
+        words[y / 2] |= u32::from(*row) << (16 * (y % 2));
+    }
+    [[words[0], words[1], words[2], words[3]], [words[4], words[5], words[6], words[7]]]
 }
 
 fn with(c: [f32; 3], w: f32) -> [f32; 4] {
@@ -172,6 +185,7 @@ impl Environment {
         )
         .as_vec3();
         let amount = |v: u8| f32::from(v.min(100)) / 100.0;
+        let pixels = s.particle_pixels();
         let u = Uniforms {
             inv_view_proj: inverse.to_cols_array_2d(),
             feet: [feet.x, feet.y, feet.z, if s.ground { f32::from(s.ground_radius) } else { 0.0 }],
@@ -189,6 +203,13 @@ impl Environment {
                 frame.view_distance.max(16.0),
             ],
             origin: [origin.x, origin.y, origin.z, 0.0],
+            shape: [
+                if pixels.is_some() { 1.0 } else { 0.0 },
+                0.11 * f32::from(s.particles_size.max(10)) / 100.0,
+                0.0,
+                0.0,
+            ],
+            mask: pack_mask(pixels.unwrap_or([0; crate::pvp::DRAWN])),
         };
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&u));
         if self.pipeline.as_ref().is_none_or(|(f, _)| *f != format) {
@@ -290,7 +311,16 @@ mod tests {
 
     #[test]
     fn the_uniforms_match_the_shader_block() {
-        // A matrix and nine vectors, as `Env` declares them.
-        assert_eq!(std::mem::size_of::<Uniforms>(), 64 + 9 * 16);
+        // A matrix, ten vectors and the mask's two, as `Env` declares them.
+        assert_eq!(std::mem::size_of::<Uniforms>(), 64 + 12 * 16);
+    }
+
+    #[test]
+    fn the_mask_keeps_each_row() {
+        let heart = crate::pvp::ParticleShape::Heart.pixels([0; crate::pvp::DRAWN]);
+        let words = pack_mask(heart).concat();
+        for (y, row) in heart.iter().enumerate() {
+            assert_eq!((words[y / 2] >> (16 * (y % 2))) & 0xFFFF, u32::from(*row));
+        }
     }
 }
