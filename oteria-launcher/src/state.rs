@@ -44,7 +44,40 @@ pub struct State {
     pub ms_accounts: Vec<MsAccount>,
     /// The chosen account: see [`AccountRef::id`].
     pub account: Option<String>,
+    /// The Minecraft release Oteria joins servers as (the Versions page): one of
+    /// [`GAME_VERSIONS`]' ids; none is the newest.
+    pub game_version: Option<String>,
+    /// Ease other players the way the chosen release does, rather than the way the server's
+    /// own release does (the default, `false`).
+    pub interpolation_by_version: bool,
 }
+
+/// A Minecraft release the launcher offers: what the game is told (`OTERIA_GAME_VERSION`), the
+/// card's name, the exact release servers see, and the update's name.
+pub struct GameVersion {
+    pub id: &'static str,
+    pub release: &'static str,
+    pub update: &'static str,
+}
+
+/// Newest first: the first is the default.
+pub const GAME_VERSIONS: [GameVersion; 3] = [
+    GameVersion {
+        id: "26",
+        release: crate::MINECRAFT_VERSION,
+        update: "Tiny Takeover",
+    },
+    GameVersion {
+        id: "1.21",
+        release: "1.21.11",
+        update: "Tricky Trials",
+    },
+    GameVersion {
+        id: "1.20",
+        release: "1.20.6",
+        update: "Trails & Tales",
+    },
+];
 
 /// Why a local account can't be added.
 #[derive(Debug, PartialEq, Eq)]
@@ -78,6 +111,14 @@ impl State {
             .filter(|s| !s.is_empty())
             .or_else(|| self.source.clone())
             .or_else(|| Some(crate::paths::DEFAULT_SOURCE.to_owned()))
+    }
+
+    /// The chosen release: the saved one when the launcher still offers it, else the newest.
+    pub fn game_version(&self) -> &'static GameVersion {
+        GAME_VERSIONS
+            .iter()
+            .find(|v| self.game_version.as_deref() == Some(v.id))
+            .unwrap_or(&GAME_VERSIONS[0])
     }
 
     /// The resources the game is started with.
@@ -202,6 +243,18 @@ mod tests {
         s.remove_account("ms:069a79f4");
         assert!(s.ms_accounts.is_empty());
         assert_eq!(s.current().unwrap().name, "Local1");
+    }
+
+    #[test]
+    fn the_chosen_release_falls_back_to_the_newest() {
+        let mut s = State::default();
+        assert_eq!(s.game_version().id, "26");
+        s.game_version = Some("1.21".into());
+        assert_eq!(s.game_version().release, "1.21.11");
+        // A release the launcher no longer offers.
+        s.game_version = Some("1.8".into());
+        assert_eq!(s.game_version().id, "26");
+        assert!(!s.interpolation_by_version, "automatic by default");
     }
 
     #[test]

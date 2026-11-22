@@ -72,7 +72,24 @@ pub struct SteppedInterpolation {
     current_step_ticks: f32,
     remaining_ticks: f32,
     speed: f32,
+    /// The ease of releases before 26.3, when set ([`Self::legacy`]).
+    legacy: Option<LegacyLerp>,
 }
+
+/// How releases before 26.3 ease a living entity to the last position its server sent
+/// (1.20's `LivingEntity.lerpTo(…, 3)` and `aiStep`, 1.21.2's `InterpolationHandler`): each
+/// packet replaces the target and restarts a 3-tick countdown, and each tick covers
+/// `1 / ticks left` of what remains. No queue of steps, no speeding up: what servers of those
+/// releases time their moves for.
+#[derive(Clone, Copy, Debug, Default)]
+struct LegacyLerp {
+    /// Where the entity is now: only this handler moves it while it eases.
+    at: PosRot,
+    left: i32,
+}
+
+/// The ticks an older release eases over (`lerpTo`'s 3).
+const LEGACY_STEPS: i32 = 3;
 
 /// `Mth.wrapDegrees(float)`.
 fn wrap_degrees(degrees: f32) -> f32 {
@@ -107,11 +124,23 @@ impl SteppedInterpolation {
             current_step_ticks: 0.0,
             remaining_ticks: 0.0,
             speed: 1.0,
+            legacy: None,
+        }
+    }
+    /// The ease of releases before 26.3 ([`LegacyLerp`]), for a type whose update interval is
+    /// `steps` ticks: one with none still snaps.
+    pub fn legacy(steps: i32) -> Self {
+        Self {
+            legacy: Some(LegacyLerp::default()),
+            ..Self::new(steps)
         }
     }
     /// `hasActiveInterpolation`.
     pub fn active(&self) -> bool {
-        !self.remaining.is_empty()
+        match &self.legacy {
+            Some(l) => l.left > 0,
+            None => !self.remaining.is_empty(),
+        }
     }
     /// Where the entity is headed: the last packet's position and rotation
     /// while interpolating (`AbstractInterpolationHandler.interpolateTo`'s
@@ -140,6 +169,19 @@ impl SteppedInterpolation {
                 yaw,
                 pitch,
             });
+        }
+        if let Some(l) = &mut self.legacy {
+            // lerpTo: a new target, the countdown from the start, from where the entity is.
+            if l.left <= 0 {
+                l.at = entity;
+            }
+            l.left = LEGACY_STEPS;
+            self.target = PosRot {
+                position: end,
+                yaw,
+                pitch,
+            };
+            return Start::Interpolating;
         }
         if self.active() && self.target.is(end, yaw, pitch) {
             return Start::Unchanged;
@@ -170,6 +212,9 @@ impl SteppedInterpolation {
     }
     /// `cancel` (`InterpolationData.reset`).
     pub fn cancel(&mut self) {
+        if let Some(l) = &mut self.legacy {
+            l.left = 0;
+        }
         self.remaining.clear();
         self.remaining_ticks = 0.0;
         self.speed = 1.0;
@@ -180,6 +225,22 @@ impl SteppedInterpolation {
     /// target never needs the deltas `adjustInterpolationTargetFromDeltas`
     /// would add.
     pub fn interpolate(&mut self) -> Option<PosRot> {
+        if let Some(l) = &mut self.legacy {
+            if l.left <= 0 {
+                return None;
+            }
+            // lerpPositionAndRotationStep: 1 / ticks left of the way, then one tick fewer.
+            let a = 1.0 / l.left as f32;
+            let t = f64::from(a);
+            let (from, to) = (l.at, self.target);
+            l.at = PosRot {
+                position: [0, 1, 2].map(|i| from.position[i] + (to.position[i] - from.position[i]) * t),
+                yaw: rot_lerp(a, from.yaw, to.yaw),
+                pitch: lerp(a, from.pitch, to.pitch),
+            };
+            l.left -= 1;
+            return Some(l.at);
+        }
         if !self.active() {
             self.cancel();
             return None;
@@ -319,6 +380,45 @@ mod tests {
         // Four packets a tick apart: 12 ticks of steps, walked in fewer.
         assert!(ticks < 12, "{ticks}");
         assert_eq!(entity.position[0], 4.0);
+    }
+
+    #[test]
+    fn the_legacy_ease_covers_a_share_of_what_remains_each_tick() {
+        let mut h = SteppedInterpolation::legacy(3);
+        h.interpolate_to(at(0.0), Some(Path::Linear([0.3, 0.0, 0.0])), None);
+        let seen: Vec<_> = std::iter::from_fn(|| h.interpolate())
+            .map(|p| (p.position[0] * 1000.0).round() / 1000.0)
+            .collect();
+        assert_eq!(seen, [0.1, 0.2, 0.3]);
+        assert!(!h.active());
+    }
+
+    #[test]
+    fn the_legacy_ease_restarts_on_each_packet_instead_of_queueing() {
+        let mut h = SteppedInterpolation::legacy(3);
+        let mut entity = at(0.0);
+        let mut ticks = 0;
+        for k in 1..=4 {
+            h.interpolate_to(entity, Some(Path::Linear([f64::from(k), 0.0, 0.0])), None);
+            if let Some(p) = h.interpolate() {
+                entity = p;
+            }
+            ticks += 1;
+        }
+        // The last packet's target, three ticks after it: never the old targets one by one.
+        while let Some(p) = h.interpolate() {
+            entity = p;
+            ticks += 1;
+        }
+        assert_eq!(ticks, 6);
+        assert!((entity.position[0] - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_legacy_ease_keeps_snapping_types_without_an_interval() {
+        let mut h = SteppedInterpolation::legacy(0);
+        let start = h.interpolate_to(at(0.0), Some(Path::Linear([2.0, 0.0, 0.0])), None);
+        assert!(matches!(start, Start::Snap(_)));
     }
 
     #[test]

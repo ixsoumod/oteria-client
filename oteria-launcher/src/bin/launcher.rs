@@ -7,7 +7,7 @@
 //!
 //! Testing (`tools/oteria/dist_test.ps1`): `OTERIA_HOME`, `OTERIA_GAME_DIR` and
 //! `OTERIA_UPDATE_SOURCE` move everything to scratch folders; `OTERIA_LAUNCHER_PAGE`
-//! (`mods|market|news|settings|accounts`) opens a page, `OTERIA_LAUNCHER_MENU=1` the account menu;
+//! (`versions|mods|market|news|settings|accounts`) opens a page, `OTERIA_LAUNCHER_MENU=1` the account menu;
 //! `OTERIA_LAUNCHER_AUTO=download,play,stop` presses the main button when it can;
 //! `OTERIA_LAUNCHER_SHOT` saves a screenshot once the window has settled
 //! (`OTERIA_LAUNCHER_SHOT_AT=downloading|running|self-update` picks the moment) and closes.
@@ -61,6 +61,14 @@ const FULL_UV: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
 /// strip and encoded as raw H.264 at 30 fps by `tools/oteria/make_menu_loop.ps1`.
 const MENU_VIDEO: &[u8] = include_bytes!("../../assets/menu-loop.h264");
 const MENU_VIDEO_FPS: f32 = 30.0;
+
+/// The Versions page's covers, in `state::GAME_VERSIONS`' order: empty when the build had none
+/// (`build.rs`), and the card is then drawn plain.
+const COVERS: [&[u8]; 3] = [
+    include_bytes!(concat!(env!("OUT_DIR"), "/cover-26.png")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/cover-1.21.png")),
+    include_bytes!(concat!(env!("OUT_DIR"), "/cover-1.20.png")),
+];
 
 fn main() -> eframe::Result {
     let home = paths::home();
@@ -161,6 +169,7 @@ fn run_check(updater: &Path) -> CheckReport {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Play,
+    Versions,
     Mods,
     Market,
     Settings,
@@ -281,6 +290,8 @@ struct Launcher {
     hero_shade: TextureHandle,
     /// Darkens the bottom of a news picture, under its title.
     card_shade: TextureHandle,
+    /// The Versions page's covers (`COVERS`).
+    covers: Vec<Option<TextureHandle>>,
     page: Page,
     phase: Phase,
     report: CheckReport,
@@ -330,6 +341,7 @@ impl Launcher {
             .expect("logo");
         let page = match std::env::var("OTERIA_LAUNCHER_PAGE").as_deref() {
             Ok("mods") => Page::Mods,
+            Ok("versions") => Page::Versions,
             Ok("market") => Page::Market,
             Ok("news") => Page::News,
             Ok("settings") => Page::Settings,
@@ -350,6 +362,11 @@ impl Launcher {
             background: ui::texture_from_png(ctx, "background", BACKGROUND).expect("background"),
             hero_shade: ui::vramp_texture(ctx, "hero-shade", 0.0, 0.7),
             card_shade: ui::vramp_texture(ctx, "card-shade", 0.1, 0.9),
+            covers: COVERS
+                .iter()
+                .enumerate()
+                .map(|(i, png)| ui::texture_from_png(ctx, &format!("cover-{i}"), png))
+                .collect(),
             home,
             game_dir,
             state,
@@ -705,6 +722,12 @@ impl Launcher {
             .arg("--resources")
             .arg(self.state.resources_dir(&self.home))
             .env("HORIZON_HOME", self.game_dir.join("home"))
+            // The release servers see, and how other players ease (the Versions page).
+            .env("OTERIA_GAME_VERSION", self.state.game_version().id)
+            .env(
+                "OTERIA_AUTO_INTERPOLATION",
+                if self.state.interpolation_by_version { "0" } else { "1" },
+            )
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         if session.is_some() {
@@ -1178,6 +1201,7 @@ impl eframe::App for Launcher {
                 match self.page {
                     Page::Play => self.play_page(ui, body),
                     Page::Mods => self.mods_page(ui, body),
+                    Page::Versions => self.versions_page(ui, body),
                     Page::Market => self.market_page(ui, body),
                     Page::Settings => self.settings_page(ui, body),
                     Page::News => self.news_page(ui, body),
@@ -1478,6 +1502,7 @@ impl Launcher {
         let margin = NAV_GAP;
         let items = [
             (Page::Play, "play-fill"),
+            (Page::Versions, "controller"),
             (Page::Mods, "puzzle-fill"),
             (Page::Market, "cart-fill"),
             (Page::Settings, "gear-fill"),
@@ -1568,7 +1593,7 @@ impl Launcher {
         shade(&p, r, R, &self.hero_shade);
 
         // Jouer, in the middle of the video.
-        let btn = Rect::from_center_size(r.center(), Vec2::new(300.0, 66.0));
+        let btn = Rect::from_center_size(r.center(), Vec2::new(330.0, 66.0));
         self.main_button(ui, btn);
 
         // The game folder and its screenshots: two icons, one over the other, bottom left.
@@ -1617,7 +1642,7 @@ impl Launcher {
         let installed = self.state.client_version.clone().unwrap_or_default();
         let game = format!(
             "Oteria {installed} · Minecraft {}",
-            oteria_dist::MINECRAFT_VERSION
+            self.state.game_version().release
         );
         let (label, sub, enabled, danger) = match &self.phase {
             Phase::Checking => ("RECHERCHE…", "Mises à jour".to_owned(), false, false),
@@ -1659,8 +1684,11 @@ impl Launcher {
         } else {
             (label, sub, enabled, danger)
         };
+        // A small arrow at its right end opens the Versions page; the rest is the button.
+        let arrow = Rect::from_min_max(Pos2::new(btn.right() - 46.0, btn.top()), btn.max);
+        let face = Rect::from_min_max(btn.min, Pos2::new(arrow.left(), btn.bottom()));
         let resp = ui.interact(
-            btn,
+            face,
             ui.id().with("main"),
             if enabled {
                 Sense::click()
@@ -1724,6 +1752,29 @@ impl Launcher {
         } else {
             Color32::from_gray(215)
         };
+        let arrow_resp = ui.interact(arrow, ui.id().with("main-versions"), Sense::click());
+        ui::hand(&arrow_resp);
+        if arrow_resp.hovered() {
+            p.rect_filled(
+                arrow.shrink(3.0),
+                CornerRadius::same(radius - 3),
+                ui::alpha(Color32::WHITE, 0.14),
+            );
+        }
+        p.line_segment(
+            [
+                Pos2::new(arrow.left(), btn.top() + 14.0),
+                Pos2::new(arrow.left(), btn.bottom() - 14.0),
+            ],
+            Stroke::new(1.0_f32, ui::alpha(fg, 0.35)),
+        );
+        self.icons
+            .draw(&p, "chevron-down", arrow.center(), 15.0, fg);
+        if arrow_resp.clicked() {
+            self.page = Page::Versions;
+            self.menu_open = false;
+        }
+        let btn = face;
         let two = !sub.is_empty();
         ui::text(
             &p,
@@ -1905,6 +1956,160 @@ impl Launcher {
             c::TEXT,
         );
         body.top() + 62.0
+    }
+
+    // ----- Versions ----------------------------------------------------------------------------
+
+    /// The Minecraft releases Oteria can join servers as, one cover each; the chosen one framed in
+    /// green. A card chooses its release; its play arrow chooses it and starts the game.
+    fn versions_page(&mut self, ui: &mut egui::Ui, body: Rect) {
+        let p = ui.painter().clone();
+        let top = self.page_title(&p, body, "Versions");
+        ui::text(
+            &p,
+            Pos2::new(body.left() + 4.0, top - 8.0),
+            Align2::LEFT_TOP,
+            "La version de Minecraft que les serveurs voient. Choisis celle du serveur : il ne te \
+             préviendra plus que ta version n'est pas recommandée.",
+            ui::regular(13.5),
+            c::MUTED,
+        );
+        let top = top + 30.0;
+        let chosen = self.state.game_version().id;
+        let green = Color32::from_rgb(0x22, 0xc5, 0x5e);
+        let (w, gap) = (196.0, 22.0);
+        let h = (w * 4.0 / 3.0_f32).round();
+        let mut pick = None;
+        let mut play = None;
+        for (i, v) in oteria_dist::state::GAME_VERSIONS.iter().enumerate() {
+            let r = Rect::from_min_size(
+                Pos2::new(body.left() + i as f32 * (w + gap), top + 8.0),
+                Vec2::new(w, h),
+            );
+            let card = Rect::from_min_max(r.min, Pos2::new(r.right(), r.bottom() + 48.0));
+            let resp = ui.interact(card, ui.id().with(("version", v.id)), Sense::click());
+            ui::hand(&resp);
+            let lift = ui
+                .ctx()
+                .animate_bool_with_time(ui.id().with(("version-hover", v.id)), resp.hovered(), 0.15);
+            let r = r.translate(Vec2::new(0.0, -4.0 * lift));
+            match self.covers.get(i).and_then(Option::as_ref) {
+                Some(tex) => cover(
+                    &p,
+                    r,
+                    12,
+                    tex,
+                    0.5,
+                    Color32::from_gray((225.0 + 30.0 * lift) as u8),
+                ),
+                None => {
+                    p.rect_filled(r, CornerRadius::same(12), PANEL);
+                    ui::text(&p, r.center(), Align2::CENTER_CENTER, v.id, ui::semi(40.0), c::TEXT);
+                }
+            }
+            if v.id == chosen {
+                p.rect_stroke(
+                    r.expand(3.0),
+                    CornerRadius::same(14),
+                    Stroke::new(2.5_f32, green),
+                    StrokeKind::Outside,
+                );
+            }
+            ui::text(
+                &p,
+                Pos2::new(r.left() + 2.0, r.bottom() + 18.0),
+                Align2::LEFT_CENTER,
+                &format!("Oteria {}", v.id),
+                ui::semi(15.5),
+                c::TEXT,
+            );
+            ui::text(
+                &p,
+                Pos2::new(r.left() + 2.0, r.bottom() + 38.0),
+                Align2::LEFT_CENTER,
+                &format!("{} · {}", v.release, v.update),
+                ui::regular(12.5),
+                c::MUTED,
+            );
+            let arrow = Rect::from_center_size(
+                Pos2::new(r.right() - 12.0, r.bottom() + 18.0),
+                Vec2::splat(24.0),
+            );
+            let arrow_resp = ui.interact(arrow, ui.id().with(("version-play", v.id)), Sense::click());
+            ui::hand(&arrow_resp);
+            self.icons.draw_fit(
+                &p,
+                "play-fill",
+                arrow.center(),
+                if arrow_resp.hovered() { 14.0 } else { 12.0 },
+                green,
+            );
+            if arrow_resp.clicked() {
+                play = Some(v.id);
+            } else if resp.clicked() {
+                pick = Some(v.id);
+            }
+        }
+
+        // How other players ease.
+        let y = top + 8.0 + h + 48.0 + 34.0;
+        caption(&p, Pos2::new(body.left() + 2.0, y), "OPTIONS");
+        let auto = !self.state.interpolation_by_version;
+        let row = Rect::from_min_size(
+            Pos2::new(body.left(), y + 28.0),
+            Vec2::new(body.width().min(3.0 * w + 2.0 * gap + 260.0), 72.0),
+        );
+        surface(&p, row, PANEL);
+        self.icons
+            .draw(&p, "shuffle", Pos2::new(row.left() + 36.0, row.center().y), 22.0, c::MUTED);
+        ui::text(
+            &p,
+            Pos2::new(row.left() + 70.0, row.top() + 24.0),
+            Align2::LEFT_CENTER,
+            "Interpolation automatique",
+            ui::semi(14.5),
+            c::TEXT,
+        );
+        ui::wrapped(
+            &p,
+            Pos2::new(row.left() + 70.0, row.top() + 42.0),
+            if auto {
+                "Les autres joueurs bougent comme sur la version du serveur."
+            } else {
+                "Les autres joueurs bougent comme sur la version choisie ici, quel que soit le serveur."
+            },
+            ui::regular(12.5),
+            c::MUTED,
+            row.width() - 160.0,
+            1,
+        );
+        let switch = Rect::from_center_size(
+            Pos2::new(row.right() - 50.0, row.center().y),
+            Vec2::new(46.0, 24.0),
+        );
+        if toggle(ui, switch, auto, "auto-interpolation") {
+            self.update_state(|s| s.interpolation_by_version = auto);
+        }
+        if matches!(self.phase, Phase::Launching { .. } | Phase::Running) {
+            ui::text(
+                &p,
+                Pos2::new(row.left() + 2.0, row.bottom() + 22.0),
+                Align2::LEFT_CENTER,
+                "Le jeu est ouvert : la version choisie compte à son prochain lancement.",
+                ui::regular(12.5),
+                c::WARN,
+            );
+        }
+
+        if let Some(id) = pick.or(play) {
+            self.update_state(|s| s.game_version = Some(id.to_owned()));
+        }
+        if play.is_some() {
+            self.page = Page::Play;
+            if matches!(self.phase, Phase::Ready) {
+                self.main_action();
+            }
+        }
     }
 
     fn mods_page(&mut self, ui: &mut egui::Ui, body: Rect) {

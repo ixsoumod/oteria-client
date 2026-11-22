@@ -718,18 +718,75 @@ fn connect_tcp(
 /// Whether joining servers of older releases is on (roadmap `older-servers`): off by default while the
 /// adapter is incomplete; `HORIZON_OLDER_SERVERS=1` turns it on.
 pub fn older_servers_enabled() -> bool {
-    std::env::var_os("HORIZON_OLDER_SERVERS").is_some_and(|v| v == "1")
+    std::env::var_os("HORIZON_OLDER_SERVERS").is_some_and(|v| v == "1") || chosen_version().is_some()
 }
 
-/// The older release a server speaks, by its status ping, when Horizon can translate it; `None` for the
+/// The release Oteria's launcher was set to play (`OTERIA_GAME_VERSION`, its Versions page): every
+/// server is joined as that release, so a server (or its ViaVersion) sees that client. `None` for 26,
+/// the pinned release.
+pub fn chosen_version() -> Option<horizon_protocol::adapter::ServerVersion> {
+    use horizon_protocol::adapter::ServerVersion;
+    match std::env::var("OTERIA_GAME_VERSION").ok()?.trim() {
+        "1.21" => Some(ServerVersion::V1_21_11),
+        "1.20" => Some(ServerVersion::V1_20_6),
+        _ => None,
+    }
+}
+
+/// Whether other players and mobs ease the way the server's own release does (`OTERIA_AUTO_INTERPOLATION`,
+/// on unless `0`); off, the way the chosen release does.
+fn auto_interpolation() -> bool {
+    std::env::var("OTERIA_AUTO_INTERPOLATION").map_or(true, |v| v.trim() != "0")
+}
+
+static LEGACY_INTERPOLATION: AtomicBool = AtomicBool::new(false);
+
+/// Whether this connection eases living entities the way releases before 26.3 did
+/// (`SteppedInterpolation::legacy`), decided as it was joined.
+pub fn legacy_interpolation() -> bool {
+    LEGACY_INTERPOLATION.load(Ordering::Relaxed)
+}
+
+/// The newest `major.minor` release a server's status names (`version.name`: "Paper 1.21.4",
+/// "1.8.x-1.21.x"). ViaVersion answers a status with the client's own protocol, so the name is
+/// what still tells the server's own release.
+fn newest_release(name: &str) -> Option<(u32, u32)> {
+    let mut best = None;
+    for word in name.split(|c: char| !(c.is_ascii_digit() || c == '.')) {
+        let mut parts = word.split('.').filter(|p| !p.is_empty());
+        let (Some(a), Some(b)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if let (Ok(a), Ok(b)) = (a.parse::<u32>(), b.parse::<u32>()) {
+            best = best.max(Some((a, b)));
+        }
+    }
+    best
+}
+
+/// Whether a server whose status is `status` runs a release before 26.3: by its protocol when Horizon
+/// knows it as an older one, else by the release its name gives. `None` when neither tells.
+fn server_before_26_3(status: &serde_json::Value) -> Option<bool> {
+    use horizon_protocol::adapter::ServerVersion;
+    let protocol = status["version"]["protocol"]
+        .as_i64()
+        .and_then(|p| i32::try_from(p).ok());
+    if let Some(v) = protocol.and_then(ServerVersion::from_protocol)
+        && v != ServerVersion::Current
+    {
+        return Some(true);
+    }
+    newest_release(status["version"]["name"].as_str()?).map(|r| r < (26, 3))
+}
+
+/// The older release a server speaks, by its status, when Horizon can translate it; `None` for the
 /// pinned version, an unknown one, a failed ping, or with the feature off.
-fn older_server(address: &str) -> Option<horizon_protocol::adapter::ServerVersion> {
+fn older_server(status: &serde_json::Value) -> Option<horizon_protocol::adapter::ServerVersion> {
     use horizon_protocol::adapter::ServerVersion;
     if !older_servers_enabled() {
         return None;
     }
-    let (json, _) = ping(address, Duration::from_secs(5)).ok()?;
-    let protocol = i32::try_from(json["version"]["protocol"].as_i64()?).ok()?;
+    let protocol = i32::try_from(status["version"]["protocol"].as_i64()?).ok()?;
     ServerVersion::from_protocol(protocol).filter(|v| *v != ServerVersion::Current)
 }
 
@@ -775,6 +832,7 @@ fn run(
     recorder: &RecorderSlot,
 ) -> Result<Reason, Reason> {
     let (host, port, mut c) = if let Some(pipe) = local {
+        LEGACY_INTERPOLATION.store(false, Ordering::Relaxed);
         (address.to_owned(), 0, Connection::local(pipe))
     } else {
         let (host, port, token) = match address.strip_prefix(FRIEND) {
@@ -803,12 +861,32 @@ fn run(
                 .write_raw(&token)
                 .map_err(|e| Reason::plain(e.to_string()))?;
         }
-        if !address.starts_with(FRIEND)
-            && let Some(version) = older_server(address)
-        {
-            log::info!("Joining {address} as a {} server", version.name());
+        let chosen = chosen_version();
+        let auto = auto_interpolation();
+        let status = (!address.starts_with(FRIEND)
+            && (auto || (chosen.is_none() && older_servers_enabled())))
+        .then(|| ping(address, Duration::from_secs(5)).ok().map(|(json, _)| json))
+        .flatten();
+        // The launcher's release wins; else the server's own, when it is an older one.
+        let version = chosen.or_else(|| status.as_ref().and_then(older_server));
+        if let Some(version) = version {
+            log::info!("Joining {address} as a {} client", version.name());
             c.adapt(version);
         }
+        let legacy = if auto {
+            status
+                .as_ref()
+                .and_then(server_before_26_3)
+                .unwrap_or(version.is_some())
+        } else {
+            version.is_some()
+        };
+        log::info!(
+            "Interpolation: {} ({})",
+            if legacy { "before 26.3" } else { "26.3" },
+            if auto { "by the server" } else { "by the chosen release" }
+        );
+        LEGACY_INTERPOLATION.store(legacy, Ordering::Relaxed);
         (host, port, c)
     };
     *shared_counters.lock().unwrap() = Some(c.reader.counters.clone());
@@ -1474,6 +1552,23 @@ fn continues_after_failed_join(lan: bool, signed_in: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_server_status_tells_whether_it_runs_a_release_before_26_3() {
+        assert_eq!(newest_release("Paper 1.21.4"), Some((1, 21)));
+        assert_eq!(newest_release("BungeeCord 1.8.x-1.21.x"), Some((1, 21)));
+        assert_eq!(newest_release("Velocity"), None);
+        let status = |protocol: i32, name: &str| {
+            serde_json::json!({"version": {"protocol": protocol, "name": name}})
+        };
+        // ViaVersion answers with the client's protocol: the name still says 1.21.
+        let current = horizon_protocol::PROTOCOL_VERSION;
+        assert_eq!(server_before_26_3(&status(current, "Paper 1.21.4")), Some(true));
+        assert_eq!(server_before_26_3(&status(current, "Paper 26.3")), Some(false));
+        assert_eq!(server_before_26_3(&status(current, "Velocity")), None);
+        let v1_21_1 = horizon_protocol::adapter::ServerVersion::V1_21_1.protocol();
+        assert_eq!(server_before_26_3(&status(v1_21_1, "Velocity")), Some(true));
+    }
 
     fn pack(namespace: &str, id: &str, version: &str) -> cfg::KnownPack {
         cfg::KnownPack {

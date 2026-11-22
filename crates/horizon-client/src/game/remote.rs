@@ -437,6 +437,17 @@ fn place_interpolated(m: &mut Mob, at: PosRot) {
     m.head_pitch = (at.pitch % 360.0).clamp(-90.0, 90.0);
 }
 
+/// A living entity's handler, over its type's update interval: the ease of releases before 26.3
+/// when this connection was joined so ([`horizon_client::net::legacy_interpolation`]: the server's
+/// release, or the one Oteria's launcher chose), else 26.3's steps.
+fn interpolation_handler(interval: i32) -> SteppedInterpolation {
+    if horizon_client::net::legacy_interpolation() {
+        SteppedInterpolation::legacy(interval)
+    } else {
+        SteppedInterpolation::new(interval)
+    }
+}
+
 /// The packet a living entity's move came in.
 #[derive(Clone, Copy, PartialEq)]
 enum MovePacket {
@@ -2934,7 +2945,7 @@ impl Game<'_> {
                 };
                 let handler = r.stepped.entry(id).or_insert_with(|| {
                     let interval = horizon_client::lan::tracking::settings(&m.kind.id).1;
-                    SteppedInterpolation::new(interval as i32)
+                    interpolation_handler(interval as i32)
                 });
                 if let Some(at) = stepped_move(handler, packet, entity, position, path, rotation) {
                     // snapTo: setOldPosAndRot too.
@@ -2957,7 +2968,7 @@ impl Game<'_> {
                 let handler = r.stepped.entry(id).or_insert_with(|| {
                     let interval =
                         horizon_client::lan::tracking::settings("minecraft:armor_stand").1;
-                    SteppedInterpolation::new(interval as i32)
+                    interpolation_handler(interval as i32)
                 });
                 if let Some(at) = stepped_move(handler, packet, entity, position, path, rotation) {
                     a.snap(
