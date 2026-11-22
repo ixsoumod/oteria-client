@@ -497,11 +497,31 @@ pub fn serverbound(
             };
             renumbered(id, body)
         }
-        // 26.3 also states where the client was teleported to; 26.2 only the teleport's id.
+        // 26.3 also states where the client was teleported to; 26.2 only the teleport's id, and its
+        // handleMovePlayer then sends a MovePlayerPacket.PosRot there (not on the ground, no
+        // collision). Anticheats (Grim) wait for that move to end the teleport: without it every
+        // move after a /tp or a duel's start is set back.
         (State::Play, sb::ACCEPT_TELEPORTATION) => {
             let mut r = Reader::new(payload);
+            let teleport = r.varint()?;
+            let (x, y, z) = (r.f64()?, r.f64()?, r.f64()?);
+            let (yaw, pitch) = (r.f32()?, r.f32()?);
+            if let Some(move_id) = session
+                .version
+                .serverbound_id(State::Play, sb::MOVE_PLAYER_POS_ROT)
+            {
+                let mut then = Writer::new();
+                then.varint(move_id);
+                then.f64(x);
+                then.f64(y);
+                then.f64(z);
+                then.f32(yaw);
+                then.f32(pitch);
+                then.u8(0);
+                session.outgoing.lock().unwrap().push(then.data);
+            }
             let mut w = Writer::new();
-            w.varint(r.varint()?);
+            w.varint(teleport);
             renumbered(id, w.data)
         }
         // 26.3 inserted CHANGE_DESTROY_DIRECTION at 1; 26.2 has no such action.
@@ -2617,6 +2637,48 @@ pub(crate) mod client_layout_v1_21_1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_accepted_teleport_is_followed_by_a_move_there_as_older_clients_send() {
+        for version in [ServerVersion::V1_21_11, ServerVersion::V1_20_6] {
+            let session = Session::new(version);
+            let accept = play::Serverbound::AcceptTeleportation(play::AcceptTeleportation {
+                id: 5,
+                x: 1.5,
+                y: -60.0,
+                z: 2.5,
+                yaw: 90.0,
+                pitch: 10.0,
+            });
+            let (id, body) = serverbound(
+                &session,
+                State::Play,
+                packet_ids::play::serverbound::ACCEPT_TELEPORTATION,
+                &strip_id(accept.encode()),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                Some(id),
+                version.serverbound_id(State::Play, packet_ids::play::serverbound::ACCEPT_TELEPORTATION)
+            );
+            assert_eq!(body, [5]);
+            let then = session.take_outgoing();
+            assert_eq!(then.len(), 1, "{version:?}");
+            let mut r = Reader::new(&then[0]);
+            assert_eq!(
+                Some(r.varint().unwrap()),
+                version.serverbound_id(State::Play, packet_ids::play::serverbound::MOVE_PLAYER_POS_ROT)
+            );
+            assert_eq!(
+                (r.f64().unwrap(), r.f64().unwrap(), r.f64().unwrap()),
+                (1.5, -60.0, 2.5)
+            );
+            assert_eq!((r.f32().unwrap(), r.f32().unwrap()), (90.0, 10.0));
+            assert_eq!(r.u8().unwrap(), 0, "not on the ground, no collision");
+            assert!(r.rest().is_empty());
+        }
+    }
 
     #[test]
     fn a_1_21_11_unknown_entity_is_dropped_and_vanilla_entities_are_remapped() {
